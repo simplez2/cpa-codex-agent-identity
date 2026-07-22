@@ -61,8 +61,8 @@ jobs:
           if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
             head_sha="$(jq -er '.pull_request.head.sha' "${GITHUB_EVENT_PATH}")"
           fi
-          if git log "${head_sha}" --format='%ae' | grep -Evq "${noreply}"; then
-            echo '::error::Git history contains a non-noreply author email.'
+          if git log "${head_sha}" --format='%ae%n%ce' | grep -Evq "${noreply}"; then
+            echo '::error::Git history contains a non-noreply author or committer email.'
             exit 1
           fi
           if git for-each-ref --format='%(taggeremail:trim)' refs/tags | grep -Evq "^(|noreply@github\.com|[^[:space:]@]+@users\.noreply\.github\.com)$"; then
