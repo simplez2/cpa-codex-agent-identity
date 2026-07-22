@@ -74,7 +74,7 @@ jobs:
           tar -C dist -czf "${archive}" cpa-codex-agent-identity-sidecar
           sha256sum "${archive}" > "${archive}.sha256"
           rm -f "${binary}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-linux-${{ matrix.goarch }}
           path: |
