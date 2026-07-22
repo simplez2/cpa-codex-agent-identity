@@ -24,7 +24,13 @@ jobs:
           find . -type f -name '*.go' -not -path './.git/*' -print0 | xargs -0 gofmt -l | tee /tmp/gofmt.out
           test ! -s /tmp/gofmt.out
       - name: Validate plugin registry
-        run: jq -e '.schema_version == 1 and (.plugins | length == 1) and .plugins[0].id == "codex-agent-identity" and .plugins[0].version == "0.3.0"' registry.json
+        run: >-
+          jq -e '.schema_version == 2 and (.plugins | length == 1) and
+          .plugins[0].id == "codex-agent-identity" and .plugins[0].version == "0.3.0" and
+          .plugins[0].install.type == "direct" and (.plugins[0].install.artifacts | length == 2) and
+          all(.plugins[0].install.artifacts[]; .goos == "linux" and
+          (.goarch == "amd64" or .goarch == "arm64") and
+          (.sha256 | test("^[0-9a-f]{64}$")) and .size > 0)' registry.json
 
   sidecar:
     runs-on: ubuntu-latest

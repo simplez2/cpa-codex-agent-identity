@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "plugins": [
     {
       "id": "codex-agent-identity",
@@ -8,6 +8,25 @@
       "author": "simplez2",
       "version": "0.3.0",
       "repository": "https://github.com/simplez2/cpa-codex-agent-identity",
+      "install": {
+        "type": "direct",
+        "artifacts": [
+          {
+            "goos": "linux",
+            "goarch": "amd64",
+            "url": "https://github.com/simplez2/cpa-codex-agent-identity/releases/download/v0.3.0/codex-agent-identity_0.3.0_linux_amd64.zip",
+            "sha256": "2a0d3322caf75a42a76758b652db8d49f0a55cb1f6fb305325607b991806c7d1",
+            "size": 2109974
+          },
+          {
+            "goos": "linux",
+            "goarch": "arm64",
+            "url": "https://github.com/simplez2/cpa-codex-agent-identity/releases/download/v0.3.0/codex-agent-identity_0.3.0_linux_arm64.zip",
+            "sha256": "c8be811d10434d76b0c6c7563bbd82c486ee59290170ed5ac5074a0b0bbfd6f3",
+            "size": 1930826
+          }
+        ]
+      },
       "logo": "https://raw.githubusercontent.com/simplez2/cpa-codex-agent-identity/main/assets/logo.svg",
       "homepage": "https://github.com/simplez2/cpa-codex-agent-identity",
       "license": "MIT",

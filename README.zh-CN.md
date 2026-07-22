@@ -63,6 +63,9 @@ volumes:
 也可以从 GitHub Release 下载与架构对应的 zip。每个 zip 根目录都包含
 codex-agent-identity.so，并由 checksums.txt 提供 SHA-256 校验。
 
+注册表使用 CPA schema v2 的 direct 资产模式，并固定文件大小和 SHA-256。
+因此安装不依赖服务器的 GitHub REST API 匿名额度。
+
 不要同时加载旧的 codex-agent-identity-auth.so 和新的
 codex-agent-identity.so，两者都会声明 Codex 凭证解析能力。
 

@@ -128,6 +128,10 @@ archive checksum before installation. A containerized CPA needs a writable
 host plugin mount during the install or update. Restore read-only mode after
 the operation.
 
+The registry uses CPA schema v2 direct artifacts with pinned sizes and SHA-256
+digests. Installation therefore does not consume the server's anonymous GitHub
+REST API quota.
+
 ### Manual installation
 
 Extract the release archive so the dynamic library is at the root of the host plugin directory:
