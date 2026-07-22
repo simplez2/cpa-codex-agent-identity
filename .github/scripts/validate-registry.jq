@@ -2,7 +2,7 @@
 (.plugins | type == "array" and length == 1) and
 (.plugins[0] as $plugin |
   $plugin.id == "codex-agent-identity" and
-  ($plugin.version | test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)([-.][0-9A-Za-z][0-9A-Za-z.-]*)?$")) and
+  ($plugin.version | test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\\.[0-9A-Za-z-]+)*)?$")) and
   $plugin.repository == "https://github.com/simplez2/cpa-codex-agent-identity" and
   $plugin.install.type == "direct" and
   ($plugin.install.artifacts | type == "array" and length == 2) and
