@@ -168,7 +168,7 @@ func (s *Server) handleUI(writer http.ResponseWriter, request *http.Request) {
 	if asset == "" {
 		asset = "index.html"
 	}
-	if strings.Contains(asset, "/") || (asset != "index.html" && asset != "app.js" && asset != "style.css") {
+	if strings.Contains(asset, "/") || (asset != "index.html" && asset != "app.js" && asset != "style.css" && asset != "theme.js") {
 		http.NotFound(writer, request)
 		return
 	}

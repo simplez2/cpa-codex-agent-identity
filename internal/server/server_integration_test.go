@@ -144,6 +144,37 @@ func TestSidecarManagementUISynchronizesCPACodexAuthFile(t *testing.T) {
 	if uiResponse.Header.Get("Content-Security-Policy") == "" {
 		t.Fatal("management UI is missing CSP")
 	}
+	themeScriptIndex := bytes.Index(uiBody, []byte("<script src=\"./theme.js\"></script>"))
+	styleIndex := bytes.Index(uiBody, []byte("<link rel=\"stylesheet\" href=\"./style.css\">"))
+	if themeScriptIndex < 0 || styleIndex < 0 || themeScriptIndex > styleIndex {
+		t.Fatalf("management UI must load theme.js before style.css: %s", uiBody)
+	}
+	themeResponse, err := http.Get(sidecar.URL + "/agent-identity/theme.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	themeBody, _ := io.ReadAll(themeResponse.Body)
+	themeResponse.Body.Close()
+	if themeResponse.StatusCode != http.StatusOK || !bytes.Contains(themeBody, []byte("cli-proxy-theme")) || !bytes.Contains(themeBody, []byte("cpa-codex-agent-identity:theme")) {
+		t.Fatalf("theme bridge unavailable: status=%d body=%s", themeResponse.StatusCode, themeBody)
+	}
+	if !strings.Contains(themeResponse.Header.Get("Content-Security-Policy"), "script-src 'self'") {
+		t.Fatalf("theme bridge CSP is missing self script permission: %q", themeResponse.Header.Get("Content-Security-Policy"))
+	}
+	styleResponse, err := http.Get(sidecar.URL + "/agent-identity/style.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	styleBody, _ := io.ReadAll(styleResponse.Body)
+	styleResponse.Body.Close()
+	if styleResponse.StatusCode != http.StatusOK || !bytes.Contains(styleBody, []byte(":root[data-theme=\"dark\"]")) || !bytes.Contains(styleBody, []byte("--primary-color: #8b8680")) {
+		t.Fatalf("CPA-aligned stylesheet unavailable: status=%d body=%s", styleResponse.StatusCode, styleBody)
+	}
+	for _, legacyColor := range [][]byte{[]byte("#2563eb"), []byte("#3971f2"), []byte("#5b8cff"), []byte("#070b12"), []byte("#060910"), []byte("--blue")} {
+		if bytes.Contains(bytes.ToLower(styleBody), legacyColor) {
+			t.Fatalf("stylesheet still contains legacy color %q", legacyColor)
+		}
+	}
 	embedResponse, err := http.Get(sidecar.URL + "/agent-identity/?embed=cpamc")
 	if err != nil {
 		t.Fatal(err)
