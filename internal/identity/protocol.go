@@ -243,19 +243,21 @@ func BuildAssertion(material *Material, taskID string, now time.Time) (string, e
 	timestamp := now.UTC().Format("2006-01-02T15:04:05Z")
 	payload := material.Claims.AgentRuntimeID + ":" + taskID + ":" + timestamp
 	signature := base64.StdEncoding.EncodeToString(ed25519.Sign(material.PrivateKey, []byte(payload)))
-	raw := fmt.Sprintf(
-		`{"agent_runtime_id":%s,"signature":%s,"task_id":%s,"timestamp":%s}`,
-		jsonString(material.Claims.AgentRuntimeID),
-		jsonString(signature),
-		jsonString(taskID),
-		jsonString(timestamp),
-	)
+	raw, err := json.Marshal(struct {
+		AgentRuntimeID string `json:"agent_runtime_id"`
+		Signature      string `json:"signature"`
+		TaskID         string `json:"task_id"`
+		Timestamp      string `json:"timestamp"`
+	}{
+		AgentRuntimeID: material.Claims.AgentRuntimeID,
+		Signature:      signature,
+		TaskID:         taskID,
+		Timestamp:      timestamp,
+	})
+	if err != nil {
+		return "", errors.New("failed to encode agent assertion")
+	}
 	return "AgentAssertion " + base64.RawURLEncoding.EncodeToString([]byte(raw)), nil
-}
-
-func jsonString(value string) string {
-	encoded, _ := json.Marshal(value)
-	return string(encoded)
 }
 
 type registerTaskResponse struct {
