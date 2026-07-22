@@ -124,6 +124,8 @@ jobs:
     needs: verify
     runs-on: ubuntu-24.04
     env:
+      BUILDX_METADATA_PROVENANCE: "disabled"
+      DOCKER_BUILD_SUMMARY: "false"
       DOCKER_BUILD_RECORD_UPLOAD: "false"
     permissions:
       contents: read
@@ -147,5 +149,5 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository }}:${{ github.ref_name }}
             ghcr.io/${{ github.repository }}:latest
-          provenance: mode=min
+          provenance: false
           sbom: true
