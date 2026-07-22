@@ -744,7 +744,7 @@ func assertWebsocketUpgrade(t *testing.T, sidecarURL, clientKey string) {
 		"Connection: Upgrade\r\n" +
 		"Upgrade: websocket\r\n" +
 		"Sec-WebSocket-Version: 13\r\n" +
-		"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n"
+		"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n" // gitleaks:allow -- RFC 6455 sample nonce, not a credential.
 	if _, err = io.WriteString(connection, requestText); err != nil {
 		t.Fatal(err)
 	}

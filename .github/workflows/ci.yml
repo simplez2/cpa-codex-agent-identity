@@ -11,10 +11,12 @@ permissions:
 
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - name: Check Go formatting
@@ -24,19 +26,15 @@ jobs:
           find . -type f -name '*.go' -not -path './.git/*' -print0 | xargs -0 gofmt -l | tee /tmp/gofmt.out
           test ! -s /tmp/gofmt.out
       - name: Validate plugin registry
-        run: >-
-          jq -e '.schema_version == 2 and (.plugins | length == 1) and
-          .plugins[0].id == "codex-agent-identity" and .plugins[0].version == "0.3.0" and
-          .plugins[0].install.type == "direct" and (.plugins[0].install.artifacts | length == 2) and
-          all(.plugins[0].install.artifacts[]; .goos == "linux" and
-          (.goarch == "amd64" or .goarch == "arm64") and
-          (.sha256 | test("^[0-9a-f]{64}$")) and .size > 0)' registry.json
+        run: jq -e -f .github/scripts/validate-registry.jq registry.json
 
   sidecar:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache-dependency-path: |
@@ -48,13 +46,15 @@ jobs:
       - run: CGO_ENABLED=0 go build -trimpath -buildvcs=false ./cmd/sidecar
 
   cpa-plugin:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: plugin/codex-agent-identity
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: plugin/codex-agent-identity/go.mod
           cache-dependency-path: plugin/codex-agent-identity/go.sum
@@ -62,3 +62,30 @@ jobs:
       - run: go test -race ./... -count=1
       - run: go vet ./...
       - run: CGO_ENABLED=1 go build -trimpath -buildvcs=false -buildmode=c-shared -o /tmp/codex-agent-identity.so .
+
+  container:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - name: Verify image binary architecture
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS='|' read -r platform arch expected_machine; do
+            tag="cpa-codex-agent-identity-ci:${arch}"
+            container="cpa-codex-agent-identity-ci-${arch}"
+            binary="/tmp/codex-agent-identity-sidecar-${arch}"
+            docker buildx build --platform "${platform}" --load --tag "${tag}" .
+            docker create --platform "${platform}" --name "${container}" "${tag}" >/dev/null
+            docker cp "${container}:/codex-agent-identity-sidecar" "${binary}"
+            docker rm "${container}" >/dev/null
+            machine="$(readelf -h "${binary}" | awk -F: '/Machine:/{sub(/^[[:space:]]+/, "", $2); print $2}')"
+            test "${machine}" = "${expected_machine}"
+          done <<'ARCHITECTURES'
+          linux/amd64|amd64|Advanced Micro Devices X86-64
+          linux/arm64|arm64|AArch64
+          ARCHITECTURES

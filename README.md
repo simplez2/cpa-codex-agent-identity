@@ -68,7 +68,7 @@ Treat the management password, encryption key, and generated cais_ values as sec
 ## Requirements
 
 - A CPA build with dynamic plugin ABI v1, AuthProvider, Management API resources, and host auth-file management support.
-- CLIProxyAPI v7.2.94 is the SDK baseline for release v0.3.0. The plugin uses
+- CLIProxyAPI v7.2.94 is the SDK baseline for release v0.3.1. The plugin uses
   dynamic plugin ABI v1; always canary-test it against the exact CPA image you
   plan to deploy.
 - Linux amd64 or Linux arm64 for the released .so files.
@@ -84,7 +84,7 @@ make test
 make race
 make vet
 make build
-make package-plugin VERSION=0.3.0 GOOS=linux GOARCH=amd64
+make package-plugin VERSION=0.3.1 GOOS=linux GOARCH=amd64
 ~~~
 
 Equivalent direct commands are:
@@ -118,8 +118,8 @@ plugins:
 The released Plugin Store assets follow CPA's required names:
 
 ~~~text
-codex-agent-identity_0.3.0_linux_amd64.zip
-codex-agent-identity_0.3.0_linux_arm64.zip
+codex-agent-identity_0.3.1_linux_amd64.zip
+codex-agent-identity_0.3.1_linux_arm64.zip
 checksums.txt
 ~~~
 

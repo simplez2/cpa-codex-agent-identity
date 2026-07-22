@@ -29,7 +29,7 @@ JWT 或 PAT。现有官方 OAuth 和第三方 API 渠道不由本插件接管。
 
 ## 版本边界
 
-v0.3.0 使用 Go 1.26，并以 CLIProxyAPI v7.2.94 SDK 为编译基线。插件使用
+v0.3.1 使用 Go 1.26，并以 CLIProxyAPI v7.2.94 SDK 为编译基线。插件使用
 动态插件 ABI v1，但正式升级 CPA 前仍必须用目标官方镜像做独立 canary。
 
 首版保留稳定 sidecar 数据面，没有仓促把 AgentAssertion、PAT、图片、SSE、
@@ -148,7 +148,7 @@ make test
 make race
 make vet
 make build
-make package-plugin VERSION=0.3.0 GOOS=linux GOARCH=amd64
+make package-plugin VERSION=0.3.1 GOOS=linux GOARCH=amd64
 ~~~
 
 vX.Y.Z 标签会生成 Linux amd64/arm64 插件 zip、sidecar tar.gz、

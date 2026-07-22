@@ -27,12 +27,12 @@ const (
 	pluginLogo            = "https://raw.githubusercontent.com/simplez2/cpa-codex-agent-identity/main/assets/logo.svg"
 	resourcePath          = "/open"
 	configSidecarURL      = "sidecar_url"
-	minimumSidecarVersion = "0.3.0"
+	minimumSidecarVersion = "0.3.1"
 	readyMessageType      = "cpa-codex-agent-identity:ready"
 )
 
 var (
-	pluginVersion = "0.3.0"
+	pluginVersion = "0.3.1"
 	stateMu       sync.RWMutex
 	state         = runtimeState{configError: "sidecar_url is required"}
 )

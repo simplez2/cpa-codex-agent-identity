@@ -29,7 +29,7 @@ it. Tests exercise it only through a local httptest upstream.
 ## Upgrade boundary
 
 The plugin targets CPA dynamic plugin ABI v1 and is compiled against the latest
-verified CPA SDK baseline. Release v0.3.0 uses CLIProxyAPI v7.2.94. The CPA
+verified CPA SDK baseline. Release v0.3.1 uses CLIProxyAPI v7.2.94. The CPA
 image remains an environment variable and is never rebuilt or forked here.
 
 A CPA upgrade should follow this sequence:
