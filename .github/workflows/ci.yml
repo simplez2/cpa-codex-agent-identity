@@ -52,6 +52,19 @@ jobs:
           set -euo pipefail
           /tmp/gitleaks dir . --redact --no-banner --no-color
           /tmp/gitleaks git . --log-opts='--all' --redact --no-banner --no-color
+      - name: Enforce private Git identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          noreply='^(noreply@github\.com|[^[:space:]@]+@users\.noreply\.github\.com)$'
+          if git log --all --format='%ae' | grep -Evq "${noreply}"; then
+            echo '::error::Git history contains a non-noreply author email.'
+            exit 1
+          fi
+          if git for-each-ref --format='%(taggeremail:trim)' refs/tags | grep -Evq "^(|noreply@github\.com|[^[:space:]@]+@users\.noreply\.github\.com)$"; then
+            echo '::error::A tag contains a non-noreply tagger email.'
+            exit 1
+          fi
 
   sidecar:
     runs-on: ubuntu-24.04
