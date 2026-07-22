@@ -28,6 +28,31 @@ jobs:
       - name: Validate plugin registry
         run: jq -e -f .github/scripts/validate-registry.jq registry.json
 
+  secrets:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install verified Gitleaks
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="/tmp/gitleaks_8.30.1_linux_x64.tar.gz"
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
+            --output "${archive}" \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  ${archive}" | sha256sum --check --strict
+          tar -xzf "${archive}" -C /tmp gitleaks
+          /tmp/gitleaks version
+      - name: Scan current tree and Git history
+        shell: bash
+        run: |
+          set -euo pipefail
+          /tmp/gitleaks dir . --redact --no-banner --no-color
+          /tmp/gitleaks git . --log-opts='--all' --redact --no-banner --no-color
+
   sidecar:
     runs-on: ubuntu-24.04
     steps:
