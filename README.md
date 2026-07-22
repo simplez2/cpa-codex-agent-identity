@@ -14,6 +14,7 @@ The first public release keeps the mature sidecar data plane instead of rewritin
 ## Highlights
 
 - Appears in CPAMC as an Agent Identity resource page.
+- Reuses CPAMC's live light/dark theme variables, including theme changes across the plugin and sidecar iframe boundary.
 - Supports Agent Identity JWT and Personal Access Token credentials.
 - Imports plain text, JSON, JSONL, and TXT files.
 - Previews and validates a batch without writing anything.
@@ -68,7 +69,7 @@ Treat the management password, encryption key, and generated cais_ values as sec
 ## Requirements
 
 - A CPA build with dynamic plugin ABI v1, AuthProvider, Management API resources, and host auth-file management support.
-- CLIProxyAPI v7.2.94 is the SDK baseline for release v0.3.1. The plugin uses
+- CLIProxyAPI v7.2.95 is the SDK baseline for release v0.3.2. The plugin uses
   dynamic plugin ABI v1; always canary-test it against the exact CPA image you
   plan to deploy.
 - Linux amd64 or Linux arm64 for the released .so files.
@@ -84,7 +85,7 @@ make test
 make race
 make vet
 make build
-make package-plugin VERSION=0.3.1 GOOS=linux GOARCH=amd64
+make package-plugin VERSION=0.3.2 GOOS=linux GOARCH=amd64
 ~~~
 
 Equivalent direct commands are:
@@ -118,8 +119,8 @@ plugins:
 The released Plugin Store assets follow CPA's required names:
 
 ~~~text
-codex-agent-identity_0.3.1_linux_amd64.zip
-codex-agent-identity_0.3.1_linux_arm64.zip
+codex-agent-identity_0.3.2_linux_amd64.zip
+codex-agent-identity_0.3.2_linux_arm64.zip
 checksums.txt
 ~~~
 
@@ -147,7 +148,7 @@ Mount the host directory into CPA:
 ~~~yaml
 services:
   cli-proxy-api:
-    image: eceasy/cli-proxy-api:v7.2.94
+    image: eceasy/cli-proxy-api:v7.2.95
     volumes:
       - ./config.yaml:/CLIProxyAPI/config.yaml
       - ./auths:/root/.cli-proxy-api

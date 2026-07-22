@@ -16,6 +16,7 @@ JWT 或 PAT。现有官方 OAuth 和第三方 API 渠道不由本插件接管。
 ## 主要能力
 
 - 在 CPAMC 左侧显示 Agent Identity 管理入口，交互方式与 Keeper 插件一致。
+- 直接复用 CPAMC 的亮色/暗色主题变量，CPA 切换主题时插件壳与 sidecar iframe 同步切换。
 - 支持 Agent Identity JWT 和当前以 at- 开头的 Personal Access Token。
 - 支持粘贴或上传 TXT、JSON、JSONL，单批最多 200 条、4 MiB。
 - 强制先预检后导入；预检验证官方信息，但不会写入磁盘或 CPA。
@@ -29,7 +30,7 @@ JWT 或 PAT。现有官方 OAuth 和第三方 API 渠道不由本插件接管。
 
 ## 版本边界
 
-v0.3.1 使用 Go 1.26，并以 CLIProxyAPI v7.2.94 SDK 为编译基线。插件使用
+v0.3.2 使用 Go 1.26，并以 CLIProxyAPI v7.2.95 SDK 为编译基线。插件使用
 动态插件 ABI v1，但正式升级 CPA 前仍必须用目标官方镜像做独立 canary。
 
 首版保留稳定 sidecar 数据面，没有仓促把 AgentAssertion、PAT、图片、SSE、
@@ -148,7 +149,7 @@ make test
 make race
 make vet
 make build
-make package-plugin VERSION=0.3.1 GOOS=linux GOARCH=amd64
+make package-plugin VERSION=0.3.2 GOOS=linux GOARCH=amd64
 ~~~
 
 vX.Y.Z 标签会生成 Linux amd64/arm64 插件 zip、sidecar tar.gz、

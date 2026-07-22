@@ -1,4 +1,4 @@
-VERSION ?= 0.3.1
+VERSION ?= 0.3.2
 PLUGIN_NAME ?= codex-agent-identity
 PLUGIN_DIR ?= plugin/codex-agent-identity
 BUILD_DIR ?= dist
