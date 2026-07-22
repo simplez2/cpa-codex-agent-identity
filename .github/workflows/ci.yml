@@ -57,7 +57,11 @@ jobs:
         run: |
           set -euo pipefail
           noreply='^(noreply@github\.com|[^[:space:]@]+@users\.noreply\.github\.com)$'
-          if git log --all --format='%ae' | grep -Evq "${noreply}"; then
+          head_sha="${GITHUB_SHA}"
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            head_sha="$(jq -er '.pull_request.head.sha' "${GITHUB_EVENT_PATH}")"
+          fi
+          if git log "${head_sha}" --format='%ae' | grep -Evq "${noreply}"; then
             echo '::error::Git history contains a non-noreply author email.'
             exit 1
           fi
