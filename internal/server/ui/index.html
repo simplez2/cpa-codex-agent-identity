@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Codex Agent Identity</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">CPA · 凭证控制面</p>
+        <h1>Codex Agent Identity</h1>
+        <p class="lead">集中管理 Agent Identity JWT 与 <code>at-</code> Personal Access Token。原始令牌只进入加密 sidecar，CPA 仅保存随机代理密钥。</p>
+      </div>
+      <a class="back-link" href="/management.html">返回 CPA 管理中心</a>
+    </header>
+
+    <section class="card connection-card">
+      <div class="section-title">
+        <div>
+          <p class="section-kicker">管理认证</p>
+          <h2>连接 sidecar</h2>
+        </div>
+        <span id="connection-pill" class="pill neutral">未连接</span>
+      </div>
+      <label for="management-key">CPA 管理密码</label>
+      <form id="connection-form" class="row connection-row">
+        <input type="text" name="username" autocomplete="username" value="cpa-management" hidden>
+        <input id="management-key" type="password" autocomplete="current-password" placeholder="与 CPA 管理中心相同的密码">
+        <button id="connect" type="submit">连接</button>
+        <button id="forget" type="button" class="secondary">清除</button>
+      </form>
+      <p class="hint">密码仅存于当前标签页的 <code>sessionStorage</code>，不会写入 localStorage，也不会进入导出文件。</p>
+    </section>
+
+    <section class="summary-grid" aria-label="凭证摘要">
+      <article class="summary-card"><span>总凭证</span><strong id="summary-total">0</strong></article>
+      <article class="summary-card"><span>启用</span><strong id="summary-active">0</strong></article>
+      <article class="summary-card"><span>停用</span><strong id="summary-disabled">0</strong></article>
+      <article class="summary-card"><span>Agent Identity</span><strong id="summary-agent">0</strong></article>
+      <article class="summary-card"><span>PAT</span><strong id="summary-pat">0</strong></article>
+      <article class="summary-card"><span>未同步</span><strong id="summary-unsynced">0</strong></article>
+    </section>
+
+    <section class="card import-card">
+      <div class="section-title">
+        <div>
+          <p class="section-kicker">批量工作流</p>
+          <h2>预检并导入凭证</h2>
+        </div>
+        <span class="limit-note">最多 200 条 / 4 MiB</span>
+      </div>
+      <div class="import-layout">
+        <div>
+          <label for="batch-input">粘贴 Token、JSON、JSONL 或 TXT</label>
+          <textarea id="batch-input" rows="10" spellcheck="false" autocomplete="off" placeholder="每行一个 token，或粘贴 JSON 数组：&#10;[&#10;  {&quot;token&quot;:&quot;...&quot;,&quot;label&quot;:&quot;account-a&quot;},&#10;  {&quot;codex_access_token&quot;:&quot;...&quot;}&#10;]"></textarea>
+        </div>
+        <div class="file-panel">
+          <label for="batch-file">从文件读取</label>
+          <input id="batch-file" type="file" accept=".txt,.json,.jsonl,text/plain,application/json">
+          <p id="file-meta" class="hint">支持 JSON 数组、JSONL 与逐行 TXT；文件内容不会上传到其他服务。</p>
+          <label class="check-row" for="atomic-mode">
+            <input id="atomic-mode" type="checkbox" checked>
+            <span><strong>原子导入</strong><small>任一条验证或同步失败时回滚本批次已新增凭证。</small></span>
+          </label>
+          <div class="stack-actions">
+            <button id="preview-batch" type="button" class="secondary">1. 预检</button>
+            <button id="import-batch" type="button" disabled>2. 确认导入</button>
+            <button id="clear-batch" type="button" class="ghost">清空敏感输入</button>
+          </div>
+        </div>
+      </div>
+      <p class="hint">预检会验证官方 JWKS / PAT whoami，但不落盘；结果只返回脱敏身份、状态与错误类型。</p>
+    </section>
+
+    <section id="result-card" class="card hidden">
+      <div class="section-title">
+        <div>
+          <p class="section-kicker">脱敏报告</p>
+          <h2>批量处理结果</h2>
+        </div>
+        <div class="compact-actions">
+          <button id="export-json" type="button" class="secondary">导出 JSON</button>
+          <button id="export-csv" type="button" class="secondary">导出 CSV</button>
+        </div>
+      </div>
+      <div id="result-summary" class="result-summary"></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>#</th><th>标签 / ID</th><th>类型</th><th>账号</th><th>状态</th><th>说明</th></tr></thead>
+          <tbody id="result-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="section-title">
+        <div>
+          <p class="section-kicker">CPA 同步</p>
+          <h2>已导入凭证</h2>
+        </div>
+        <button id="refresh" type="button" class="secondary">刷新</button>
+      </div>
+      <div id="status" class="status" role="status" aria-live="polite">请输入管理密码并连接。</div>
+      <div id="identities" class="identities"></div>
+    </section>
+  </main>
+  <script src="./app.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,55 @@
+services:
+  codex-agent-identity-sidecar:
+    image: "${SIDECAR_IMAGE:?Set SIDECAR_IMAGE to a pinned sidecar image}"
+    container_name: codex-agent-identity-sidecar-canary
+    restart: "no"
+    init: true
+    user: "${SIDECAR_UID:-65532}:${SIDECAR_GID:-65532}"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    environment:
+      TZ: ${TZ:-UTC}
+      LISTEN_ADDR: ":8787"
+      DATA_DIR: "/data"
+      DATA_ENCRYPTION_KEY_FILE: "/run/secrets/data_encryption_key"
+      MANAGEMENT_KEY_FILE: "/run/secrets/management_key"
+      CPA_MANAGEMENT_URL: "http://cpa-agent-canary:8317/v0/management"
+      CPA_MANAGEMENT_KEY_FILE: "/run/secrets/management_key"
+      CPA_PROXY_CONFIG_POLL_INTERVAL: "1s"
+      PUBLIC_CPA_BASE_URL: "http://codex-agent-identity-sidecar-canary:8787/backend-api/codex"
+      EMBED_ALLOWED_ORIGINS: ${EMBED_ALLOWED_ORIGINS:-}
+    volumes:
+      - ./sidecar-data:/data
+      - ./secrets/management-key:/run/secrets/management_key:ro
+      - ./secrets/data-encryption-key:/run/secrets/data_encryption_key:ro
+    ports:
+      - "127.0.0.1:18788:8787"
+    networks:
+      - agent-canary
+
+  cpa-agent-canary:
+    image: "${CPA_IMAGE:?Set CPA_IMAGE to a pinned official CPA image}"
+    container_name: cpa-agent-identity-official-canary
+    restart: "no"
+    ports:
+      - "127.0.0.1:18317:8317"
+    environment:
+      TZ: ${TZ:-UTC}
+      CODEX_AGENT_IDENTITY_SIDECAR_HOSTS: ${CODEX_AGENT_IDENTITY_SIDECAR_HOSTS:-codex-agent-identity-sidecar-canary}
+    volumes:
+      - ./cpa-config.yaml:/CLIProxyAPI/config.yaml
+      - ./cpa-auths:/root/.cli-proxy-api
+      - ./cpa-logs:/CLIProxyAPI/logs
+      - ${SIDECAR_ROOT:-./runtime}/cpa-plugins:/CLIProxyAPI/plugins:${CPA_PLUGIN_MOUNT_MODE:-ro}
+    networks:
+      - agent-canary
+    depends_on:
+      - codex-agent-identity-sidecar
+
+networks:
+  agent-canary:
+    name: cpa-agent-identity-canary

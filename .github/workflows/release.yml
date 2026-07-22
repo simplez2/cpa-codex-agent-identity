@@ -1,0 +1,134 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            plugin/codex-agent-identity/go.sum
+      - name: Check formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+          find . -type f -name '*.go' -not -path './.git/*' -print0 | xargs -0 gofmt -l | tee /tmp/gofmt.out
+          test ! -s /tmp/gofmt.out
+      - name: Validate registry
+        run: jq -e '.schema_version == 1 and (.plugins | length == 1) and .plugins[0].id == "codex-agent-identity" and .plugins[0].version == "0.3.0"' registry.json
+      - run: make test
+      - run: make race
+      - run: make vet
+
+  artifacts:
+    name: Build linux/${{ matrix.goarch }}
+    needs: verify
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goarch: amd64
+            runner: ubuntu-24.04
+          - goarch: arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            plugin/codex-agent-identity/go.sum
+      - name: Resolve version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
+          echo "VERSION=${VERSION}" >> "${GITHUB_ENV}"
+      - name: Build plugin archive
+        run: make package-plugin VERSION="${VERSION}" GOOS=linux GOARCH="${{ matrix.goarch }}"
+      - name: Build sidecar archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="dist/cpa-codex-agent-identity-sidecar"
+          archive="dist/cpa-codex-agent-identity-sidecar_${VERSION}_linux_${{ matrix.goarch }}.tar.gz"
+          CGO_ENABLED=0 GOOS=linux GOARCH="${{ matrix.goarch }}" go build -trimpath -buildvcs=false -ldflags "-s -w" -o "${binary}" ./cmd/sidecar
+          tar -C dist -czf "${archive}" cpa-codex-agent-identity-sidecar
+          sha256sum "${archive}" > "${archive}.sha256"
+          rm -f "${binary}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux-${{ matrix.goarch }}
+          path: |
+            dist/*.zip
+            dist/*.zip.sha256
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+          if-no-files-found: error
+
+  release:
+    needs: artifacts
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum -- *.zip *.tar.gz | sort -k 2 > checksums.txt)
+          gh release create "${GITHUB_REF_NAME}" dist/*.zip dist/*.tar.gz dist/checksums.txt \
+            --repo "${GITHUB_REPOSITORY}" \
+            --verify-tag \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes
+
+  container:
+    needs: verify
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
+            ghcr.io/${{ github.repository }}:latest
+          provenance: mode=max
+          sbom: true

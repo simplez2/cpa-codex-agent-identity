@@ -1,0 +1,58 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Check Go formatting
+        shell: bash
+        run: |
+          set -euo pipefail
+          find . -type f -name '*.go' -not -path './.git/*' -print0 | xargs -0 gofmt -l | tee /tmp/gofmt.out
+          test ! -s /tmp/gofmt.out
+      - name: Validate plugin registry
+        run: jq -e '.schema_version == 1 and (.plugins | length == 1) and .plugins[0].id == "codex-agent-identity" and .plugins[0].version == "0.3.0"' registry.json
+
+  sidecar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: |
+            go.sum
+            plugin/codex-agent-identity/go.sum
+      - run: go test ./... -count=1
+      - run: go test -race ./... -count=1
+      - run: go vet ./...
+      - run: CGO_ENABLED=0 go build -trimpath -buildvcs=false ./cmd/sidecar
+
+  cpa-plugin:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugin/codex-agent-identity
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: plugin/codex-agent-identity/go.mod
+          cache-dependency-path: plugin/codex-agent-identity/go.sum
+      - run: go test ./... -count=1
+      - run: go test -race ./... -count=1
+      - run: go vet ./...
+      - run: CGO_ENABLED=1 go build -trimpath -buildvcs=false -buildmode=c-shared -o /tmp/codex-agent-identity.so .

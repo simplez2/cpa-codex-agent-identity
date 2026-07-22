@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">Codex Agent Identity</title>
+  <desc id="desc">A shield containing a connected identity mark</desc>
+  <defs>
+    <linearGradient id="g" x1="8" y1="4" x2="56" y2="60" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#34d399"/>
+      <stop offset="1" stop-color="#2563eb"/>
+    </linearGradient>
+  </defs>
+  <path fill="#07111f" d="M32 2 56 11v18c0 15.3-9.7 27.3-24 33C17.7 56.3 8 44.3 8 29V11L32 2Z"/>
+  <path fill="url(#g)" d="M32 6.5 52 14v15c0 12.5-7.5 22.6-20 28-12.5-5.4-20-15.5-20-28V14l20-7.5Z"/>
+  <circle cx="32" cy="25" r="8" fill="#eef7ff"/>
+  <path fill="#eef7ff" d="M18 45.5c1.8-7.1 6.5-11 14-11s12.2 3.9 14 11c-3.5 4-8.2 7.1-14 9.6-5.8-2.5-10.5-5.6-14-9.6Z"/>
+  <path fill="#07111f" d="M29 22h6v6h-6zM22 42h20v4H22z" opacity=".18"/>
+</svg>

@@ -1,0 +1,848 @@
+diff --git a/src/components/quota/QuotaCard.tsx b/src/components/quota/QuotaCard.tsx
+index 36d6f4fa484ea21c407100fb4762ca7a6df2744c..24bc8eaaa8d0c5a3eeb3eecc82f4c71c3756ccd7 100644
+--- a/src/components/quota/QuotaCard.tsx
++++ b/src/components/quota/QuotaCard.tsx
+@@ -69,0 +70 @@ interface QuotaCardProps<TState extends QuotaStatusState> {
++  resetQuotaOptions?: ReactNode;
+@@ -82,0 +84 @@ export function QuotaCard<TState extends QuotaStatusState>({
++  resetQuotaOptions,
+@@ -151,0 +154 @@ export function QuotaCard<TState extends QuotaStatusState>({
++        {quotaStatus === 'success' && resetQuotaOptions}
+diff --git a/src/components/quota/QuotaSection.tsx b/src/components/quota/QuotaSection.tsx
+index a368e6659f4f5546f9c3dea8eca0993641b9efe2..a26d04c2b5c93f1322c8718444ee2f2d476e620b 100644
+--- a/src/components/quota/QuotaSection.tsx
++++ b/src/components/quota/QuotaSection.tsx
+@@ -23 +23 @@ import { useQuotaLoader } from './useQuotaLoader';
+-import type { QuotaConfig } from './quotaConfigs';
++import type { QuotaConfig, QuotaResetOption } from './quotaConfigs';
+@@ -117,0 +118,3 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
++  const [selectedResetOptionKeys, setSelectedResetOptionKeys] = useState<Record<string, string>>(
++    {}
++  );
+@@ -245 +248 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
+-    (file: AuthFileItem) => {
++    (file: AuthFileItem, selectedOption?: QuotaResetOption) => {
+@@ -254 +257,6 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
+-        message: t('codex_quota.reset_confirm_message', { name: file.name }),
++        message: selectedOption
++          ? t('codex_quota.reset_confirm_selected_message', {
++              name: file.name,
++              credit: selectedOption.label,
++            })
++          : t('codex_quota.reset_confirm_message', { name: file.name }),
+@@ -261 +269 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
+-            const data = await resetQuota(file, t);
++            const data = await resetQuota(file, t, selectedOption);
+@@ -267,0 +276,5 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
++              setSelectedResetOptionKeys((current) => {
++                const next = { ...current };
++                delete next[file.name];
++                return next;
++              });
+@@ -360,0 +374,45 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
++              const resetOptions = itemQuota ? (config.getResetOptions?.(itemQuota, t) ?? []) : [];
++              const selectedResetOption =
++                resetOptions.find((option) => option.key === selectedResetOptionKeys[item.name]) ??
++                resetOptions[0];
++              const resetQuotaOptions =
++                config.getResetOptions && resetOptions.length > 0 ? (
++                  <fieldset className={styles.codexResetCreditPicker}>
++                    <legend className={styles.codexResetCreditsTitle}>
++                      {t('codex_quota.reset_credit_picker_label')}
++                    </legend>
++                    {resetOptions.map((option) => {
++                      const selected = selectedResetOption?.key === option.key;
++                      return (
++                        <label
++                          key={option.key}
++                          className={`${styles.codexResetCreditOption} ${
++                            selected ? styles.codexResetCreditOptionSelected : ''
++                          }`}
++                        >
++                          <input
++                            type="radio"
++                            name={`${config.type}-reset-credit-${item.name}`}
++                            value={option.key}
++                            checked={selected}
++                            disabled={!canUseQuotaAction || isResettingQuota}
++                            onChange={() =>
++                              setSelectedResetOptionKeys((current) => ({
++                                ...current,
++                                [item.name]: option.key,
++                              }))
++                            }
++                          />
++                          <span className={styles.codexResetCreditOptionText}>
++                            <span className={styles.codexResetCreditOptionLabel}>
++                              {option.label}
++                            </span>
++                            <span className={styles.codexResetCreditOptionDescription}>
++                              {option.description}
++                            </span>
++                          </span>
++                        </label>
++                      );
++                    })}
++                  </fieldset>
++                ) : undefined;
+@@ -362 +420,3 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
+-                config.resetQuota && showResetQuotaAction ? (
++                config.resetQuota &&
++                showResetQuotaAction &&
++                (!config.getResetOptions || selectedResetOption) ? (
+@@ -368 +428 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
+-                    onClick={() => resetQuotaForFile(item)}
++                    onClick={() => resetQuotaForFile(item, selectedResetOption)}
+@@ -390,0 +451 @@ export function QuotaSection<TState extends QuotaStatusState, TData>({
++                  resetQuotaOptions={resetQuotaOptions}
+diff --git a/src/components/quota/quotaConfigs.ts b/src/components/quota/quotaConfigs.ts
+index c79102e871432e978b91f5343c8c20074764398e..b6afb535a2ff0c30d743258b6a6becff7da14bde 100644
+--- a/src/components/quota/quotaConfigs.ts
++++ b/src/components/quota/quotaConfigs.ts
+@@ -56,0 +57,3 @@ import {
++  normalizeCodexResetCreditConsumeOutcome,
++  buildCodexResetCreditConsumePayload,
++  canUseCodexResetCredit,
+@@ -99 +102 @@ type CodexResetCreditsData = {
+-  credits: CodexRateLimitResetCredit[];
++  credits: CodexRateLimitResetCredit[] | null;
+@@ -107 +110,2 @@ type CodexQuotaData = {
+-  rateLimitResetCredits: CodexRateLimitResetCredit[];
++  rateLimitResetCreditsApplicableCount: number | null;
++  rateLimitResetCredits: CodexRateLimitResetCredit[] | null;
+@@ -129,0 +134,7 @@ export interface QuotaStore {
++export interface QuotaResetOption {
++  key: string;
++  label: string;
++  description: string;
++  requestValue?: string;
++}
++
+@@ -135 +146 @@ export interface QuotaConfig<TState, TData> {
+-  resetQuota?: (file: AuthFileItem, t: TFunction) => Promise<TData>;
++  resetQuota?: (file: AuthFileItem, t: TFunction, option?: QuotaResetOption) => Promise<TData>;
+@@ -136,0 +148 @@ export interface QuotaConfig<TState, TData> {
++  getResetOptions?: (quota: TState, t: TFunction) => QuotaResetOption[];
+@@ -557 +569 @@ const fetchCodexResetCredits = async (
+-        credits: [],
++        credits: null,
+@@ -566 +578 @@ const fetchCodexResetCredits = async (
+-        credits: [],
++        credits: null,
+@@ -579 +591 @@ const fetchCodexResetCredits = async (
+-      credits: [],
++      credits: null,
+@@ -616,0 +629,3 @@ const fetchCodexQuota = async (file: AuthFileItem, t: TFunction): Promise<CodexQ
++  const rateLimitResetCreditsApplicableCount = normalizeNumberValue(
++    resetCredits?.applicable_available_count ?? resetCredits?.applicableAvailableCount
++  );
+@@ -619 +634 @@ const fetchCodexQuota = async (file: AuthFileItem, t: TFunction): Promise<CodexQ
+-    resetCreditsData.credits.length > 0 ? resetCreditsData.credits.length : null;
++    (resetCreditsData.credits?.length ?? 0) > 0 ? (resetCreditsData.credits?.length ?? null) : null;
+@@ -629,0 +645 @@ const fetchCodexQuota = async (file: AuthFileItem, t: TFunction): Promise<CodexQ
++    rateLimitResetCreditsApplicableCount,
+@@ -650 +666,2 @@ const consumeCodexRateLimitResetCredit = async (
+-  t: TFunction
++  t: TFunction,
++  creditId?: string | null
+@@ -665,3 +682,3 @@ const consumeCodexRateLimitResetCredit = async (
+-    data: JSON.stringify({
+-      redeem_request_id: createCodexRedeemRequestId(),
+-    }),
++    data: JSON.stringify(
++      buildCodexResetCreditConsumePayload(createCodexRedeemRequestId(), creditId)
++    ),
+@@ -672,0 +690,8 @@ const consumeCodexRateLimitResetCredit = async (
++
++  const outcome = normalizeCodexResetCreditConsumeOutcome(result.body ?? result.bodyText);
++  if (outcome === 'nothing_to_reset') {
++    throw new Error(t('codex_quota.reset_nothing_to_reset'));
++  }
++  if (outcome === 'no_credit') {
++    throw new Error(t('codex_quota.reset_no_credit'));
++  }
+@@ -675,2 +700,6 @@ const consumeCodexRateLimitResetCredit = async (
+-const resetCodexQuota = async (file: AuthFileItem, t: TFunction): Promise<CodexQuotaData> => {
+-  await consumeCodexRateLimitResetCredit(file, t);
++const resetCodexQuota = async (
++  file: AuthFileItem,
++  t: TFunction,
++  option?: QuotaResetOption
++): Promise<CodexQuotaData> => {
++  await consumeCodexRateLimitResetCredit(file, t, option?.requestValue);
+@@ -679,0 +709,47 @@ const resetCodexQuota = async (file: AuthFileItem, t: TFunction): Promise<CodexQ
++const getCodexResetOptions = (quota: CodexQuotaState, t: TFunction): QuotaResetOption[] => {
++  const credits = [...(quota.rateLimitResetCredits ?? [])]
++    .filter((credit) => credit.id.trim())
++    .sort((left, right) => {
++      const parsedLeftExpiry = left.expiresAt ? Date.parse(left.expiresAt) : Number.NaN;
++      const parsedRightExpiry = right.expiresAt ? Date.parse(right.expiresAt) : Number.NaN;
++      const leftExpiry = Number.isNaN(parsedLeftExpiry)
++        ? Number.POSITIVE_INFINITY
++        : parsedLeftExpiry;
++      const rightExpiry = Number.isNaN(parsedRightExpiry)
++        ? Number.POSITIVE_INFINITY
++        : parsedRightExpiry;
++      return leftExpiry - rightExpiry;
++    });
++
++  if (credits.length > 0) {
++    return credits.map((credit, index) => {
++      const grantedAt =
++        formatShanghaiDateTime(credit.grantedAt) || t('codex_quota.reset_credit_time_unknown');
++      const expiresAt = credit.expiresAt
++        ? formatShanghaiDateTime(credit.expiresAt) || t('codex_quota.reset_credit_time_unknown')
++        : t('codex_quota.reset_credit_never_expires');
++      return {
++        key: `credit-${index}`,
++        label: credit.title || t('codex_quota.reset_credit_number', { index: index + 1 }),
++        description: t('codex_quota.reset_credit_time_range', {
++          grantedAt,
++          expiresAt,
++        }),
++        requestValue: credit.id,
++      };
++    });
++  }
++
++  if ((quota.rateLimitResetCreditsAvailableCount ?? 0) > 0) {
++    return [
++      {
++        key: 'next-available-credit',
++        label: t('codex_quota.reset_credit_next_available'),
++        description: t('codex_quota.reset_credit_details_unavailable'),
++      },
++    ];
++  }
++
++  return [];
++};
++
+@@ -900 +976 @@ const renderCodexItems = (
+-  const rateLimitResetCredits = quota.rateLimitResetCredits ?? [];
++  const rateLimitResetCredits = quota.rateLimitResetCredits ?? null;
+@@ -960 +1036 @@ const renderCodexItems = (
+-  if (rateLimitResetCredits.length > 0) {
++  if ((rateLimitResetCredits?.length ?? 0) === 0 && rateLimitResetCreditsError) {
+@@ -964,25 +1040,4 @@ const renderCodexItems = (
+-        { key: 'reset-credit-expiries', className: styleMap.codexResetCredits },
+-        h(
+-          'div',
+-          { className: styleMap.codexResetCreditsTitle },
+-          t('codex_quota.reset_credits_expiry_label')
+-        ),
+-        ...rateLimitResetCredits.map((credit, index) =>
+-          h(
+-            'div',
+-            {
+-              key: credit.id || `${credit.expiresAt}-${index}`,
+-              className: styleMap.codexResetCreditRow,
+-            },
+-            h(
+-              'span',
+-              { className: styleMap.codexResetCreditLabel },
+-              t('codex_quota.reset_credit_number', { index: index + 1 })
+-            ),
+-            h(
+-              'span',
+-              { className: styleMap.codexResetCreditTime },
+-              formatShanghaiDateTime(credit.expiresAt) || credit.expiresAt
+-            )
+-          )
+-        )
++        { key: 'reset-credit-expiry-error', className: styleMap.codexResetCreditsError },
++        t('codex_quota.reset_credits_expiry_failed', {
++          message: rateLimitResetCreditsError,
++        })
+@@ -991 +1046,5 @@ const renderCodexItems = (
+-  } else if (rateLimitResetCreditsError) {
++  } else if (
++    rateLimitResetCreditsAvailableCount !== null &&
++    rateLimitResetCreditsAvailableCount > 0 &&
++    rateLimitResetCredits === null
++  ) {
+@@ -995,4 +1054,2 @@ const renderCodexItems = (
+-        { key: 'reset-credit-expiry-error', className: styleMap.codexResetCreditsError },
+-        t('codex_quota.reset_credits_expiry_failed', {
+-          message: rateLimitResetCreditsError,
+-        })
++        { key: 'reset-credit-expiry-unavailable', className: styleMap.codexResetCreditsError },
++        t('codex_quota.reset_credits_expiry_unavailable')
+@@ -1323 +1380,2 @@ export const CODEX_CONFIG: QuotaConfig<CodexQuotaState, CodexQuotaData> = {
+-  canResetQuota: (quota) => (quota.rateLimitResetCreditsAvailableCount ?? 0) > 0,
++  canResetQuota: canUseCodexResetCredit,
++  getResetOptions: getCodexResetOptions,
+@@ -1329 +1387,3 @@ export const CODEX_CONFIG: QuotaConfig<CodexQuotaState, CodexQuotaData> = {
+-    rateLimitResetCredits: [],
++    rateLimitResetCreditsAvailableCount: null,
++    rateLimitResetCreditsApplicableCount: null,
++    rateLimitResetCredits: null,
+@@ -1337,0 +1398 @@ export const CODEX_CONFIG: QuotaConfig<CodexQuotaState, CodexQuotaData> = {
++    rateLimitResetCreditsApplicableCount: data.rateLimitResetCreditsApplicableCount,
+@@ -1344 +1405,3 @@ export const CODEX_CONFIG: QuotaConfig<CodexQuotaState, CodexQuotaData> = {
+-    rateLimitResetCredits: [],
++    rateLimitResetCreditsAvailableCount: null,
++    rateLimitResetCreditsApplicableCount: null,
++    rateLimitResetCredits: null,
+diff --git a/src/i18n/locales/en.json b/src/i18n/locales/en.json
+index 77994d7acb440fa86660ee119ce9e76cc04c89a8..09efe5a39072ef2143b7f6fd456445e7e92cbf5d 100644
+--- a/src/i18n/locales/en.json
++++ b/src/i18n/locales/en.json
+@@ -393,2 +393,3 @@
+-    "reset_credits_label": "Manual resets",
+-    "reset_credits_expiry_label": "Manual reset expiry (GMT+8)",
++    "reset_credits_label": "Reset credits",
++    "reset_credits_applicable_label": "Currently applicable resets",
++    "reset_credits_expiry_label": "Select a reset credit (GMT+8)",
+@@ -395,0 +397,6 @@
++    "reset_credit_picker_label": "Select a reset credit (all times GMT+8)",
++    "reset_credit_time_range": "Granted: {{grantedAt}} · Expires: {{expiresAt}}",
++    "reset_credit_time_unknown": "Not provided by upstream",
++    "reset_credit_never_expires": "Never expires",
++    "reset_credit_next_available": "Let the upstream select the next reset credit",
++    "reset_credit_details_unavailable": "This credential exposes only the count; the upstream will select the next available credit",
+@@ -396,0 +404 @@
++    "reset_credits_expiry_unavailable": "Credit details are unavailable from upstream; the available count can still be redeemed automatically",
+@@ -398 +406 @@
+-    "reset_button": "Reset quota",
++    "reset_button": "Use selected credit",
+@@ -400,0 +409 @@
++    "reset_confirm_selected_message": "Use \"{{credit}}\" to reset the Codex quota for \"{{name}}\"?",
+@@ -402,0 +412,2 @@
++    "reset_nothing_to_reset": "No eligible quota window can be reset right now; no reset credit was used",
++    "reset_no_credit": "The upstream reports that no reset credit is available",
+diff --git a/src/i18n/locales/ru.json b/src/i18n/locales/ru.json
+index 4d8c4f7d321e463605bb40bb5030249f19294a9a..6e3e4d41268cf593c39b3201efcc904c468aa3d9 100644
+--- a/src/i18n/locales/ru.json
++++ b/src/i18n/locales/ru.json
+@@ -386,2 +386,3 @@
+-    "reset_credits_label": "Ручные сбросы",
+-    "reset_credits_expiry_label": "Срок действия ручных сбросов (GMT+8)",
++    "reset_credits_label": "Купоны сброса",
++    "reset_credits_applicable_label": "Доступно для применения сейчас",
++    "reset_credits_expiry_label": "Выбор купона сброса (GMT+8)",
+@@ -388,0 +390,6 @@
++    "reset_credit_picker_label": "Выберите купон сброса (время GMT+8)",
++    "reset_credit_time_range": "Выдан: {{grantedAt}} · Истекает: {{expiresAt}}",
++    "reset_credit_time_unknown": "Сервер не сообщил",
++    "reset_credit_never_expires": "Не истекает",
++    "reset_credit_next_available": "Пусть сервер выберет следующий купон",
++    "reset_credit_details_unavailable": "Эти учётные данные показывают только количество; сервер выберет следующий доступный купон",
+@@ -389,0 +397 @@
++    "reset_credits_expiry_unavailable": "Подробности купонов недоступны; доступное количество всё равно можно использовать автоматически",
+@@ -390,0 +399,9 @@
++    "reset_button": "Использовать выбранный купон",
++    "reset_confirm_title": "Использовать купон сброса Codex",
++    "reset_confirm_message": "Будет использован 1 купон для сброса квоты Codex \"{{name}}\". Продолжить?",
++    "reset_confirm_selected_message": "Использовать \"{{credit}}\" для сброса квоты Codex \"{{name}}\"?",
++    "reset_confirm_button": "Подтвердить",
++    "reset_success": "Квота Codex для \"{{name}}\" сброшена",
++    "reset_nothing_to_reset": "Сейчас нет подходящего окна квоты для сброса; купон не был использован",
++    "reset_no_credit": "Сервер сообщает, что доступных купонов сброса нет",
++    "reset_failed": "Не удалось сбросить квоту Codex для \"{{name}}\": {{message}}",
+diff --git a/src/i18n/locales/zh-CN.json b/src/i18n/locales/zh-CN.json
+index 22fc9e91552a698c101dd256db63c8c94e43cf08..1d88a4c82568c45835138837d62abd402a1dc5d5 100644
+--- a/src/i18n/locales/zh-CN.json
++++ b/src/i18n/locales/zh-CN.json
+@@ -393,11 +393,22 @@
+-    "reset_credits_label": "主动重置次数",
+-    "reset_credits_expiry_label": "主动重置过期时间（GMT+8）",
+-    "reset_credit_number": "第 {{index}} 次",
+-    "reset_credits_expiry_failed": "主动重置过期时间获取失败：{{message}}",
+-    "reset_credits_invalid_payload": "主动重置过期时间响应格式无效",
+-    "reset_button": "重置额度",
+-    "reset_confirm_title": "重置 Codex 额度",
+-    "reset_confirm_message": "将消耗 1 次主动重置次数来重置 \"{{name}}\" 的 Codex 额度。是否继续？",
+-    "reset_confirm_button": "确认重置",
+-    "reset_success": "已重置 \"{{name}}\" 的 Codex 额度",
+-    "reset_failed": "重置 \"{{name}}\" 的 Codex 额度失败：{{message}}",
++    "reset_credits_label": "重置券",
++    "reset_credits_applicable_label": "当前可用重置券",
++    "reset_credits_expiry_label": "选择重置券（东八区）",
++    "reset_credit_number": "第 {{index}} 张",
++    "reset_credit_picker_label": "选择要使用的重置券（时间均为东八区）",
++    "reset_credit_time_range": "发放：{{grantedAt}} · 过期：{{expiresAt}}",
++    "reset_credit_time_unknown": "上游未提供",
++    "reset_credit_never_expires": "永不过期",
++    "reset_credit_next_available": "由上游选择下一张重置券",
++    "reset_credit_details_unavailable": "当前凭据只能读取数量；使用时由上游自动选择下一张可用券",
++    "reset_credits_expiry_failed": "重置券过期时间获取失败：{{message}}",
++    "reset_credits_expiry_unavailable": "单券明细：上游未提供（当前凭据仍可按可用数量使用，由上游自动选择）",
++    "reset_credits_invalid_payload": "重置券过期时间响应格式无效",
++    "reset_button": "使用所选重置券",
++    "reset_confirm_title": "使用 Codex 重置券",
++    "reset_confirm_message": "将消耗 1 张重置券来重置 \"{{name}}\" 的 Codex 额度。是否继续？",
++    "reset_confirm_selected_message": "将使用“{{credit}}”重置 \"{{name}}\" 的 Codex 额度。是否继续？",
++    "reset_confirm_button": "确认使用",
++    "reset_success": "已使用重置券重置 \"{{name}}\" 的 Codex 额度",
++    "reset_nothing_to_reset": "当前没有符合条件的额度窗口可重置，重置券未被使用",
++    "reset_no_credit": "上游报告当前没有可用重置券",
++    "reset_failed": "使用重置券重置 \"{{name}}\" 的 Codex 额度失败：{{message}}",
+diff --git a/src/i18n/locales/zh-TW.json b/src/i18n/locales/zh-TW.json
+index 394c5f5d2dcf7f1b0a8f9d40b6376015ea03eafa..745be964ba1dc3766d988a6064d8f098df56ddf4 100644
+--- a/src/i18n/locales/zh-TW.json
++++ b/src/i18n/locales/zh-TW.json
+@@ -393,11 +393,22 @@
+-    "reset_credits_label": "主動重置次數",
+-    "reset_credits_expiry_label": "主動重置過期時間（GMT+8）",
+-    "reset_credit_number": "第 {{index}} 次",
+-    "reset_credits_expiry_failed": "主動重置過期時間取得失敗：{{message}}",
+-    "reset_credits_invalid_payload": "主動重置過期時間回應格式無效",
+-    "reset_button": "重置配額",
+-    "reset_confirm_title": "重置 Codex 配額",
+-    "reset_confirm_message": "將消耗 1 次主動重置次數來重置「{{name}}」的 Codex 配額。是否繼續？",
+-    "reset_confirm_button": "確認重置",
+-    "reset_success": "已重置「{{name}}」的 Codex 配額",
+-    "reset_failed": "重置「{{name}}」的 Codex 配額失敗：{{message}}",
++    "reset_credits_label": "重置券",
++    "reset_credits_applicable_label": "目前可用重置券",
++    "reset_credits_expiry_label": "選擇重置券（東八區）",
++    "reset_credit_number": "第 {{index}} 張",
++    "reset_credit_picker_label": "選擇要使用的重置券（時間均為東八區）",
++    "reset_credit_time_range": "發放：{{grantedAt}} · 過期：{{expiresAt}}",
++    "reset_credit_time_unknown": "上游未提供",
++    "reset_credit_never_expires": "永不過期",
++    "reset_credit_next_available": "由上游選擇下一張重置券",
++    "reset_credit_details_unavailable": "目前憑證只能讀取數量；使用時由上游自動選擇下一張可用券",
++    "reset_credits_expiry_failed": "重置券過期時間取得失敗：{{message}}",
++    "reset_credits_expiry_unavailable": "單券明細：上游未提供（目前憑證仍可按可用數量使用，由上游自動選擇）",
++    "reset_credits_invalid_payload": "重置券過期時間回應格式無效",
++    "reset_button": "使用所選重置券",
++    "reset_confirm_title": "使用 Codex 重置券",
++    "reset_confirm_message": "將消耗 1 張重置券來重置「{{name}}」的 Codex 配額。是否繼續？",
++    "reset_confirm_selected_message": "將使用「{{credit}}」重置「{{name}}」的 Codex 配額。是否繼續？",
++    "reset_confirm_button": "確認使用",
++    "reset_success": "已使用重置券重置「{{name}}」的 Codex 配額",
++    "reset_nothing_to_reset": "目前沒有符合條件的配額視窗可重置，重置券未被使用",
++    "reset_no_credit": "上游回報目前沒有可用重置券",
++    "reset_failed": "使用重置券重置「{{name}}」的 Codex 配額失敗：{{message}}",
+diff --git a/src/pages/QuotaPage.module.scss b/src/pages/QuotaPage.module.scss
+index 00d7538cbb8436155ca8ac664d35ff8fa741921b..b89ed5b60dc99352d5f833f1a18d2b80d238a9db 100644
+--- a/src/pages/QuotaPage.module.scss
++++ b/src/pages/QuotaPage.module.scss
+@@ -459,7 +458,0 @@
+-.codexResetCredits {
+-  display: flex;
+-  flex-direction: column;
+-  gap: 6px;
+-  padding-top: 2px;
+-}
+-
+@@ -473 +466 @@
+-.codexResetCreditRow {
++.codexResetCreditPicker {
+@@ -475,4 +468,17 @@
+-  align-items: center;
+-  justify-content: space-between;
+-  gap: $spacing-sm;
+-  padding: 6px 8px;
++  flex-direction: column;
++  gap: 6px;
++  min-width: 0;
++  margin: $spacing-sm 0 0;
++  padding: 0;
++  border: 0;
++}
++
++.codexResetCreditPicker .codexResetCreditsTitle {
++  padding: 0;
++}
++
++.codexResetCreditOption {
++  display: flex;
++  align-items: flex-start;
++  gap: 8px;
++  padding: 8px 10px;
+@@ -482,3 +488,15 @@
+-  font-size: 12px;
+-  line-height: 1.35;
+-  min-width: 0;
++  cursor: pointer;
++  transition:
++    border-color 0.15s ease,
++    background-color 0.15s ease;
++
++  input {
++    flex: 0 0 auto;
++    margin: 2px 0 0;
++    accent-color: var(--primary-color);
++  }
++
++  &:has(input:disabled) {
++    cursor: not-allowed;
++    opacity: 0.65;
++  }
+@@ -487,4 +505,3 @@
+-.codexResetCreditLabel {
+-  color: var(--text-tertiary);
+-  flex: 0 0 auto;
+-  white-space: nowrap;
++.codexResetCreditOptionSelected {
++  border-color: var(--primary-color);
++  background-color: color-mix(in srgb, var(--primary-color) 9%, var(--bg-secondary));
+@@ -493 +510,9 @@
+-.codexResetCreditTime {
++.codexResetCreditOptionText {
++  display: flex;
++  flex: 1 1 auto;
++  flex-direction: column;
++  gap: 2px;
++  min-width: 0;
++}
++
++.codexResetCreditOptionLabel {
+@@ -494,0 +520 @@
++  font-size: 12px;
+@@ -496 +522,8 @@
+-  text-align: right;
++  line-height: 1.35;
++  overflow-wrap: anywhere;
++}
++
++.codexResetCreditOptionDescription {
++  color: var(--text-tertiary);
++  font-size: 11px;
++  line-height: 1.45;
+@@ -498 +530,0 @@
+-  min-width: 0;
+diff --git a/src/types/quota.ts b/src/types/quota.ts
+index 56346fc6513752007a593624854186d852150f9a..2b1273e973554c3bfec28edb9b6fad0c8bddeffa 100644
+--- a/src/types/quota.ts
++++ b/src/types/quota.ts
+@@ -67,0 +68,2 @@ export interface CodexRateLimitResetCredits {
++  applicable_available_count?: number | string;
++  applicableAvailableCount?: number | string;
+@@ -74 +76,3 @@ export interface CodexRateLimitResetCredit {
+-  expiresAt: string;
++  expiresAt: string | null;
++  title: string;
++  description: string;
+@@ -200 +204,2 @@ export interface CodexQuotaState {
+-  rateLimitResetCredits?: CodexRateLimitResetCredit[];
++  rateLimitResetCreditsApplicableCount?: number | null;
++  rateLimitResetCredits?: CodexRateLimitResetCredit[] | null;
+diff --git a/src/utils/quota/resetCredits.ts b/src/utils/quota/resetCredits.ts
+index c63d4b811343f7748cc2cedee1749d7d4f414b09..23687c92894c3aea99a428c9cd963330beb888e5 100644
+--- a/src/utils/quota/resetCredits.ts
++++ b/src/utils/quota/resetCredits.ts
+@@ -5 +5,3 @@ export interface CodexResetCredit {
+-  expiresAt: string;
++  expiresAt: string | null;
++  title: string;
++  description: string;
+@@ -10 +12 @@ export interface CodexResetCreditsSummary {
+-  credits: CodexResetCredit[];
++  credits: CodexResetCredit[] | null;
+@@ -13,0 +16,12 @@ export interface CodexResetCreditsSummary {
++interface CodexResetCreditAvailability {
++  rateLimitResetCreditsAvailableCount?: number | null;
++  // Informational only. Official Codex gates the reset action on availableCount.
++  rateLimitResetCreditsApplicableCount?: number | null;
++}
++
++export const canUseCodexResetCredit = (quota: CodexResetCreditAvailability): boolean =>
++  (quota.rateLimitResetCreditsAvailableCount ?? 0) > 0;
++
++export type CodexResetCreditConsumeOutcome =
++  'reset' | 'already_redeemed' | 'nothing_to_reset' | 'no_credit' | 'unknown';
++
+@@ -22 +36 @@ const SHANGHAI_TIME_FORMATTER = new Intl.DateTimeFormat('en-CA', {
+-  hour12: false,
++  hourCycle: 'h23',
+@@ -24,0 +39,28 @@ const SHANGHAI_TIME_FORMATTER = new Intl.DateTimeFormat('en-CA', {
++const parseExpiryDate = (value: string): Date | null => {
++  const trimmed = value.trim();
++  if (!trimmed) return null;
++
++  const numeric = Number(trimmed);
++  let date: Date;
++  if (Number.isFinite(numeric)) {
++    const absolute = Math.abs(numeric);
++    const timestampMs =
++      absolute < 1e11
++        ? numeric * 1000
++        : absolute < 1e14
++          ? numeric
++          : absolute < 1e17
++            ? numeric / 1000
++            : numeric / 1e6;
++    date = new Date(Math.round(timestampMs));
++  } else {
++    const hasExplicitTimeZone = /(?:z|[+-]\d{2}:?\d{2})$/i.test(trimmed);
++    const isZoneLessISODateTime = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/.test(
++      trimmed
++    );
++    date = new Date(isZoneLessISODateTime && !hasExplicitTimeZone ? `${trimmed}Z` : trimmed);
++  }
++
++  return Number.isNaN(date.getTime()) ? null : date;
++};
++
+@@ -51,0 +94,31 @@ const normalizeNumberValue = (value: unknown): number | null => {
++export const normalizeCodexResetCreditConsumeOutcome = (
++  payload: unknown
++): CodexResetCreditConsumeOutcome => {
++  let parsedPayload = payload;
++  if (typeof payload === 'string') {
++    try {
++      parsedPayload = JSON.parse(payload);
++    } catch {
++      return 'unknown';
++    }
++  }
++
++  const record = asRecord(parsedPayload);
++  const rawOutcome = normalizeStringValue(record?.outcome ?? record?.code);
++  if (!rawOutcome) return 'unknown';
++
++  const normalized = rawOutcome
++    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
++    .replace(/[\s-]+/g, '_')
++    .toLowerCase();
++  switch (normalized) {
++    case 'reset':
++    case 'already_redeemed':
++    case 'nothing_to_reset':
++    case 'no_credit':
++      return normalized;
++    default:
++      return 'unknown';
++  }
++};
++
+@@ -62,2 +135,2 @@ const normalizeCredit = (value: unknown): CodexResetCredit | null => {
+-  const expiresAt = normalizeStringValue(record.expires_at ?? record.expiresAt);
+-  if (!expiresAt) return null;
++  const id = normalizeStringValue(record.id);
++  if (!id) return null;
+@@ -66 +139 @@ const normalizeCredit = (value: unknown): CodexResetCredit | null => {
+-    id: normalizeStringValue(record.id) ?? '',
++    id,
+@@ -69 +142,3 @@ const normalizeCredit = (value: unknown): CodexResetCredit | null => {
+-    expiresAt,
++    expiresAt: normalizeStringValue(record.expires_at ?? record.expiresAt),
++    title: normalizeStringValue(record.title) ?? '',
++    description: normalizeStringValue(record.description) ?? '',
+@@ -72,0 +148,10 @@ const normalizeCredit = (value: unknown): CodexResetCredit | null => {
++export const buildCodexResetCreditConsumePayload = (
++  redeemRequestId: string,
++  creditId?: string | null
++): { redeem_request_id: string; credit_id?: string } => {
++  const normalizedCreditId = normalizeStringValue(creditId);
++  return normalizedCreditId
++    ? { redeem_request_id: redeemRequestId, credit_id: normalizedCreditId }
++    : { redeem_request_id: redeemRequestId };
++};
++
+@@ -78 +163 @@ export const normalizeCodexResetCreditsPayload = (payload: unknown): CodexResetC
+-      return { availableCount: null, credits: [], invalidPayload: true };
++      return { availableCount: null, credits: null, invalidPayload: true };
+@@ -83 +168 @@ export const normalizeCodexResetCreditsPayload = (payload: unknown): CodexResetC
+-      return { availableCount: null, credits: [], invalidPayload: true };
++      return { availableCount: null, credits: null, invalidPayload: true };
+@@ -89 +174 @@ export const normalizeCodexResetCreditsPayload = (payload: unknown): CodexResetC
+-    return { availableCount: null, credits: [], invalidPayload: true };
++    return { availableCount: null, credits: null, invalidPayload: true };
+@@ -98 +183 @@ export const normalizeCodexResetCreditsPayload = (payload: unknown): CodexResetC
+-    : [];
++    : null;
+@@ -107,4 +192,11 @@ export const normalizeCodexResetCreditsPayload = (payload: unknown): CodexResetC
+-export const formatShanghaiDateTime = (value: string): string => {
+-  const date = new Date(value);
+-  if (Number.isNaN(date.getTime())) return '';
+-  return SHANGHAI_TIME_FORMATTER.format(date).replace(',', '');
++export const formatShanghaiDateTime = (value: string | null | undefined): string => {
++  if (!value) return '';
++  const date = parseExpiryDate(value);
++  if (!date) return '';
++
++  const parts = Object.fromEntries(
++    SHANGHAI_TIME_FORMATTER.formatToParts(date)
++      .filter((part) => part.type !== 'literal')
++      .map((part) => [part.type, part.value])
++  );
++  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+diff --git a/tests/codexResetCredits.test.ts b/tests/codexResetCredits.test.ts
+new file mode 100644
+index 0000000000000000000000000000000000000000..74c513cff035448abf5500c83b22b60137ec1e25
+--- /dev/null
++++ b/tests/codexResetCredits.test.ts
+@@ -0,0 +1,178 @@
++import { describe, expect, test } from 'bun:test';
++import {
++  buildCodexResetCreditConsumePayload,
++  canUseCodexResetCredit,
++  formatShanghaiDateTime,
++  normalizeCodexResetCreditConsumeOutcome,
++  normalizeCodexResetCreditsPayload,
++} from '../src/utils/quota/resetCredits';
++
++describe('Codex reset credit details', () => {
++  test('preserves null credits when upstream only exposes a count', () => {
++    expect(
++      normalizeCodexResetCreditsPayload({
++        credits: null,
++        available_count: 1,
++        applicable_available_count: 0,
++      })
++    ).toEqual({
++      availableCount: 1,
++      credits: null,
++      invalidPayload: false,
++    });
++  });
++
++  test('distinguishes a successful empty detail list', () => {
++    expect(normalizeCodexResetCreditsPayload({ credits: [], available_count: 0 })).toEqual({
++      availableCount: 0,
++      credits: [],
++      invalidPayload: false,
++    });
++  });
++
++  test('keeps only available Codex rate-limit credits with a usable opaque id', () => {
++    const summary = normalizeCodexResetCreditsPayload({
++      available_count: 2,
++      credits: [
++        {
++          id: 'credit-1',
++          reset_type: 'codex_rate_limits',
++          status: 'available',
++          granted_at: '2026-07-01T00:00:00Z',
++          expires_at: '2026-08-01T00:00:00Z',
++        },
++        {
++          id: 'other-credit',
++          reset_type: 'other',
++          status: 'available',
++          expires_at: '2026-08-01T00:00:00Z',
++        },
++      ],
++    });
++
++    expect(summary.credits).toEqual([
++      {
++        id: 'credit-1',
++        status: 'available',
++        grantedAt: '2026-07-01T00:00:00Z',
++        expiresAt: '2026-08-01T00:00:00Z',
++        title: '',
++        description: '',
++      },
++    ]);
++  });
++
++  test('keeps a selectable credit that does not expire', () => {
++    expect(
++      normalizeCodexResetCreditsPayload({
++        available_count: 1,
++        credits: [
++          {
++            id: 'credit-without-expiry',
++            reset_type: 'codex_rate_limits',
++            status: 'available',
++            granted_at: 1782864000,
++            expires_at: null,
++            title: 'Full reset',
++          },
++        ],
++      }).credits
++    ).toEqual([
++      {
++        id: 'credit-without-expiry',
++        status: 'available',
++        grantedAt: '1782864000',
++        expiresAt: null,
++        title: 'Full reset',
++        description: '',
++      },
++    ]);
++  });
++
++  test('rejects invalid payloads without pretending detail is empty', () => {
++    expect(normalizeCodexResetCreditsPayload('not-json')).toEqual({
++      availableCount: null,
++      credits: null,
++      invalidPayload: true,
++    });
++  });
++});
++
++describe('Codex reset credit consume payload', () => {
++  test('forwards the selected credit id', () => {
++    expect(buildCodexResetCreditConsumePayload('redeem-1', 'credit-2')).toEqual({
++      redeem_request_id: 'redeem-1',
++      credit_id: 'credit-2',
++    });
++  });
++
++  test('lets the upstream select the next credit when details are unavailable', () => {
++    expect(buildCodexResetCreditConsumePayload('redeem-2', null)).toEqual({
++      redeem_request_id: 'redeem-2',
++    });
++  });
++});
++
++describe('Codex reset action availability', () => {
++  test('keeps count-only PAT reset usable when applicable count is zero', () => {
++    expect(
++      canUseCodexResetCredit({
++        rateLimitResetCreditsAvailableCount: 1,
++        rateLimitResetCreditsApplicableCount: 0,
++      })
++    ).toBe(true);
++  });
++
++  test('enables reset when upstream reports an applicable credit', () => {
++    expect(
++      canUseCodexResetCredit({
++        rateLimitResetCreditsAvailableCount: 1,
++        rateLimitResetCreditsApplicableCount: 1,
++      })
++    ).toBe(true);
++  });
++
++  test('hides reset only when no credits are available', () => {
++    expect(
++      canUseCodexResetCredit({
++        rateLimitResetCreditsAvailableCount: 0,
++        rateLimitResetCreditsApplicableCount: 1,
++      })
++    ).toBe(false);
++  });
++});
++
++describe('Codex reset credit consume outcome', () => {
++  test('accepts both backend code and app-server outcome spellings', () => {
++    expect(normalizeCodexResetCreditConsumeOutcome({ code: 'reset' })).toBe('reset');
++    expect(normalizeCodexResetCreditConsumeOutcome({ outcome: 'alreadyRedeemed' })).toBe(
++      'already_redeemed'
++    );
++  });
++
++  test('preserves non-consuming outcomes for the UI to report', () => {
++    expect(normalizeCodexResetCreditConsumeOutcome('{"code":"nothing_to_reset"}')).toBe(
++      'nothing_to_reset'
++    );
++    expect(normalizeCodexResetCreditConsumeOutcome({ outcome: 'noCredit' })).toBe('no_credit');
++  });
++});
++
++describe('Codex reset credit expiry timezone', () => {
++  test('converts a UTC ISO timestamp to Asia/Shanghai time', () => {
++    expect(formatShanghaiDateTime('2026-08-01T00:00:00Z')).toBe('2026-08-01 08:00:00');
++  });
++
++  test('does not add eight hours twice when the source already has an offset', () => {
++    expect(formatShanghaiDateTime('2026-08-01T08:00:00+08:00')).toBe('2026-08-01 08:00:00');
++  });
++
++  test('supports Unix timestamps in seconds and milliseconds', () => {
++    expect(formatShanghaiDateTime('1785542400')).toBe('2026-08-01 08:00:00');
++    expect(formatShanghaiDateTime('1785542400000')).toBe('2026-08-01 08:00:00');
++  });
++
++  test('treats a timezone-less upstream ISO timestamp as UTC', () => {
++    expect(formatShanghaiDateTime('2026-08-01T00:00:00')).toBe('2026-08-01 08:00:00');
++  });
++});

@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "plugins": [
+    {
+      "id": "codex-agent-identity",
+      "name": "Codex Agent Identity",
+      "description": "Adds CPA-native Codex Agent Identity and Personal Access Token credential management, encrypted storage, batch import, and a CPAMC dashboard.",
+      "author": "simplez2",
+      "version": "0.3.0",
+      "repository": "https://github.com/simplez2/cpa-codex-agent-identity",
+      "logo": "https://raw.githubusercontent.com/simplez2/cpa-codex-agent-identity/main/assets/logo.svg",
+      "homepage": "https://github.com/simplez2/cpa-codex-agent-identity",
+      "license": "MIT",
+      "tags": [
+        "Management",
+        "Auth",
+        "Codex"
+      ]
+    }
+  ]
+}

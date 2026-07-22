@@ -1,0 +1,57 @@
+services:
+  cli-proxy-api:
+    image: "${CPA_IMAGE:?Set CPA_IMAGE to a pinned official CPA image}"
+    container_name: cli-proxy-api
+    ports:
+      - "127.0.0.1:8317:8317"
+    environment:
+      TZ: ${TZ:-UTC}
+      CODEX_AGENT_IDENTITY_SIDECAR_HOSTS: ${CODEX_AGENT_IDENTITY_SIDECAR_HOSTS:-codex-agent-identity-sidecar}
+    volumes:
+      - ./config.yaml:/CLIProxyAPI/config.yaml
+      - ./auths:/root/.cli-proxy-api
+      - ./logs:/CLIProxyAPI/logs
+      - ${SIDECAR_ROOT:-./runtime}/cpa-plugins:/CLIProxyAPI/plugins:${CPA_PLUGIN_MOUNT_MODE:-ro}
+    networks:
+      - agent-identity
+    restart: unless-stopped
+
+  codex-agent-identity-sidecar:
+    image: "${SIDECAR_IMAGE:?Set SIDECAR_IMAGE to a pinned sidecar image}"
+    container_name: codex-agent-identity-sidecar
+    init: true
+    user: "${SIDECAR_UID:-65532}:${SIDECAR_GID:-65532}"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    stop_grace_period: 20s
+    depends_on:
+      - cli-proxy-api
+    ports:
+      - "127.0.0.1:18787:8787"
+    environment:
+      TZ: ${TZ:-UTC}
+      LISTEN_ADDR: :8787
+      DATA_DIR: /data
+      DATA_ENCRYPTION_KEY_FILE: /run/secrets/data_encryption_key
+      MANAGEMENT_KEY_FILE: /run/secrets/management_key
+      CPA_MANAGEMENT_URL: http://cli-proxy-api:8317/v0/management
+      CPA_MANAGEMENT_KEY_FILE: /run/secrets/management_key
+      CPA_PROXY_CONFIG_POLL_INTERVAL: 1s
+      PUBLIC_CPA_BASE_URL: ${PUBLIC_CPA_BASE_URL:-http://codex-agent-identity-sidecar:8787/backend-api/codex}
+      EMBED_ALLOWED_ORIGINS: ${EMBED_ALLOWED_ORIGINS:-}
+    volumes:
+      - ${SIDECAR_ROOT:-./runtime}/data-v3:/data
+      - ${SIDECAR_ROOT:-./runtime}/secrets/management-key:/run/secrets/management_key:ro
+      - ${SIDECAR_ROOT:-./runtime}/secrets/data-encryption-key:/run/secrets/data_encryption_key:ro
+    networks:
+      - agent-identity
+    restart: unless-stopped
+
+networks:
+  agent-identity:
+    external: true
+    name: ${AGENT_IDENTITY_NETWORK:-agent-identity}

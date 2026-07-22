@@ -1,0 +1,11 @@
+FROM scratch
+LABEL org.opencontainers.image.source="https://github.com/simplez2/cpa-codex-agent-identity" \
+      org.opencontainers.image.title="Codex Agent Identity sidecar" \
+      org.opencontainers.image.description="Encrypted Codex Agent Identity and PAT sidecar for CLIProxyAPI" \
+      org.opencontainers.image.licenses="MIT"
+COPY ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY codex-agent-identity-sidecar /codex-agent-identity-sidecar
+USER 65532:65532
+EXPOSE 8787
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 CMD ["/codex-agent-identity-sidecar", "healthcheck"]
+ENTRYPOINT ["/codex-agent-identity-sidecar"]
