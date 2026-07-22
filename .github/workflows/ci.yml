@@ -27,6 +27,15 @@ jobs:
           test ! -s /tmp/gofmt.out
       - name: Validate plugin registry
         run: jq -e -f .github/scripts/validate-registry.jq registry.json
+      - name: Enforce private release metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow=.github/workflows/release.yml
+          test "$(grep -Ec '^[[:space:]]+provenance:[[:space:]]+false[[:space:]]*$' "${workflow}")" -eq 1
+          grep -Eq '^[[:space:]]+BUILDX_METADATA_PROVENANCE:[[:space:]]+"disabled"[[:space:]]*$' "${workflow}"
+          grep -Eq '^[[:space:]]+DOCKER_BUILD_RECORD_UPLOAD:[[:space:]]+"false"[[:space:]]*$' "${workflow}"
+          grep -Eq '^[[:space:]]+DOCKER_BUILD_SUMMARY:[[:space:]]+"false"[[:space:]]*$' "${workflow}"
 
   secrets:
     runs-on: ubuntu-24.04
