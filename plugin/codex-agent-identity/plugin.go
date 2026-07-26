@@ -283,15 +283,15 @@ func handleManagementRequest(raw []byte) managementResponse {
 	if err := json.Unmarshal(raw, &request); err != nil {
 		return managementErrorResponse(http.StatusBadRequest, "invalid management request")
 	}
-	method := strings.TrimSpace(request.Method)
-	path := strings.TrimSpace(request.Path)
+	method := request.Method
+	path := request.Path
 	if method == "" || path == "" {
 		return managementErrorResponse(http.StatusBadRequest, "management method and path are required")
 	}
 	if path != managementOpenFullPath {
 		return managementErrorResponse(http.StatusNotFound, "management route not found")
 	}
-	if !strings.EqualFold(method, http.MethodGet) {
+	if method != http.MethodGet {
 		response := managementErrorResponse(http.StatusMethodNotAllowed, "method not allowed")
 		response.Headers.Set("Allow", http.MethodGet)
 		return response

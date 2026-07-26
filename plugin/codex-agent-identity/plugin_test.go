@@ -93,6 +93,28 @@ func TestManagementHandlerRejectsPublicResourceAndWrongMethod(t *testing.T) {
 	if response.StatusCode != http.StatusMethodNotAllowed || response.Headers.Get("Allow") != http.MethodGet {
 		t.Fatalf("wrong method response: status=%d headers=%v", response.StatusCode, response.Headers)
 	}
+
+	for _, method := range []string{"get", " GET "} {
+		raw, err = handleMethod(pluginabi.MethodManagementHandle, managementPayload(t, method, managementOpenFullPath))
+		if err != nil {
+			t.Fatal(err)
+		}
+		decodePluginResult(t, raw, &response)
+		if response.StatusCode != http.StatusMethodNotAllowed || response.Headers.Get("Allow") != http.MethodGet {
+			t.Fatalf("noncanonical method %q was accepted: status=%d headers=%v", method, response.StatusCode, response.Headers)
+		}
+	}
+
+	for _, path := range []string{" " + managementOpenFullPath, managementOpenFullPath + " "} {
+		raw, err = handleMethod(pluginabi.MethodManagementHandle, managementPayload(t, http.MethodGet, path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		decodePluginResult(t, raw, &response)
+		if response.StatusCode != http.StatusNotFound || strings.Contains(string(response.Body), "/agent-identity/") {
+			t.Fatalf("noncanonical path %q was accepted: status=%d body=%s", path, response.StatusCode, response.Body)
+		}
+	}
 }
 
 func TestManagementHandlerRejectsMalformedRequest(t *testing.T) {
