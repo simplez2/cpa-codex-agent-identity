@@ -25,7 +25,7 @@ func TestRegisterDeclaresAuthAndManagementCapabilities(t *testing.T) {
 	}
 }
 
-func TestManagementResourceEmbedsConfiguredSidecar(t *testing.T) {
+func TestManagementUIRegistersAuthenticatedRouteOnly(t *testing.T) {
 	configurePluginForTest(t, "sidecar_url: /agent-identity/")
 	raw, err := handleMethod(pluginabi.MethodManagementRegister, nil)
 	if err != nil {
@@ -33,10 +33,18 @@ func TestManagementResourceEmbedsConfiguredSidecar(t *testing.T) {
 	}
 	var registered managementRegistration
 	decodePluginResult(t, raw, &registered)
-	if len(registered.Resources) != 1 || registered.Resources[0].Path != resourcePath || registered.Resources[0].Menu != pluginMenu {
-		t.Fatalf("unexpected resources: %#v", registered.Resources)
+	if len(registered.Routes) != 1 {
+		t.Fatalf("unexpected routes: %#v", registered.Routes)
 	}
-	raw, err = handleMethod(pluginabi.MethodManagementHandle, nil)
+	route := registered.Routes[0]
+	if route.Method != http.MethodGet || route.Path != managementOpenPath {
+		t.Fatalf("unexpected management route: %#v", route)
+	}
+	if strings.Contains(string(raw), `"resources"`) || strings.Contains(string(raw), `"Menu"`) || strings.Contains(string(raw), `/v0/resource/plugins/`) {
+		t.Fatalf("registration exposed an unauthenticated resource route: %s", raw)
+	}
+
+	raw, err = handleMethod(pluginabi.MethodManagementHandle, managementPayload(t, http.MethodGet, managementOpenFullPath))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,11 +67,64 @@ func TestManagementResourceEmbedsConfiguredSidecar(t *testing.T) {
 	if !strings.Contains(response.Headers.Get("Content-Security-Policy"), "frame-src 'self'") {
 		t.Fatalf("unexpected CSP: %s", response.Headers.Get("Content-Security-Policy"))
 	}
+	if !strings.Contains(response.Headers.Get("Content-Security-Policy"), "frame-ancestors 'self'") || response.Headers.Get("X-Frame-Options") != "SAMEORIGIN" {
+		t.Fatalf("management response can be framed cross-origin: headers=%v", response.Headers)
+	}
+}
+
+func TestManagementHandlerRejectsPublicResourceAndWrongMethod(t *testing.T) {
+	configurePluginForTest(t, "sidecar_url: /agent-identity/")
+
+	raw, err := handleMethod(pluginabi.MethodManagementHandle, managementPayload(t, http.MethodGet, "/v0/resource/plugins/codex-agent-identity/open"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response managementResponse
+	decodePluginResult(t, raw, &response)
+	if response.StatusCode != http.StatusNotFound || strings.Contains(string(response.Body), "/agent-identity/") {
+		t.Fatalf("public resource path was not rejected: status=%d body=%s", response.StatusCode, response.Body)
+	}
+
+	raw, err = handleMethod(pluginabi.MethodManagementHandle, managementPayload(t, http.MethodPost, managementOpenFullPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	decodePluginResult(t, raw, &response)
+	if response.StatusCode != http.StatusMethodNotAllowed || response.Headers.Get("Allow") != http.MethodGet {
+		t.Fatalf("wrong method response: status=%d headers=%v", response.StatusCode, response.Headers)
+	}
+}
+
+func TestManagementHandlerRejectsMalformedRequest(t *testing.T) {
+	configurePluginForTest(t, "sidecar_url: /agent-identity/")
+
+	for name, payload := range map[string][]byte{
+		"empty":          nil,
+		"invalid json":   []byte(`{`),
+		"missing fields": []byte(`{}`),
+		"missing method": []byte(`{"Path":"/v0/management/codex-agent-identity/open"}`),
+		"missing path":   []byte(`{"Method":"GET"}`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw, err := handleMethod(pluginabi.MethodManagementHandle, payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var response managementResponse
+			decodePluginResult(t, raw, &response)
+			if response.StatusCode != http.StatusBadRequest {
+				t.Fatalf("status=%d body=%s", response.StatusCode, response.Body)
+			}
+			if response.Headers.Get("Cache-Control") != "no-store" || response.Headers.Get("X-Frame-Options") != "DENY" {
+				t.Fatalf("unsafe error headers: %v", response.Headers)
+			}
+		})
+	}
 }
 
 func TestInvalidSidecarURLRendersConfigurationFallback(t *testing.T) {
 	configurePluginForTest(t, "sidecar_url: file:///tmp/identity")
-	raw, err := handleMethod(pluginabi.MethodManagementHandle, nil)
+	raw, err := handleMethod(pluginabi.MethodManagementHandle, managementPayload(t, http.MethodGet, managementOpenFullPath))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,6 +136,9 @@ func TestInvalidSidecarURLRendersConfigurationFallback(t *testing.T) {
 	}
 	if !strings.Contains(body, "cli-proxy-theme") || !strings.Contains(body, "data-theme=\"dark\"") || strings.Contains(strings.ToLower(body), "#070b12") {
 		t.Fatalf("configuration fallback is not CPA theme aware: %s", body)
+	}
+	if !strings.Contains(response.Headers.Get("Content-Security-Policy"), "frame-ancestors 'self'") || response.Headers.Get("X-Frame-Options") != "SAMEORIGIN" {
+		t.Fatalf("configuration fallback can be framed cross-origin: headers=%v", response.Headers)
 	}
 }
 
@@ -104,6 +168,15 @@ func configurePluginForTest(t *testing.T, yaml string) {
 func lifecyclePayload(t *testing.T, yaml string) []byte {
 	t.Helper()
 	raw, err := json.Marshal(lifecycleRequest{ConfigYAML: []byte(yaml), SchemaVersion: pluginabi.SchemaVersion})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func managementPayload(t *testing.T, method, path string) []byte {
+	t.Helper()
+	raw, err := json.Marshal(managementRequest{Method: method, Path: path})
 	if err != nil {
 		t.Fatal(err)
 	}

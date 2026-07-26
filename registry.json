@@ -4,7 +4,7 @@
     {
       "id": "codex-agent-identity",
       "name": "Codex Agent Identity",
-      "description": "Adds CPA-native Codex Agent Identity and Personal Access Token credential management, encrypted storage, batch import, and a CPAMC dashboard.",
+      "description": "Adds CPA-native Codex Agent Identity and Personal Access Token credential routing with encrypted storage and batch management through a hardened companion sidecar.",
       "author": "simplez2",
       "version": "0.3.2",
       "repository": "https://github.com/simplez2/cpa-codex-agent-identity",
