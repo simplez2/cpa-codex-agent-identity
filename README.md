@@ -119,6 +119,9 @@ resource routes, so the dashboard is intentionally no longer shown as a CPAMC
 iframe menu. Open `/agent-identity/` directly for normal management. The
 authenticated plugin wrapper is available only to clients that explicitly send
 the CPA Management key to `/v0/management/codex-agent-identity/open`.
+The optional `management-overlay` adds a safe **Identity management** button to
+the installed plugin card; it opens the direct sidecar UI without restoring the
+unauthenticated resource route or passing the Management key.
 
 ## CPA plugin installation
 
@@ -371,9 +374,15 @@ registry.json is a directly usable CPA Plugin Store source. Inclusion in the
 built-in official CPA registry requires a separate reviewed pull request to
 router-for-me/CLIProxyAPI-Plugins-Store.
 
-## Management Center reset-credit overlay
+## Optional Management Center overlay
 
-management-overlay contains the existing reproducible reset-credit patch for the CPA Management Center. It remains optional and separate from the .so plugin. The generated management.html is intentionally ignored by Git so public history contains the patch and build recipe, not an environment-specific build artifact.
+`management-overlay` contains reproducible patches for reset-credit visibility
+and a safe **Identity management** button on the installed plugin card. The
+button opens the separately authenticated sidecar UI; it does not restore a
+public plugin ResourceRoute or plugin menu. The overlay remains optional and
+separate from the `.so` plugin. Generated `management.html` is intentionally
+ignored by Git so public history contains the patches and build recipe, not an
+environment-specific build artifact.
 
 ## License and status
 
