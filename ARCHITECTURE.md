@@ -3,11 +3,11 @@
 The project extends an otherwise unmodified CLIProxyAPI (CPA) deployment. The
 integration is split into three independently replaceable parts:
 
-1. **CPA plugin control plane**: registers the Codex AuthProvider and an Agent
-   Identity Management API resource in CPAMC. It recognizes only sidecar-owned
-   Codex auth files, supplies their internal base URL and opaque cais_ key to
-   CPA's stock Codex executor, and embeds the sidecar dashboard. It never
-   receives an original Agent Identity JWT or Personal Access Token.
+1. **CPA plugin control plane**: registers the Codex AuthProvider and one
+   authenticated Management API route. It recognizes only sidecar-owned Codex
+   auth files and supplies their internal base URL and opaque cais_ key to
+   CPA's stock Codex executor. It never receives an original Agent Identity
+   JWT or Personal Access Token and registers no unauthenticated ResourceRoute.
 2. **Sidecar management plane**: validates single or batch imports, stores
    credentials encrypted, and transactionally adds, disables, refreshes, or
    removes native Codex auth files through CPA's management API.
@@ -28,9 +28,10 @@ it. Tests exercise it only through a local httptest upstream.
 
 ## Upgrade boundary
 
-The plugin targets CPA dynamic plugin ABI v1 and is compiled against the latest
-verified CPA SDK baseline. Release v0.3.1 uses CLIProxyAPI v7.2.94. The CPA
-image remains an environment variable and is never rebuilt or forked here.
+The plugin targets CPA dynamic plugin ABI v1 and is compiled with Go 1.26.5 or
+later against the latest verified CPA SDK baseline. Release v0.3.3 uses
+CLIProxyAPI v7.2.95. The CPA image remains an environment variable and is never
+rebuilt or forked here.
 
 A CPA upgrade should follow this sequence:
 
@@ -38,7 +39,8 @@ A CPA upgrade should follow this sequence:
 2. Start it on isolated canary ports with independent config, auth, log, data,
    and plugin paths.
 3. Load the released plugin for the candidate architecture.
-4. Verify registration, CPAMC resource embedding, import preview, auth-file
+4. Verify registration, legacy public-resource rejection, Management-key
+   enforcement, the direct sidecar dashboard, import preview, auth-file
    synchronization, HTTP, SSE, WebSocket, image, quota, reset-credit, and proxy
    hot reload behavior.
 5. Pin the verified image digest and replace production only after the canary
@@ -57,16 +59,25 @@ the sidecar base URL into an arbitrary request destination.
 ## Trust boundaries
 
 ~~~text
-browser -> TLS reverse proxy -> plugin resource -> sidecar dashboard
-                                      |                 |
-                                      |                 +-> authenticated management API
-                                      |                           |
-                                      |                           +-> CPA auth-file API
-                                      |
-client  -> CPA stock executor -> sidecar data plane -> fixed OpenAI origins
-                                      |
-                                      +-> encrypted owner-only identity store
+browser -> TLS reverse proxy -> sidecar dashboard -> authenticated identity API
+                                                   |
+                                                   +-> CPA auth-file API
+
+Management-key client -> CPA /v0/management/codex-agent-identity/open
+                              |
+                              +-> optional HTML wrapper; no ResourceRoute
+
+client -> CPA stock executor -> sidecar data plane -> fixed OpenAI origins
+                                     |
+                                     +-> encrypted owner-only identity store
 ~~~
+
+CPA intentionally leaves `/v0/resource/plugins/...` unauthenticated. The plugin
+therefore returns no resource registrations. It also omits `Menu` from its
+ManagementRoute because current CPA compatibility behavior converts a GET
+ManagementRoute with `Menu` into an unauthenticated ResourceRoute. Current
+CPAMC releases consequently do not display this plugin as an iframe menu; the
+sidecar dashboard remains directly available at `/agent-identity/`.
 
 CPA plugins are trusted in-process code. Anyone who can replace the .so can
 execute with CPA's privileges, so archives are checksummed and the plugin

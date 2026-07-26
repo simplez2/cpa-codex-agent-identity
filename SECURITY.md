@@ -38,12 +38,19 @@ account identifiers, request bodies, and private hostnames.
 
 ## Management and browser boundary
 
+- The plugin registers no dynamic route under `/v0/resource/plugins/...`.
+  Those routes are not protected by the CPA Management key and must be limited
+  to passive static assets.
+- The optional plugin HTML wrapper is exposed only at the authenticated
+  `/v0/management/codex-agent-identity/open` route. It is not registered with a
+  `Menu`, because current CPA versions convert menu-bearing GET management
+  routes into unauthenticated resources.
 - The dashboard may be served publicly, but every identity API requires the
   management key and compares it in constant time.
 - The browser stores that key only in sessionStorage. It is intentionally not
   persisted in localStorage, cookies, exports, URLs, or DOM attributes.
-- Use a same-origin /agent-identity/ deployment when possible. Cross-origin
-  embedding must be explicitly listed in EMBED_ALLOWED_ORIGINS.
+- Use a same-origin /agent-identity/ deployment when possible. Any embedding
+  origin must be explicitly listed in EMBED_ALLOWED_ORIGINS.
 - Batch imports are limited to 4 MiB and 200 credentials, use bounded
   validation concurrency, and return only redacted identity metadata.
 - Atomic import is the default because it avoids silently leaving a partially

@@ -19,21 +19,21 @@ import (
 )
 
 const (
-	pluginID              = "codex-agent-identity"
-	pluginName            = "Codex Agent Identity"
-	pluginMenu            = "Agent Identity"
-	pluginAuthor          = "simplez2"
-	pluginRepository      = "https://github.com/simplez2/cpa-codex-agent-identity"
-	pluginLogo            = "https://raw.githubusercontent.com/simplez2/cpa-codex-agent-identity/main/assets/logo.svg"
-	resourcePath          = "/open"
-	configSidecarURL      = "sidecar_url"
-	minimumSidecarVersion = "0.3.2"
-	readyMessageType      = "cpa-codex-agent-identity:ready"
-	themeMessageType      = "cpa-codex-agent-identity:theme"
+	pluginID               = "codex-agent-identity"
+	pluginName             = "Codex Agent Identity"
+	pluginAuthor           = "simplez2"
+	pluginRepository       = "https://github.com/simplez2/cpa-codex-agent-identity"
+	pluginLogo             = "https://raw.githubusercontent.com/simplez2/cpa-codex-agent-identity/main/assets/logo.svg"
+	managementOpenPath     = "/codex-agent-identity/open"
+	managementOpenFullPath = "/v0/management" + managementOpenPath
+	configSidecarURL       = "sidecar_url"
+	minimumSidecarVersion  = "0.3.2"
+	readyMessageType       = "cpa-codex-agent-identity:ready"
+	themeMessageType       = "cpa-codex-agent-identity:theme"
 )
 
 var (
-	pluginVersion = "0.3.2"
+	pluginVersion = "0.3.3"
 	stateMu       sync.RWMutex
 	state         = runtimeState{configError: "sidecar_url is required"}
 )
@@ -77,13 +77,18 @@ type registrationCapability struct {
 }
 
 type managementRegistration struct {
-	Resources []managementResource `json:"resources,omitempty"`
+	Routes []managementRoute `json:"routes,omitempty"`
 }
 
-type managementResource struct {
+type managementRoute struct {
+	Method      string `json:"Method"`
 	Path        string `json:"Path"`
-	Menu        string `json:"Menu"`
 	Description string `json:"Description"`
+}
+
+type managementRequest struct {
+	Method string `json:"Method"`
+	Path   string `json:"Path"`
 }
 
 type managementResponse struct {
@@ -111,19 +116,19 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 				ConfigFields: []pluginapi.ConfigField{{
 					Name:        configSidecarURL,
 					Type:        pluginapi.ConfigFieldTypeString,
-					Description: "Public Codex Agent Identity sidecar root URL, preferably same-origin under /agent-identity/.",
+					Description: "Codex Agent Identity sidecar root URL used only by the authenticated plugin Management API route.",
 				}},
 			},
 			Capabilities: registrationCapability{AuthProvider: true, ManagementAPI: true},
 		})
 	case pluginabi.MethodManagementRegister:
-		return okEnvelope(managementRegistration{Resources: []managementResource{{
-			Path:        resourcePath,
-			Menu:        pluginMenu,
-			Description: "Manage Codex Agent Identity and PAT credentials. Requires sidecar " + minimumSidecarVersion + " or later.",
+		return okEnvelope(managementRegistration{Routes: []managementRoute{{
+			Method:      http.MethodGet,
+			Path:        managementOpenPath,
+			Description: "Authenticated Codex Agent Identity management UI. Requires sidecar " + minimumSidecarVersion + " or later.",
 		}}})
 	case pluginabi.MethodManagementHandle:
-		return okEnvelope(currentManagementResponse())
+		return okEnvelope(handleManagementRequest(request))
 	case pluginabi.MethodAuthIdentifier:
 		return okEnvelope(identifierResponse{Identifier: "codex"})
 	case pluginabi.MethodAuthParse:
@@ -273,16 +278,59 @@ func currentRuntimeState() runtimeState {
 	return state
 }
 
+func handleManagementRequest(raw []byte) managementResponse {
+	var request managementRequest
+	if err := json.Unmarshal(raw, &request); err != nil {
+		return managementErrorResponse(http.StatusBadRequest, "invalid management request")
+	}
+	method := strings.TrimSpace(request.Method)
+	path := strings.TrimSpace(request.Path)
+	if method == "" || path == "" {
+		return managementErrorResponse(http.StatusBadRequest, "management method and path are required")
+	}
+	if path != managementOpenFullPath {
+		return managementErrorResponse(http.StatusNotFound, "management route not found")
+	}
+	if !strings.EqualFold(method, http.MethodGet) {
+		response := managementErrorResponse(http.StatusMethodNotAllowed, "method not allowed")
+		response.Headers.Set("Allow", http.MethodGet)
+		return response
+	}
+	return currentManagementResponse()
+}
+
+func managementErrorResponse(status int, message string) managementResponse {
+	return managementResponse{
+		StatusCode: status,
+		Headers: http.Header{
+			"Content-Type":            []string{"text/plain; charset=utf-8"},
+			"Content-Security-Policy": []string{"default-src 'none'; frame-ancestors 'none'"},
+			"Referrer-Policy":         []string{"no-referrer"},
+			"Cache-Control":           []string{"no-store"},
+			"X-Content-Type-Options":  []string{"nosniff"},
+			"X-Frame-Options":         []string{"DENY"},
+		},
+		Body: []byte(message),
+	}
+}
+
 func currentManagementResponse() managementResponse {
 	current := currentRuntimeState()
 	if current.configError != "" {
 		return managementResponse{
 			StatusCode: http.StatusServiceUnavailable,
-			Headers:    http.Header{"Content-Type": []string{"text/html; charset=utf-8"}},
-			Body:       []byte(configFallbackHTML(current.configError)),
+			Headers: http.Header{
+				"Content-Type":            []string{"text/html; charset=utf-8"},
+				"Content-Security-Policy": []string{"default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'"},
+				"Referrer-Policy":         []string{"no-referrer"},
+				"X-Content-Type-Options":  []string{"nosniff"},
+				"X-Frame-Options":         []string{"SAMEORIGIN"},
+				"Cache-Control":           []string{"no-store"},
+			},
+			Body: []byte(configFallbackHTML(current.configError)),
 		}
 	}
-	csp := "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-src " + current.frameSource + "; base-uri 'none'; form-action 'none'"
+	csp := "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-src " + current.frameSource + "; base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
 	return managementResponse{
 		StatusCode: http.StatusOK,
 		Headers: http.Header{
@@ -290,6 +338,7 @@ func currentManagementResponse() managementResponse {
 			"Content-Security-Policy": []string{csp},
 			"Referrer-Policy":         []string{"no-referrer"},
 			"X-Content-Type-Options":  []string{"nosniff"},
+			"X-Frame-Options":         []string{"SAMEORIGIN"},
 			"Cache-Control":           []string{"no-store"},
 		},
 		Body: []byte(managementHTML(current.sidecarURL, current.embedURL)),
