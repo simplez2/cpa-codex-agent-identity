@@ -1,0 +1,66 @@
+diff --git a/src/features/plugins/PluginsPage.tsx b/src/features/plugins/PluginsPage.tsx
+index 767a30b..757a267 100644
+--- a/src/features/plugins/PluginsPage.tsx
++++ b/src/features/plugins/PluginsPage.tsx
+@@ -10,0 +11 @@ import {
++  IconExternalLink,
+@@ -43,0 +45,10 @@ type PluginRuntimeWaitStatus = 'ready' | 'globalDisabled' | 'timeout';
++const AGENT_IDENTITY_PLUGIN_ID = 'codex-agent-identity';
++
++const buildAgentIdentityManagementURL = (apiBase: string): string => {
++  try {
++    return new URL('/agent-identity/', apiBase || window.location.origin).toString();
++  } catch {
++    return '/agent-identity/';
++  }
++};
++
+@@ -576,0 +588 @@ export function PluginsPage() {
++            const isAgentIdentity = plugin.id === AGENT_IDENTITY_PLUGIN_ID;
+@@ -644,0 +657,18 @@ export function PluginsPage() {
++                  {isAgentIdentity ? (
++                    <Button
++                      variant="secondary"
++                      size="sm"
++                      onClick={() =>
++                        window.open(
++                          buildAgentIdentityManagementURL(apiBase),
++                          '_blank',
++                          'noopener,noreferrer'
++                        )
++                      }
++                      disabled={!connected || actionBusy || !plugin.effectiveEnabled}
++                      title={t('plugin_management.agent_identity_management_hint')}
++                    >
++                      <IconExternalLink size={14} />
++                      {t('plugin_management.agent_identity_management')}
++                    </Button>
++                  ) : null}
+diff --git a/src/i18n/locales/en.json b/src/i18n/locales/en.json
+index 09efe5a..54d431c 100644
+--- a/src/i18n/locales/en.json
++++ b/src/i18n/locales/en.json
+@@ -1109,0 +1110,2 @@
++    "agent_identity_management": "Identity management",
++    "agent_identity_management_hint": "Open the separately authenticated Codex Agent Identity manager",
+diff --git a/src/i18n/locales/ru.json b/src/i18n/locales/ru.json
+index 6e3e4d4..4c406b0 100644
+--- a/src/i18n/locales/ru.json
++++ b/src/i18n/locales/ru.json
+@@ -1102,0 +1103,2 @@
++    "agent_identity_management": "Управление профилями",
++    "agent_identity_management_hint": "Открыть отдельно защищённую панель Codex Agent Identity",
+diff --git a/src/i18n/locales/zh-CN.json b/src/i18n/locales/zh-CN.json
+index 1d88a4c..faa2371 100644
+--- a/src/i18n/locales/zh-CN.json
++++ b/src/i18n/locales/zh-CN.json
+@@ -1109,0 +1110,2 @@
++    "agent_identity_management": "身份管理与导入",
++    "agent_identity_management_hint": "打开独立鉴权的 Codex Agent Identity 管理页面",
+diff --git a/src/i18n/locales/zh-TW.json b/src/i18n/locales/zh-TW.json
+index 745be96..da89f96 100644
+--- a/src/i18n/locales/zh-TW.json
++++ b/src/i18n/locales/zh-TW.json
+@@ -1135,0 +1136,2 @@
++    "agent_identity_management": "身分管理與匯入",
++    "agent_identity_management_hint": "開啟獨立驗證的 Codex Agent Identity 管理頁面",

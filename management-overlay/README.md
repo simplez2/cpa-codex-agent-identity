@@ -4,11 +4,14 @@ This directory contains a small patch for the official CLIProxyAPI Management
 Center. It is deliberately separate from both the official CPA binary and the
 sidecar image.
 
-The patch is pinned to upstream commit
+The overlay is pinned to upstream commit
 `6a6a22af85ce8763e8898c0d8641de3137f3ffd9` from
 `router-for-me/Cli-Proxy-API-Management-Center`.
 
-It adds official-style reset-credit management to the Codex quota card:
+It applies two small, reviewable patches.
+
+`reset-credit-visibility.patch` adds official-style reset-credit management to
+the Codex quota card:
 
 - one compact available-credit count, which also controls whether the reset
   action is shown;
@@ -33,6 +36,18 @@ because that reset time is not the reset credit's expiry. The sidecar forwards
 the request body unchanged for both Agent Identity and mounted
 `codex_access_token` credentials.
 
+`agent-identity-management-entry.patch` adds an **Identity management** button
+to the installed `codex-agent-identity` plugin card. The button opens the
+configured CPA API origin's `/agent-identity/` sidecar UI in a new tab. It
+deliberately does not register or consume a CPA
+`/v0/resource/plugins/...` route, does not restore a plugin menu, and does not
+transfer the Management key. The sidecar UI performs its own Bearer-key
+authentication before listing, previewing, or importing identities.
+
+The sidecar import flow supports pasted text or a local file, requires a
+preview, reports ready/duplicate/invalid entries, and can commit atomically.
+Sensitive import text is not stored by this overlay.
+
 ## Rebuild
 
 Run the PowerShell helper from the repository root:
@@ -41,9 +56,9 @@ Run the PowerShell helper from the repository root:
 .\management-overlay\build.ps1 -BunPath (Get-Command bun).Source
 ```
 
-The helper clones the pinned public upstream, applies
-`reset-credit-visibility.patch`, runs tests/lint/build, and writes the verified
-single-file page to `management-overlay/out/management.html`.
+The helper clones the pinned public upstream, applies both patches in order,
+runs tests/lint/build, and writes the verified single-file page to
+`management-overlay/out/management.html`.
 
 ## Durable production mount
 

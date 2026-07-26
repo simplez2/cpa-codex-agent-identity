@@ -15,7 +15,10 @@ param(
 $ErrorActionPreference = 'Stop'
 $upstreamRepository = 'https://github.com/router-for-me/Cli-Proxy-API-Management-Center.git'
 $upstreamCommit = '6a6a22af85ce8763e8898c0d8641de3137f3ffd9'
-$patchPath = Join-Path $PSScriptRoot 'reset-credit-visibility.patch'
+$patchPaths = @(
+    (Join-Path $PSScriptRoot 'reset-credit-visibility.patch'),
+    (Join-Path $PSScriptRoot 'agent-identity-management-entry.patch')
+)
 
 if (Test-Path -LiteralPath $WorkDirectory) {
     throw "WorkDirectory already exists: $WorkDirectory"
@@ -27,10 +30,16 @@ if ($LASTEXITCODE -ne 0) { throw 'git clone failed' }
 & git -C $WorkDirectory checkout --detach $upstreamCommit
 if ($LASTEXITCODE -ne 0) { throw 'git checkout failed' }
 
-& git -C $WorkDirectory apply --unidiff-zero --check $patchPath
-if ($LASTEXITCODE -ne 0) { throw 'management overlay patch check failed' }
-& git -C $WorkDirectory apply --unidiff-zero $patchPath
-if ($LASTEXITCODE -ne 0) { throw 'management overlay patch failed' }
+foreach ($patchPath in $patchPaths) {
+    & git -C $WorkDirectory apply --unidiff-zero --check $patchPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "management overlay patch check failed: $patchPath"
+    }
+    & git -C $WorkDirectory apply --unidiff-zero $patchPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "management overlay patch failed: $patchPath"
+    }
+}
 
 Push-Location $WorkDirectory
 try {
