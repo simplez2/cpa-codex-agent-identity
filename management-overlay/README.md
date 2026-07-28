@@ -58,7 +58,9 @@ Run the PowerShell helper from the repository root:
 
 The helper clones the pinned public upstream, applies both patches in order,
 runs tests/lint/build, and writes the verified single-file page to
-`management-overlay/out/management.html`.
+`management-overlay/out/management.html`. The build uses the upstream-pinned
+Bun release in CI and must match `management.html.sha256`; a different artifact
+fails closed instead of being mounted.
 
 ## Durable production mount
 

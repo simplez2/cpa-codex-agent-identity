@@ -19,6 +19,7 @@ $patchPaths = @(
     (Join-Path $PSScriptRoot 'reset-credit-visibility.patch'),
     (Join-Path $PSScriptRoot 'agent-identity-management-entry.patch')
 )
+$expectedHashPath = Join-Path $PSScriptRoot 'management.html.sha256'
 
 if (Test-Path -LiteralPath $WorkDirectory) {
     throw "WorkDirectory already exists: $WorkDirectory"
@@ -58,6 +59,14 @@ if ($outputDirectory) {
 Copy-Item -LiteralPath (Join-Path $WorkDirectory 'dist\index.html') -Destination $OutputPath -Force
 
 $hash = Get-FileHash -LiteralPath $OutputPath -Algorithm SHA256
+$actualHash = $hash.Hash.ToLowerInvariant()
+$expectedHash = ((Get-Content -LiteralPath $expectedHashPath -Raw).Trim() -split '\s+')[0].ToLowerInvariant()
+if ($expectedHash -notmatch '^[0-9a-f]{64}$') {
+    throw "Invalid expected management overlay hash: $expectedHashPath"
+}
+if ($actualHash -ne $expectedHash) {
+    throw "Management overlay checksum mismatch: expected $expectedHash, got $actualHash"
+}
 Write-Output "Built $OutputPath"
-Write-Output "SHA256 $($hash.Hash.ToLowerInvariant())"
+Write-Output "SHA256 $actualHash"
 Write-Output "Build workspace retained at $WorkDirectory"
