@@ -48,6 +48,13 @@ The sidecar import flow supports pasted text or a local file, requires a
 preview, reports ready/duplicate/invalid entries, and can commit atomically.
 Sensitive import text is not stored by this overlay.
 
+The entry exists only in the generated and mounted overlay. Installing the
+plugin `.so` or adding its registry source does not patch the stock Management
+Center. With the overlay mounted, open `management.html#/plugins`, find the
+installed `codex-agent-identity` card, and select **Identity management**. The
+direct fallback is `/agent-identity/`; the plugin-specific sidebar menu remains
+absent by design.
+
 ## Rebuild
 
 Run the PowerShell helper from the repository root:

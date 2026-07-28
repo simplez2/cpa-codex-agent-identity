@@ -122,6 +122,11 @@ the CPA Management key to `/v0/management/codex-agent-identity/open`.
 The optional `management-overlay` adds a safe **Identity management** button to
 the installed plugin card; it opens the direct sidecar UI without restoring the
 unauthenticated resource route or passing the Management key.
+After that overlay is built and mounted, open
+`management.html#/plugins`, find `codex-agent-identity`, and select
+**Identity management**. Installing the `.so` or adding the custom store source
+alone does not modify the stock Management Center page. The direct fallback
+remains `/agent-identity/`.
 
 ## CPA plugin installation
 

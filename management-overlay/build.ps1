@@ -58,7 +58,13 @@ try {
 
 $builtArtifactPath = Join-Path $WorkDirectory 'dist\index.html'
 $artifact = Get-Content -LiteralPath $builtArtifactPath -Raw
-foreach ($requiredMarker in @('codex-agent-identity', '/agent-identity/', 'Identity management')) {
+foreach ($requiredMarker in @(
+    'codex-agent-identity',
+    '/agent-identity/',
+    'Identity management',
+    '身份管理与导入',
+    'noopener,noreferrer'
+)) {
     if (-not $artifact.Contains($requiredMarker)) {
         throw "Management overlay is missing required marker: $requiredMarker"
     }

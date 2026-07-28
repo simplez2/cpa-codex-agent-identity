@@ -62,6 +62,8 @@ jobs:
           grep -Fq 'codex-agent-identity' "${artifact}"
           grep -Fq '/agent-identity/' "${artifact}"
           grep -Fq 'Identity management' "${artifact}"
+          grep -Fq '身份管理与导入' "${artifact}"
+          grep -Fq 'noopener,noreferrer' "${artifact}"
           if grep -Fq '/v0/resource/plugins/codex-agent-identity/open' "${artifact}"; then
             echo '::error::Overlay restored the legacy public plugin route.'
             exit 1
