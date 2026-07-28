@@ -48,6 +48,25 @@ CPA 的 `/v0/resource/plugins/...` 不经过 Management key 认证，因此 v0.3
 Management key。旧的
 `/v0/resource/plugins/codex-agent-identity/open` 必须返回 404。
 
+### 前端入口与列表边界
+
+这里有三种不同的“插件显示”，不要混为一谈：
+
+- **插件商店目录**：只有在 CPA 配置中加入本仓库的 `store-sources` 后，才会在
+  `management.html#/plugin-store` 中出现；本项目尚未进入 CPA 官方内置注册表。
+- **已安装插件列表**：`.so` 被发现并注册后，会在
+  `management.html#/plugins` 显示 `codex-agent-identity` 卡片。`menus=[]`
+  不会隐藏这张卡片。
+- **左侧插件页面菜单**：不会恢复。它依赖未认证的
+  `/v0/resource/plugins/...`，因此继续保持移除状态。
+
+可选 `management-overlay` 会在已安装插件卡片上增加
+**身份管理与导入** 按钮。点击后在新标签页打开同一 CPA API origin 的
+`/agent-identity/`，不会传递 Management key；页面会要求重新输入与 CPA
+一致的管理密码。仅安装 `.so` 或添加插件商店源不会修改原版
+`management.html`，必须另行构建并挂载 overlay。没有 overlay 时，直接打开
+`https://<CPA 域名>/agent-identity/` 即可。
+
 ## 从 CPAMC Plugin Store 安装
 
 把本仓库注册表加入宿主机挂载的 CPA 配置：

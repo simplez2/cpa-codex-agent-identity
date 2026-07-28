@@ -141,8 +141,31 @@ func TestSidecarManagementUISynchronizesCPACodexAuthFile(t *testing.T) {
 	if !bytes.Contains(uiBody, []byte(`id="connection-form"`)) || !bytes.Contains(uiBody, []byte(`autocomplete="username"`)) || !bytes.Contains(uiBody, []byte(`rel="icon" href="data:,"`)) {
 		t.Fatalf("management UI is missing form or favicon metadata: %s", uiBody)
 	}
-	if uiResponse.Header.Get("Content-Security-Policy") == "" {
-		t.Fatal("management UI is missing CSP")
+	if bytes.Contains(uiBody, []byte(managementKey)) {
+		t.Fatal("management UI leaked the configured management key")
+	}
+	uiCSP := uiResponse.Header.Get("Content-Security-Policy")
+	for _, directive := range []string{"script-src 'self'", "connect-src 'self'", "form-action 'none'", "frame-ancestors 'none'", "base-uri 'none'"} {
+		if !strings.Contains(uiCSP, directive) {
+			t.Fatalf("management UI CSP is missing %q: %q", directive, uiCSP)
+		}
+	}
+	if uiResponse.Header.Get("X-Frame-Options") != "DENY" {
+		t.Fatalf("management UI X-Frame-Options=%q, want DENY", uiResponse.Header.Get("X-Frame-Options"))
+	}
+	appResponse, err := http.Get(sidecar.URL + "/agent-identity/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	appBody, _ := io.ReadAll(appResponse.Body)
+	appResponse.Body.Close()
+	if appResponse.StatusCode != http.StatusOK ||
+		!bytes.Contains(appBody, []byte("sessionStorage.getItem('cpaManagementKey')")) ||
+		!bytes.Contains(appBody, []byte("sessionStorage.setItem('cpaManagementKey'")) {
+		t.Fatalf("management UI key-storage policy is missing: status=%d", appResponse.StatusCode)
+	}
+	if bytes.Contains(appBody, []byte("localStorage")) || bytes.Contains(appBody, []byte(managementKey)) {
+		t.Fatal("management UI script crossed the management-key storage boundary")
 	}
 	themeScriptIndex := bytes.Index(uiBody, []byte("<script src=\"./theme.js\"></script>"))
 	styleIndex := bytes.Index(uiBody, []byte("<link rel=\"stylesheet\" href=\"./style.css\">"))
