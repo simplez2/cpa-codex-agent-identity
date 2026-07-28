@@ -132,7 +132,10 @@ remains `/agent-identity/`.
 
 ### CPAMC Plugin Store
 
-Add this repository's registry to the host-mounted CPA configuration:
+The official `router-for-me/CLIProxyAPI-Plugins-Store` registry currently lists
+`codex-agent-identity` version `0.3.3`. If an older CPA build or a stale store
+cache does not show it yet, this repository's registry remains a direct fallback
+that can be added to the host-mounted CPA configuration:
 
 ~~~yaml
 plugins:
@@ -375,9 +378,10 @@ cpa-codex-agent-identity-sidecar_<version>_linux_arm64.tar.gz
 checksums.txt
 ~~~
 
-registry.json is a directly usable CPA Plugin Store source. Inclusion in the
-built-in official CPA registry requires a separate reviewed pull request to
-router-for-me/CLIProxyAPI-Plugins-Store.
+`registry.json` is a directly usable CPA Plugin Store source. The built-in
+official `router-for-me/CLIProxyAPI-Plugins-Store` registry also currently
+includes `codex-agent-identity` version `0.3.3`; this repository source remains
+useful as an explicit fallback or pin.
 
 ## Optional Management Center overlay
 
