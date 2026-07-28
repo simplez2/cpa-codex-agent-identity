@@ -212,6 +212,48 @@ func TestSidecarManagementUISynchronizesCPACodexAuthFile(t *testing.T) {
 	}
 }
 
+func TestAgentIdentityManagementAPIRequiresBearerKey(t *testing.T) {
+	sidecar, _, _ := newBatchSidecar(t)
+	requests := []struct {
+		method string
+		path   string
+		body   string
+	}{
+		{method: http.MethodGet, path: "/agent-identity/api/identities"},
+		{method: http.MethodPost, path: "/agent-identity/api/identities/import", body: `{}`},
+		{
+			method: http.MethodPost,
+			path:   "/agent-identity/api/identities/import/batch?preview=true&atomic=true",
+			body:   `[]`,
+		},
+		{
+			method: http.MethodPost,
+			path:   "/agent-identity/api/identities/agent-test/actions",
+			body:   `{"action":"refresh"}`,
+		},
+		{method: http.MethodDelete, path: "/agent-identity/api/identities/agent-test"},
+	}
+
+	for _, test := range requests {
+		test := test
+		t.Run(test.method+" "+test.path, func(t *testing.T) {
+			request, err := http.NewRequest(test.method, sidecar.URL+test.path, strings.NewReader(test.body))
+			if err != nil {
+				t.Fatal(err)
+			}
+			request.Header.Set("Content-Type", "application/json")
+			response, err := http.DefaultClient.Do(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			if response.StatusCode != http.StatusUnauthorized {
+				t.Fatalf("status=%d, want 401", response.StatusCode)
+			}
+		})
+	}
+}
+
 func TestSidecarImportProxyAndUnauthorizedRetry(t *testing.T) {
 	fixture := newAgentFixture(t)
 	var registrations atomic.Int32
