@@ -52,8 +52,11 @@ Management key。旧的
 
 这里有三种不同的“插件显示”，不要混为一谈：
 
-- **插件商店目录**：只有在 CPA 配置中加入本仓库的 `store-sources` 后，才会在
-  `management.html#/plugin-store` 中出现；本项目尚未进入 CPA 官方内置注册表。
+- **插件商店目录**：CPA 官方
+  `router-for-me/CLIProxyAPI-Plugins-Store` 当前已收录
+  `codex-agent-identity` v0.3.3，正常可在
+  `management.html#/plugin-store` 搜索到。旧 CPA 或陈旧缓存未显示时，可刷新商店
+  或把本仓库 `registry.json` 加入 `store-sources` 作为明确回退。
 - **已安装插件列表**：`.so` 被发现并注册后，会在
   `management.html#/plugins` 显示 `codex-agent-identity` 卡片。`menus=[]`
   不会隐藏这张卡片。
@@ -69,7 +72,8 @@ Management key。旧的
 
 ## 从 CPAMC Plugin Store 安装
 
-把本仓库注册表加入宿主机挂载的 CPA 配置：
+官方 CPA Plugin Store 当前已收录 `codex-agent-identity` v0.3.3。若目标 CPA
+版本或商店缓存仍未显示，可把本仓库注册表加入宿主机挂载的 CPA 配置：
 
 ~~~yaml
 plugins:
