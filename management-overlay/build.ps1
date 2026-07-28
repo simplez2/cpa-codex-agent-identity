@@ -19,6 +19,11 @@ $patchPaths = @(
     (Join-Path $PSScriptRoot 'reset-credit-visibility.patch'),
     (Join-Path $PSScriptRoot 'agent-identity-management-entry.patch')
 )
+$entryPatch = Get-Content -LiteralPath $patchPaths[1] -Raw
+if ($entryPatch.Contains('/v0/resource/plugins/codex-agent-identity/open') -or
+    $entryPatch -match '(?i)management[-_ ]?key|managementKey|x-management-key|authorization|bearer') {
+    throw 'Management entry patch crosses the authentication boundary'
+}
 
 if (Test-Path -LiteralPath $WorkDirectory) {
     throw "WorkDirectory already exists: $WorkDirectory"
@@ -51,13 +56,8 @@ try {
     Pop-Location
 }
 
-$outputDirectory = Split-Path -Parent $OutputPath
-if ($outputDirectory) {
-    New-Item -ItemType Directory -Force -Path $outputDirectory | Out-Null
-}
-Copy-Item -LiteralPath (Join-Path $WorkDirectory 'dist\index.html') -Destination $OutputPath -Force
-
-$artifact = Get-Content -LiteralPath $OutputPath -Raw
+$builtArtifactPath = Join-Path $WorkDirectory 'dist\index.html'
+$artifact = Get-Content -LiteralPath $builtArtifactPath -Raw
 foreach ($requiredMarker in @('codex-agent-identity', '/agent-identity/', 'Identity management')) {
     if (-not $artifact.Contains($requiredMarker)) {
         throw "Management overlay is missing required marker: $requiredMarker"
@@ -66,6 +66,12 @@ foreach ($requiredMarker in @('codex-agent-identity', '/agent-identity/', 'Ident
 if ($artifact.Contains('/v0/resource/plugins/codex-agent-identity/open')) {
     throw 'Management overlay restored the legacy public plugin route'
 }
+
+$outputDirectory = Split-Path -Parent $OutputPath
+if ($outputDirectory) {
+    New-Item -ItemType Directory -Force -Path $outputDirectory | Out-Null
+}
+Copy-Item -LiteralPath $builtArtifactPath -Destination $OutputPath -Force
 
 $hash = Get-FileHash -LiteralPath $OutputPath -Algorithm SHA256
 $actualHash = $hash.Hash.ToLowerInvariant()
