@@ -66,8 +66,8 @@ jobs:
             echo '::error::Overlay restored the legacy public plugin route.'
             exit 1
           fi
-          if grep -Eiq '(management[-_ ]?key|managementKey).*(agent-identity)|(agent-identity).*(management[-_ ]?key|managementKey)' "${patch}"; then
-            echo '::error::Management entry patch references Management-key transfer.'
+          if grep -Eiq 'management[-_ ]?key|managementKey|x-management-key|authorization|bearer' "${patch}"; then
+            echo '::error::Management entry patch crosses the authentication boundary.'
             exit 1
           fi
 

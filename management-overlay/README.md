@@ -61,7 +61,8 @@ runs tests/lint/build, and writes the verified single-file page to
 `management-overlay/out/management.html`. CI pins the upstream-declared Bun
 release and verifies required entry markers plus the absence of the legacy
 public plugin route. The printed SHA-256 is informational because Rolldown's
-chunk ordering can differ across otherwise equivalent build environments.
+chunk ordering can differ across otherwise equivalent build environments. An
+invalid build is rejected before it can replace the requested output file.
 
 ## Durable production mount
 
