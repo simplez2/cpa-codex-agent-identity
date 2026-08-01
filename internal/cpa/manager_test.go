@@ -117,7 +117,7 @@ func TestManagerUpsertStatusAndRemoveUsesNativeAuthFiles(t *testing.T) {
 	if err != nil || states[credential.IdentityID].Disabled {
 		t.Fatalf("disable state did not update: %#v err=%v", states, err)
 	}
-	resolvedID, managed, err := manager.IdentityIDForAuthIndex(context.Background(), "index-codex-user@example.invalid-k12.json")
+	resolvedID, managed, err := manager.IdentityIDForAuthIndex(context.Background(), "index-codex-d86f70b3-user@example.invalid-k12.json")
 	if err != nil || !managed || resolvedID != credential.IdentityID {
 		t.Fatalf("resolved_id=%q managed=%v err=%v", resolvedID, managed, err)
 	}
@@ -126,7 +126,7 @@ func TestManagerUpsertStatusAndRemoveUsesNativeAuthFiles(t *testing.T) {
 	}
 
 	mu.Lock()
-	raw := append([]byte(nil), files["codex-user@example.invalid-k12.json"]...)
+	raw := append([]byte(nil), files["codex-d86f70b3-user@example.invalid-k12.json"]...)
 	if _, legacyExists := files["codex-agent-identity-aabbccddeeff.json"]; legacyExists {
 		t.Fatal("legacy hash-named auth file was not migrated")
 	}
@@ -150,7 +150,7 @@ func TestManagerUpsertStatusAndRemoveUsesNativeAuthFiles(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if _, exists := files["codex-user@example.invalid-k12.json"]; exists {
+	if _, exists := files["codex-d86f70b3-user@example.invalid-k12.json"]; exists {
 		t.Fatal("managed auth file still exists")
 	}
 	if _, exists := files["existing-codex.json"]; !exists {
@@ -244,6 +244,37 @@ func TestAuthFileNameRejectsUnsafeIdentity(t *testing.T) {
 	legacy, err := authFileName(Credential{IdentityID: "agent-aabb0011"})
 	if err != nil || legacy != "codex-agent-identity-aabb0011.json" {
 		t.Fatalf("legacy name=%q err=%v", legacy, err)
+	}
+}
+
+func TestAuthFileNameSeparatesSameEmailTeamWorkspaces(t *testing.T) {
+	t.Parallel()
+	first, err := authFileName(Credential{
+		IdentityID: "agent-aabb0011",
+		AccountID:  "workspace-one",
+		Email:      "user@example.invalid",
+		PlanType:   "team",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := authFileName(Credential{
+		IdentityID: "agent-aabb0022",
+		AccountID:  "workspace-two",
+		Email:      "user@example.invalid",
+		PlanType:   "team",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatalf("same-email Team workspaces collided: %q", first)
+	}
+	if first != "codex-df52114f-user@example.invalid-team.json" {
+		t.Fatalf("unexpected first workspace name: %q", first)
+	}
+	if second != "codex-831ad5d8-user@example.invalid-team.json" {
+		t.Fatalf("unexpected second workspace name: %q", second)
 	}
 }
 

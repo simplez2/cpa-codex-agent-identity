@@ -210,7 +210,7 @@ func TestSidecarManagementUISynchronizesCPACodexAuthFile(t *testing.T) {
 
 	_, identityID, _ := importIdentityDetailsAtPath(t, sidecar.URL+"/agent-identity/api/identities/import", fixture.token)
 	channelMu.Lock()
-	fileName := "codex-user@example.invalid-k12.json"
+	fileName := "codex-d86f70b3-user@example.invalid-k12.json"
 	stored := authFiles[fileName]
 	var storedPayload map[string]any
 	if json.Unmarshal(stored, &storedPayload) != nil || storedPayload["auth_mode"] != "agent_identity_sidecar" || storedPayload["base_url"] != "http://sidecar:8787/backend-api/codex" || storedPayload["disabled"] != false || storedPayload["email"] != "user@example.invalid" || storedPayload["plan_type"] != "k12" {
@@ -545,7 +545,7 @@ func TestManagementAPICallUsesAgentAssertionForQuotaAndForwardsOAuth(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	agentFileName := "codex-user@example.invalid-k12.json"
+	agentFileName := "codex-d86f70b3-user@example.invalid-k12.json"
 	agentAuthRaw, _ := json.Marshal(map[string]any{
 		"type":              "codex",
 		"auth_mode":         "agent_identity_sidecar",
@@ -722,7 +722,7 @@ func TestManagementAPICallPersonalAccessTokenFallsBackToUsageForResetCredits(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	credentialFileName := "codex-team-user@example.invalid-team.json"
+	credentialFileName := "codex-9e4ad80e-team-user@example.invalid-team.json"
 	credentialRaw, _ := json.Marshal(map[string]any{
 		"type":              "codex",
 		"auth_mode":         "agent_identity_sidecar",
