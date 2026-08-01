@@ -3,6 +3,8 @@ package cpa
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -407,7 +409,12 @@ func authFileName(credential Credential) (string, error) {
 	if email == "" {
 		return legacyAuthFileName(credential.IdentityID)
 	}
-	name := "codex-" + email
+	name := "codex-"
+	if accountID := strings.TrimSpace(credential.AccountID); accountID != "" {
+		digest := sha256.Sum256([]byte(accountID))
+		name += hex.EncodeToString(digest[:])[:8] + "-"
+	}
+	name += email
 	if planType != "" {
 		name += "-" + planType
 	}
