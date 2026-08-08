@@ -536,12 +536,12 @@ index c63d4b811343f7748cc2cedee1749d7d4f414b09..23687c92894c3aea99a428c9cd963330
 @@ -13,0 +16,12 @@ export interface CodexResetCreditsSummary {
 +interface CodexResetCreditAvailability {
 +  rateLimitResetCreditsAvailableCount?: number | null;
-+  // Informational only. Official Codex gates the reset action on availableCount.
++  // A banked reset is actionable only after an eligible rate-limit window is exhausted.
 +  rateLimitResetCreditsApplicableCount?: number | null;
 +}
 +
 +export const canUseCodexResetCredit = (quota: CodexResetCreditAvailability): boolean =>
-+  (quota.rateLimitResetCreditsAvailableCount ?? 0) > 0;
++  (quota.rateLimitResetCreditsAvailableCount ?? 0) > 0 && (quota.rateLimitResetCreditsApplicableCount == null || quota.rateLimitResetCreditsApplicableCount > 0);
 +
 +export type CodexResetCreditConsumeOutcome =
 +  'reset' | 'already_redeemed' | 'nothing_to_reset' | 'no_credit' | 'unknown';
@@ -784,13 +784,13 @@ index 0000000000000000000000000000000000000000..74c513cff035448abf5500c83b22b601
 +});
 +
 +describe('Codex reset action availability', () => {
-+  test('keeps count-only PAT reset usable when applicable count is zero', () => {
++  test('disables reset until an eligible rate-limit window is exhausted', () => {
 +    expect(
 +      canUseCodexResetCredit({
 +        rateLimitResetCreditsAvailableCount: 1,
 +        rateLimitResetCreditsApplicableCount: 0,
 +      })
-+    ).toBe(true);
++    ).toBe(false);
 +  });
 +
 +  test('enables reset when upstream reports an applicable credit', () => {
