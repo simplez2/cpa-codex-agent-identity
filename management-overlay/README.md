@@ -24,14 +24,16 @@ they are not confused with the quota window's automatic reset. Detailed expiry
 timestamps are normalized from ISO-8601 or Unix seconds/milliseconds and shown
 in `Asia/Shanghai` (UTC+8) without applying the offset twice.
 
-The reset action follows official Codex behavior and disappears only when
-`available_count` reaches zero. `applicable_available_count` is informational
-and does not hide a count-only Personal Access Token credit. When detail rows
-are unavailable, the request omits `credit_id` and lets the upstream select the
-next available credit. No expiry is guessed from the monthly quota window,
-because that reset time is not the reset credit's expiry. The sidecar forwards
-the request body unchanged for both Agent Identity and mounted
-`codex_access_token` credentials.
+The reset action follows official Codex behavior: a banked reset becomes
+actionable only after the account reaches an eligible rate limit. When
+`applicable_available_count` is present, it is authoritative for whether the
+action is enabled; `available_count` remains the total banked count shown to the
+user. Older responses that omit the applicable count fall back to the banked
+count for compatibility. When detail rows are unavailable, the request omits
+`credit_id` and lets the upstream select the next applicable credit. No expiry
+is guessed from the monthly quota window, because that reset time is not the
+reset credit's expiry. The sidecar forwards the request body unchanged for both
+Agent Identity and mounted `codex_access_token` credentials.
 
 ## Rebuild
 
