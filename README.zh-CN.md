@@ -1,6 +1,18 @@
-# CPA Codex Agent Identity
+<div align="center">
+  <img src="assets/logo.svg" width="96" alt="CPA Codex Agent Identity 标志">
+  <h1>CPA Codex Agent Identity</h1>
+  <p><strong>为原版 CLIProxyAPI 提供加密的 Agent Identity 与 PAT 管理、原生 auth 文件接入和可靠 sidecar 数据面。</strong></p>
+  <p>
+    <a href="https://github.com/simplez2/cpa-codex-agent-identity/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/simplez2/cpa-codex-agent-identity/ci.yml?branch=main&amp;style=flat-square&amp;label=CI"></a>
+    <a href="https://github.com/simplez2/cpa-codex-agent-identity/releases"><img alt="Release" src="https://img.shields.io/github/v/release/simplez2/cpa-codex-agent-identity?style=flat-square"></a>
+    <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-111827?style=flat-square"></a>
+    <img alt="CPA ABI" src="https://img.shields.io/badge/CPA-plugin%20ABI%20v1-374151?style=flat-square">
+    <img alt="加密" src="https://img.shields.io/badge/store-AES--256--GCM-0f766e?style=flat-square">
+  </p>
+  <p>简体中文 · <a href="README.md">English</a></p>
+</div>
 
-简体中文 | [English](README.md)
+> **版本边界：** 当前最新正式 Release 是 **v0.3.3**，编译基线为 CLIProxyAPI **v7.2.95**。现有 Draft PR 包含已经过生产验证的多 Team workspace 与 reset-credit 后续能力，但在版本元数据、tag、registry 和发布资产同步前，不能称为已发布 v0.3.4。
 
 这是一个面向 CLIProxyAPI（CPA）的 Codex Agent Identity / Personal Access
 Token 集成项目。首个公开版本由两个部分组成：
@@ -12,6 +24,14 @@ Token 集成项目。首个公开版本由两个部分组成：
 
 CPA 只会看到随机生成的 cais_ 客户端密钥，不会保存原始 Agent Identity
 JWT 或 PAT。现有官方 OAuth 和第三方 API 渠道不由本插件接管。
+
+## 文档导航
+
+- [运行逻辑与安全边界](RUNTIME_LOGIC.zh-CN.md)
+- [生产交接与运维手册](HANDOFF.zh-CN.md)
+- [Architecture](ARCHITECTURE.md)
+- [Security policy](SECURITY.md)
+- [Management Center overlay](management-overlay/README.md)
 
 ## 主要能力
 

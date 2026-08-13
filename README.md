@@ -1,6 +1,18 @@
-# CPA Codex Agent Identity
+<div align="center">
+  <img src="assets/logo.svg" width="96" alt="CPA Codex Agent Identity logo">
+  <h1>CPA Codex Agent Identity</h1>
+  <p><strong>Encrypted Agent Identity and PAT management for stock CLIProxyAPI, with native auth-file integration and a hardened sidecar data plane.</strong></p>
+  <p>
+    <a href="https://github.com/simplez2/cpa-codex-agent-identity/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/simplez2/cpa-codex-agent-identity/ci.yml?branch=main&amp;style=flat-square&amp;label=CI"></a>
+    <a href="https://github.com/simplez2/cpa-codex-agent-identity/releases"><img alt="Release" src="https://img.shields.io/github/v/release/simplez2/cpa-codex-agent-identity?style=flat-square"></a>
+    <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-111827?style=flat-square"></a>
+    <img alt="CPA ABI" src="https://img.shields.io/badge/CPA-plugin%20ABI%20v1-374151?style=flat-square">
+    <img alt="Encryption" src="https://img.shields.io/badge/store-AES--256--GCM-0f766e?style=flat-square">
+  </p>
+  <p>English · <a href="README.zh-CN.md">简体中文</a></p>
+</div>
 
-[简体中文](README.zh-CN.md) | English
+> **Release boundary:** the newest public release is **v0.3.3**, built against CLIProxyAPI **v7.2.95**. The current draft PR contains additional production-validated team-workspace and reset-credit behavior, but it is not a published v0.3.4 release until version metadata, tag, registry, and assets are updated together.
 
 CPA-native management and routing support for Codex Agent Identity JWTs and opaque Personal Access Tokens whose current prefix is at-.
 
@@ -10,6 +22,15 @@ The project combines two deliberately separate components:
 - A hardened sidecar. It validates credentials, encrypts original tokens, creates AgentAssertion headers, forwards Codex traffic, synchronizes native CPA auth files, and follows CPA proxy changes without a restart.
 
 The first public release keeps the mature sidecar data plane instead of rewriting streaming, image, quota, WebSocket, and AgentAssertion behavior inside the plugin. The CPA control plane is native today, while a future pure-plugin executor can be added without changing the encrypted data format.
+
+## Documentation map
+
+- [简体中文说明](README.zh-CN.md)
+- [运行逻辑与安全边界](RUNTIME_LOGIC.zh-CN.md)
+- [生产交接与运维手册](HANDOFF.zh-CN.md)
+- [Architecture](ARCHITECTURE.md)
+- [Security policy](SECURITY.md)
+- [Management Center overlay](management-overlay/README.md)
 
 ## Highlights
 

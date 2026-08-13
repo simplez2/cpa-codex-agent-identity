@@ -1,0 +1,205 @@
+# CPA Codex Agent Identity 运行逻辑与安全边界
+
+本文按当前源码说明插件、sidecar、CPA auth 文件、批量导入、代理热加载和 reset-credit 的真实运行路径。正式 Release 仍是 v0.3.3；Draft PR 中后续行为只有在合并、打 tag 和发布后才成为新正式版本。
+
+## 1. 三个可独立替换的平面
+
+~~~mermaid
+flowchart LR
+    U[Codex client] --> CPA[Stock CLIProxyAPI]
+    P[CPA dynamic plugin] --> CPA
+    CPA -->|Bearer cais_random| D[Sidecar data plane]
+    D --> O[Fixed Codex upstream]
+    B[Browser] --> M[Sidecar management plane]
+    M --> S[(Encrypted identity store)]
+    M -->|Management auth-file API| CPA
+~~~
+
+### CPA plugin control plane
+
+- 注册 Codex AuthProvider；
+- 只识别 sidecar 管理的 Codex auth 文件；
+- 把随机 cais_ key 和内部 base URL交给 CPA 原生 Codex executor；
+- 注册受 CPA Management key 保护的 GET /v0/management/codex-agent-identity/open；
+- 不注册任何 /v0/resource/plugins/... 动态路由。
+
+### Sidecar management plane
+
+- 验证单条或批量 Agent Identity/PAT；
+- 加密保存原始凭据；
+- 通过 CPA Management API 增删改 native auth 文件；
+- 提供 /agent-identity/ UI 和受 Bearer 保护的 identity API；
+- 处理启用、停用、刷新同步、删除、预检、导入和回滚。
+
+### Sidecar data plane
+
+- 根据 cais_ key 找到一个加密 identity；
+- 解密只在内存中进行；
+- Agent Identity JWT 生成 AgentAssertion；
+- PAT 使用原 token 作为 Bearer；
+- 代理 HTTP、SSE、WebSocket、图片与配额请求到固定上游。
+
+## 2. 凭据导入生命周期
+
+### 2.1 输入与限制
+
+支持纯文本、TXT、JSON 和 JSONL。请求体最大 4 MiB，每批最多 200 条，验证使用有界 worker 并发。输入可包含 token 字符串或 token/access_token/codex_access_token 等兼容字段。
+
+### 2.2 预检
+
+预检执行：
+
+1. 解析格式和条目数量；
+2. 对同一批次 token hash 去重；
+3. 对已加密存储的 token hash 去重；
+4. 调用对应验证端点确认凭据类型和非敏感元数据；
+5. 返回 ready、duplicate、invalid 或 upstream_unavailable；
+6. 不写磁盘、不写 CPA auth 文件、不返回原 token。
+
+### 2.3 提交和原子回滚
+
+默认 atomic=true：
+
+- 任一条预检失败时，所有 ready 条目变为 aborted；
+- 提交过程中失败时，按逆序删除此前已经写入的 CPA auth 文件和 encrypted identity；
+- 回滚成功标记 rolled_back；
+- 删除 CPA 文件或 encrypted store 失败会明确标记 rollback_failed，要求人工处理；
+- 非原子模式允许成功项保留，但报告 partial_failure。
+
+前端要求预检后才能提交，并在输入改变时让旧预检失效，避免“预检 A、提交 B”。
+
+## 3. 加密存储
+
+Store 使用 AES-256-GCM：
+
+- DATA_ENCRYPTION_KEY_FILE 提供与数据卷分离的 32-byte key；
+- 每条 token 使用独立 nonce；
+- 目录以 0700、文件以 0600 创建；
+- 写入临时文件、fsync 后原子 rename；
+- persisted JSON 保存 ciphertext、nonce、client key hash 和非敏感元数据；
+- list API 不返回 token、明文 client key 或内部 hash。
+
+ALLOW_PLAINTEXT_STORE=true 只用于本地迁移/测试，生产必须关闭。加密保护离线卷、备份和误传；若主机同时泄露 key 和运行进程，则不在其威胁模型内。
+
+## 4. CPA auth 文件同步
+
+每个已导入 identity 在 CPA 中对应一个原生 Codex auth 文件，核心字段包括：
+
+~~~json
+{
+  "type": "codex",
+  "auth_mode": "agent_identity_sidecar",
+  "access_token": "cais_<random>",
+  "base_url": "<internal-sidecar-url>",
+  "agent_identity_id": "agent-<id>",
+  "disabled": false
+}
+~~~
+
+CPA 文件不含原始 JWT/PAT。同步逻辑先读取已存在文件，在写入或字段验证失败时恢复原内容。刷新 identity 时保留 disabled 状态。
+
+### 同邮箱多个 Team workspace
+
+只用 email 和 plan type 会让同一登录邮箱的多个 Team workspace 文件名冲突。当前 PR 在存在 account_id 时计算 SHA-256，并取前 8 个十六进制字符作为不直接暴露完整 account ID 的稳定短摘要：
+
+~~~text
+codex-<workspace-hash>-<sanitized-email>-<plan>.json
+~~~
+
+这既保持同 workspace 文件名稳定，又避免公开完整 account ID。缺少 account_id 的旧 identity 保持兼容命名。
+
+## 5. Agent Identity 请求路径
+
+1. CPA 选择 native Codex auth 文件；
+2. CPA 将 cais_ key 发给 sidecar；
+3. sidecar 常数时间匹配 client-key hash；
+4. 解密 JWT，验证 JWKS、issuer/audience/expiry 和 claims；
+5. 以 identity、token hash、session 组合查找 task cache；
+6. 同一 task key 的并发注册通过 single-flight 合并；
+7. 为每个上游请求生成新的 AgentAssertion；
+8. 固定上游收到 AgentAssertion，而不是原始 JWT。
+
+若 Agent Identity 上游返回 401，且请求体可安全重放，sidecar 会使 task cache 失效、重新注册并最多重试一次。它不会无限重试。
+
+## 6. PAT 请求路径
+
+1. 导入时通过 PAT whoami/验证接口确认凭据；
+2. CPA 仍只保存 cais_ key；
+3. sidecar 解密 PAT 并以 Authorization: Bearer 转发；
+4. 保留需要的 ChatGPT-Account-ID 等安全路由元数据；
+5. PAT 401 直接返回，不进入无效的 Agent Identity task 重建流程。
+
+原版 OAuth auth 文件不属于 sidecar-managed identity，Management api-call 兼容路径会转发回 stock CPA，不会被误接管。
+
+## 7. Management 与浏览器边界
+
+### 受保护的插件路由
+
+GET /v0/management/codex-agent-identity/open 由 CPA Management key 保护，返回一个带 CSP、X-Frame-Options、no-store 和 no-referrer 的包装页面。sidecar_url 必须是无 credentials/query/fragment 的 http(s) URL或根路径。
+
+### 独立 sidecar UI
+
+/agent-identity/ 静态页面本身可以通过反代访问，但以下 API 都要求 Bearer management key：
+
+- identities list；
+- single import；
+- batch preview/commit；
+- enable/disable/refresh；
+- delete。
+
+管理密码只保存在当前标签页 sessionStorage。页面用 DOM text node 渲染不可信内容，不把 token 或 opaque credit ID插入 DOM。
+
+### 为什么没有侧边栏插件页
+
+CPA 当前的 /v0/resource/plugins/... 路由族不受 Management key 保护，只适合被动静态资源。因此项目明确要求旧 /v0/resource/plugins/codex-agent-identity/open 返回 404。可选 overlay 只在已安装插件卡片增加按钮，打开独立认证的 /agent-identity/，不恢复 resource route，不传 Management key。
+
+## 8. Proxy 热加载
+
+sidecar 启动时先读取 CPA 当前 proxy-url，再开始 identity inspection。之后按 CPA_PROXY_CONFIG_POLL_INTERVAL 轮询：
+
+1. CPA 非空 proxy-url 优先；
+2. CPA 清空时恢复 OUTBOUND_PROXY_FILE/OUTBOUND_PROXY fallback；
+3. direct/none 切换为直连；
+4. 支持 HTTP、HTTPS 和 SOCKS URL；
+5. 新值先构造一个完整 http.Transport；
+6. 原子 swap 后关闭旧 transport 的 idle connections。
+
+已经在途的 HTTP 请求和 WebSocket 不被强切，新请求立即使用新路由。日志只记录模式，不记录含密码的 proxy URL。
+
+## 9. Usage 与 reset-credit
+
+quota compatibility policy 只允许明确的方法和固定路径。reset-credit consume 是可能花费权益的 POST 操作，只有用户在 CPA 管理界面明确点击时才应发生。
+
+- available_count 表示银行中总数；
+- applicable_available_count 存在时，是按钮能否使用的权威值；
+- 详细 credit row 可按 expiry 选择，但 opaque credit_id 不渲染进 DOM；
+- 没有详情时省略 credit_id，让上游选择下一个 applicable credit；
+- 不从 monthly quota reset 猜测 credit expiry；
+- healthcheck、startup、reconcile、preview 和普通 quota GET 不消费 credit。
+
+## 10. 启动和 reconciliation
+
+启动顺序：
+
+1. 读取 management、encryption、CPA Management 和可选 proxy secret；
+2. 验证固定 upstream origin；
+3. 加载当前 CPA proxy；
+4. 打开并解密 owner-only store；
+5. 创建 CPA Manager 与 sidecar server；
+6. 对每个 stored identity 重新 inspect 非敏感元数据；
+7. Upsert native CPA auth 文件，保留 disabled 状态；
+8. 启动 proxy Watch 和 HTTP server。
+
+单个 identity reconcile 失败只记录脱敏 identity ID，不打印 token 或上游正文；其它 identity 继续处理。
+
+## 11. 关键不变量
+
+- CPA 永远不应保存原始 JWT 或 PAT。
+- sidecar auth 文件中的 cais_ key 必须随机、可撤销且不能公开。
+- 同邮箱不同 Team workspace 不得覆盖同一个 CPA auth 文件。
+- PAT 401 不进行 Agent Identity 重试。
+- Agent Identity 401 最多重建 task 并重试一次。
+- 导入报告和 UI 不回显 secret。
+- proxy 变化对新请求热生效，不需要重启 CPA 或 sidecar。
+- resource route 保持无动态状态、无特权 UI、无宿主回调。
+- reset-credit consume 不得被任何自动探针触发。
