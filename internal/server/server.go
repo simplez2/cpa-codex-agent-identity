@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -55,6 +56,7 @@ type Config struct {
 	OutboundTransport   http.RoundTripper
 	Logger              *log.Logger
 	CPAChannels         *cpa.Manager
+	BackupDir           string
 	EmbedAllowedOrigins []string
 }
 
@@ -68,6 +70,7 @@ type Server struct {
 	upstream   *http.Client
 	handler    http.Handler
 	mutationMu sync.Mutex
+	backupDir  string
 }
 
 // New creates the standalone sidecar HTTP handler.
@@ -94,8 +97,15 @@ func New(config Config, store *identitystore.Store, manager *identity.Manager) (
 		config.Logger = log.New(os.Stderr, "codex-agent-identity: ", log.LstdFlags|log.LUTC)
 	}
 	config.EmbedAllowedOrigins = normalizeEmbedOrigins(config.EmbedAllowedOrigins)
+	backupDir := strings.TrimSpace(config.BackupDir)
+	if backupDir == "" {
+		backupDir = filepath.Join(store.Directory(), "backups", "identity-delete")
+	}
+	if err := ensureOwnerOnlyDirectory(backupDir); err != nil {
+		return nil, err
+	}
 
-	result := &Server{config: config, store: store, manager: manager, channels: config.CPAChannels}
+	result := &Server{config: config, store: store, manager: manager, channels: config.CPAChannels, backupDir: backupDir}
 	retryTransport := &authorizationRetryTransport{base: config.OutboundTransport, manager: manager}
 	result.upstream = &http.Client{Transport: retryTransport, Timeout: 60 * time.Second}
 	result.proxy = &httputil.ReverseProxy{
@@ -380,22 +390,38 @@ func (s *Server) handleIdentity(writer http.ResponseWriter, request *http.Reques
 		return
 	}
 	if request.Method == http.MethodDelete && actionPath == "" {
-		if err := s.store.Delete(id); err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				writeJSON(writer, http.StatusNotFound, map[string]any{"error": "identity not found"})
-				return
-			}
-			writeJSON(writer, http.StatusInternalServerError, map[string]any{"error": "failed to delete identity"})
+		_, backupID, err := s.createIdentityDeleteBackup(request.Context(), previous)
+		if err != nil {
+			writeJSON(writer, http.StatusBadGateway, map[string]any{"error": "failed to create delete backup"})
 			return
 		}
+		var removedCPA []cpa.AuthFileSnapshot
 		if s.channels != nil {
-			if err := s.channels.RemoveIdentity(request.Context(), id); err != nil {
-				_ = s.store.Restore(previous)
-				writeJSON(writer, http.StatusBadGateway, map[string]any{"error": "failed to remove CPA Codex credential"})
+			removedCPA, err = s.channels.RemoveIdentityWithSnapshot(request.Context(), id)
+			if err != nil {
+				writeJSON(writer, http.StatusBadGateway, map[string]any{"error": "failed to remove CPA Codex credential", "backup_id": backupID})
 				return
 			}
 		}
-		writeJSON(writer, http.StatusOK, map[string]any{"status": "ok"})
+		if err = s.store.Delete(id); err != nil {
+			rollback := "not_needed"
+			if len(removedCPA) > 0 && s.channels != nil {
+				rollback = "attempted"
+				rollbackContext, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				rollbackErr := s.channels.RestoreAuthFiles(rollbackContext, removedCPA)
+				cancel()
+				if rollbackErr != nil {
+					rollback = "failed"
+				}
+			}
+			if errors.Is(err, os.ErrNotExist) {
+				writeJSON(writer, http.StatusNotFound, map[string]any{"error": "identity not found", "backup_id": backupID, "rollback": rollback})
+				return
+			}
+			writeJSON(writer, http.StatusInternalServerError, map[string]any{"error": "failed to delete identity", "backup_id": backupID, "rollback": rollback})
+			return
+		}
+		writeJSON(writer, http.StatusOK, map[string]any{"status": "ok", "backup_id": backupID, "backup_created": true})
 		return
 	}
 	if request.Method != http.MethodPost || actionPath != "actions" {

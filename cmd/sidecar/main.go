@@ -142,6 +142,10 @@ func run(logger *log.Logger) error {
 		return err
 	}
 	publicCPABaseURL := envOrDefault("PUBLIC_CPA_BASE_URL", "http://codex-agent-identity-sidecar:8787/backend-api/codex")
+	reconcileOnStart, err := boolEnv("CPA_RECONCILE_ON_START", true)
+	if err != nil {
+		return err
+	}
 	var channelManager *cpa.Manager
 	if cpaManagementURL != "" {
 		channelManager, err = cpa.NewManager(
@@ -153,7 +157,9 @@ func run(logger *log.Logger) error {
 		if err != nil {
 			return err
 		}
-		reconcileStoredCredentials(logger, credentialStore, manager, channelManager)
+		if reconcileOnStart {
+			reconcileStoredCredentials(logger, credentialStore, manager, channelManager)
+		}
 	}
 	handler, err := server.New(server.Config{
 		UpstreamOrigin:      upstreamOrigin,
