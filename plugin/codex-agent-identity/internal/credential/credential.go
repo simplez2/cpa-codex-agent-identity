@@ -85,8 +85,9 @@ func Parse(provider, fileName string, raw []byte) (*Parsed, bool, error) {
 		Prefix:      prefix,
 		StorageJSON: append([]byte(nil), raw...),
 		Metadata:    metadata,
+		// CPA reads the sidecar client key from Metadata["access_token"]. Keeping it out of
+		// Attributes["api_key"] preserves the stock Codex OAuth-compatible header defaults.
 		Attributes: map[string]string{
-			"api_key":    accessToken,
 			"base_url":   baseURL,
 			"auth_mode":  AuthMode,
 			"websockets": "true",

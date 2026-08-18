@@ -26,10 +26,29 @@ func TestParseManagedCredential(t *testing.T) {
 	if err != nil || !handled || parsed == nil {
 		t.Fatalf("handled=%v parsed=%#v err=%v", handled, parsed, err)
 	}
-	if parsed.Attributes["api_key"] != "cais_0123456789abcdef0123456789abcdef" ||
+	if _, exists := parsed.Attributes["api_key"]; exists {
+		t.Fatalf("managed credentials must not be classified as Codex API keys: %#v", parsed.Attributes)
+	}
+	if parsed.Metadata["access_token"] != "cais_0123456789abcdef0123456789abcdef" ||
 		parsed.Attributes["base_url"] != "http://codex-agent-identity-sidecar:8787/backend-api/codex" ||
+		parsed.Attributes["auth_mode"] != AuthMode ||
+		parsed.Attributes["websockets"] != "true" ||
 		parsed.ID != "codex-agent-identity-aabbccddeeff.json" || parsed.Prefix != "agenttest" {
 		t.Fatalf("unexpected parsed credential: %#v", parsed)
+	}
+}
+
+func TestParseManagedCredentialRetainsOAuthCompatibleHeaderClassification(t *testing.T) {
+	t.Parallel()
+	parsed, handled, err := Parse("codex", "codex-agent-identity-aabbccddeeff.json", validFile())
+	if err != nil || !handled || parsed == nil {
+		t.Fatalf("handled=%v parsed=%#v err=%v", handled, parsed, err)
+	}
+	if token, ok := parsed.Metadata["access_token"].(string); !ok || !strings.HasPrefix(token, "cais_") {
+		t.Fatalf("sidecar client key must remain available through OAuth-compatible metadata: %#v", parsed.Metadata)
+	}
+	if strings.TrimSpace(parsed.Attributes["api_key"]) != "" {
+		t.Fatalf("sidecar credentials must not disable CPA Codex OAuth header defaults: %#v", parsed.Attributes)
 	}
 }
 
