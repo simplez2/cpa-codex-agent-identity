@@ -1,6 +1,6 @@
 module github.com/simplez2/cpa-codex-agent-identity/plugin/codex-agent-identity
 
-go 1.26.5
+go 1.26.6
 
 require (
 	github.com/router-for-me/CLIProxyAPI/v7 v7.2.95
