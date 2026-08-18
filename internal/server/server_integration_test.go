@@ -218,15 +218,38 @@ func TestSidecarManagementUISynchronizesCPACodexAuthFile(t *testing.T) {
 	}
 	channelMu.Unlock()
 
+	disableRequest, _ := http.NewRequest(http.MethodPost, sidecar.URL+"/agent-identity/api/identities/"+identityID+"/actions", strings.NewReader(`{"action":"disable"}`))
+	disableRequest.Header.Set("Authorization", "Bearer "+managementKey)
+	disableResponse, err := http.DefaultClient.Do(disableRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	disableResponse.Body.Close()
+	if disableResponse.StatusCode != http.StatusOK {
+		t.Fatalf("disable status=%d", disableResponse.StatusCode)
+	}
 	deleteRequest, _ := http.NewRequest(http.MethodDelete, sidecar.URL+"/agent-identity/api/identities/"+identityID, nil)
 	deleteRequest.Header.Set("Authorization", "Bearer "+managementKey)
 	deleteResponse, err := http.DefaultClient.Do(deleteRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
+	deleteBody, _ := io.ReadAll(deleteResponse.Body)
 	deleteResponse.Body.Close()
 	if deleteResponse.StatusCode != http.StatusOK {
-		t.Fatalf("delete status=%d", deleteResponse.StatusCode)
+		t.Fatalf("delete status=%d body=%s", deleteResponse.StatusCode, deleteBody)
+	}
+	var deletePayload map[string]any
+	if json.Unmarshal(deleteBody, &deletePayload) != nil || strings.TrimSpace(fmt.Sprint(deletePayload["backup_id"])) == "" || deletePayload["backup_created"] != true {
+		t.Fatalf("delete backup metadata missing: %s", deleteBody)
+	}
+	backupEntries, err := os.ReadDir(filepath.Join(credentialStore.Directory(), "backups", "identity-delete"))
+	if err != nil || len(backupEntries) != 1 {
+		t.Fatalf("delete backup directory entries=%d err=%v", len(backupEntries), err)
+	}
+	backupFiles, err := os.ReadDir(filepath.Join(credentialStore.Directory(), "backups", "identity-delete", backupEntries[0].Name()))
+	if err != nil || len(backupFiles) < 2 {
+		t.Fatalf("delete backup contents=%d err=%v", len(backupFiles), err)
 	}
 	channelMu.Lock()
 	defer channelMu.Unlock()
@@ -401,8 +424,11 @@ func TestSidecarImportProxyAndUnauthorizedRetry(t *testing.T) {
 	}
 
 	entries, err := os.ReadDir(dataDirectory)
-	if err != nil || len(entries) != 1 {
+	if err != nil || len(entries) != 2 {
 		t.Fatalf("identity files = %d err=%v", len(entries), err)
+	}
+	if entries[0].IsDir() {
+		entries = entries[1:]
 	}
 	info, err := os.Stat(filepath.Join(dataDirectory, entries[0].Name()))
 	if err != nil {

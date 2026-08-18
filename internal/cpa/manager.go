@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -56,6 +57,17 @@ type authFileEntry struct {
 type managedAuthFile struct {
 	IdentityID string
 	Raw        []byte
+}
+
+// AuthFileSnapshot is a secret-bearing, in-memory snapshot used only during
+// an explicitly requested identity delete transaction. Callers must keep it
+// in memory or write it to an owner-only backup; it is never returned by list
+// APIs or logged.
+type AuthFileSnapshot struct {
+	Name       string
+	IdentityID string
+	Raw        []byte
+	Disabled   bool
 }
 
 // IdentityState is the non-secret CPA synchronization state for one sidecar identity.
@@ -227,6 +239,100 @@ func (m *Manager) RemoveIdentity(ctx context.Context, identityID string) error {
 			_ = m.uploadAuthFile(context.Background(), deletedName, deletedRaw)
 		}
 		return err
+	}
+	return nil
+}
+
+// SnapshotIdentity returns all native CPA auth files owned by one identity.
+// Disabled files are intentionally included so they can be backed up and
+// deleted just like enabled files.
+func (m *Manager) SnapshotIdentity(ctx context.Context, identityID string) ([]AuthFileSnapshot, error) {
+	identityID = strings.TrimSpace(identityID)
+	if err := validateIdentityID(identityID); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	managed, err := m.managedAuthFiles(ctx)
+	if err != nil {
+		return nil, err
+	}
+	snapshots := make([]AuthFileSnapshot, 0)
+	for name, file := range managed {
+		if file.IdentityID != identityID {
+			continue
+		}
+		snapshots = append(snapshots, AuthFileSnapshot{
+			Name:       filepath.Base(name),
+			IdentityID: file.IdentityID,
+			Raw:        append([]byte(nil), file.Raw...),
+			Disabled:   managedCredentialDisabled(file.Raw, true),
+		})
+	}
+	sort.Slice(snapshots, func(i, j int) bool { return snapshots[i].Name < snapshots[j].Name })
+	return snapshots, nil
+}
+
+// RemoveIdentityWithSnapshot deletes the native auth files and returns the
+// exact bytes that were removed so a caller can roll the CPA side back if a
+// later step fails.
+func (m *Manager) RemoveIdentityWithSnapshot(ctx context.Context, identityID string) ([]AuthFileSnapshot, error) {
+	identityID = strings.TrimSpace(identityID)
+	if err := validateIdentityID(identityID); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	managed, err := m.managedAuthFiles(ctx)
+	if err != nil {
+		return nil, err
+	}
+	deleted := make(map[string][]byte)
+	snapshots := make([]AuthFileSnapshot, 0)
+	for name, file := range managed {
+		if file.IdentityID != identityID {
+			continue
+		}
+		if err = m.deleteAuthFile(ctx, name); err != nil {
+			for deletedName, deletedRaw := range deleted {
+				_ = m.uploadAuthFile(context.Background(), deletedName, deletedRaw)
+			}
+			return nil, err
+		}
+		deleted[name] = file.Raw
+		snapshots = append(snapshots, AuthFileSnapshot{
+			Name:       filepath.Base(name),
+			IdentityID: file.IdentityID,
+			Raw:        append([]byte(nil), file.Raw...),
+			Disabled:   managedCredentialDisabled(file.Raw, true),
+		})
+	}
+	if err = m.verifyIdentity(ctx, identityID, false); err != nil {
+		for deletedName, deletedRaw := range deleted {
+			_ = m.uploadAuthFile(context.Background(), deletedName, deletedRaw)
+		}
+		return nil, err
+	}
+	sort.Slice(snapshots, func(i, j int) bool { return snapshots[i].Name < snapshots[j].Name })
+	return snapshots, nil
+}
+
+// RestoreAuthFiles restores a previously captured CPA auth-file snapshot. It
+// is used only to roll back a delete when the sidecar store cannot be removed.
+func (m *Manager) RestoreAuthFiles(ctx context.Context, snapshots []AuthFileSnapshot) error {
+	if len(snapshots) == 0 {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, snapshot := range snapshots {
+		name := filepath.Base(strings.TrimSpace(snapshot.Name))
+		if name == "" || name != snapshot.Name || strings.Contains(name, "..") {
+			return errors.New("CPA auth-file snapshot name is invalid")
+		}
+		if err := m.uploadAuthFile(ctx, name, snapshot.Raw); err != nil {
+			return err
+		}
 	}
 	return nil
 }

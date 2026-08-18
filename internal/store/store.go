@@ -413,6 +413,48 @@ func (s *Store) GetByID(id string) (*Identity, bool) {
 	return &copyIdentity, true
 }
 
+// Directory returns the owner-only directory that contains the persisted
+// identity files. Callers may use it to place adjacent, owner-only backups.
+// It intentionally does not expose any credential data.
+func (s *Store) Directory() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.RLock()
+	directory := s.dir
+	s.mu.RUnlock()
+	return directory
+}
+
+// SnapshotFile returns the exact persisted bytes for one identity. The bytes
+// retain the store at-rest encryption format when encryption is enabled and
+// are intended for a short-lived, owner-only delete backup.
+func (s *Store) SnapshotFile(id string) (string, []byte, error) {
+	if s == nil {
+		return "", nil, errors.New("identity store is nil")
+	}
+	id = strings.TrimSpace(id)
+	s.mu.RLock()
+	path := s.fileByID[id]
+	identity := s.byID[id]
+	s.mu.RUnlock()
+	if identity == nil || path == "" {
+		return "", nil, os.ErrNotExist
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", nil, err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return "", nil, errors.New("identity snapshot path is not a regular file")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", nil, err
+	}
+	return filepath.Base(path), data, nil
+}
+
 // Restore rewrites a previous identity snapshot after a failed external transaction.
 func (s *Store) Restore(identity *Identity) error {
 	if s == nil || !validIdentity(identity) {
