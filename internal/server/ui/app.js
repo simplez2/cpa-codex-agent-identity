@@ -153,6 +153,7 @@ function renderIdentities(items) {
     const meta = document.createElement('div');
     meta.className = 'identity-meta';
     appendMeta(meta, item.email);
+    appendMeta(meta, item.account_id ? 'Team: ' + item.account_id : '');
     appendMeta(meta, item.plan_type ? '计划：' + item.plan_type : '');
     appendMeta(meta, item.expires_at ? '到期：' + formatDate(item.expires_at) : '长期 / 未提供到期时间');
     appendMeta(meta, '导入：' + formatDate(item.created_at));
@@ -296,7 +297,7 @@ function renderReport(report) {
     const kind = document.createElement('td');
     kind.textContent = credentialKindLabel(item.credential_kind);
     const account = document.createElement('td');
-    account.textContent = item.email || item.plan_type || '—';
+    account.textContent = [item.account_id ? 'Team: ' + item.account_id : '', item.email, item.plan_type ? 'Plan: ' + item.plan_type : ''].filter(Boolean).join(' | ') || '-';
     const status = document.createElement('td');
     const statusPill = document.createElement('span');
     statusPill.className = 'result-status ' + item.status;
@@ -387,9 +388,9 @@ function csvCell(value) {
 
 function exportCSV() {
   if (!lastReport) return;
-  const rows = [['index', 'label', 'identity_id', 'credential_kind', 'email', 'plan_type', 'status', 'code', 'message']];
+  const rows = [['index', 'label', 'identity_id', 'credential_kind', 'account_id', 'email', 'plan_type', 'status', 'code', 'message']];
   (lastReport.items || []).forEach(function (item) {
-    rows.push([item.index, item.label, item.identity_id, item.credential_kind, item.email, item.plan_type, item.status, item.code, item.message]);
+    rows.push([item.index, item.label, item.identity_id, item.credential_kind, item.account_id, item.email, item.plan_type, item.status, item.code, item.message]);
   });
   const csv = rows.map(function (row) { return row.map(csvCell).join(','); }).join(String.fromCharCode(13, 10));
   downloadBlob('codex-agent-identity-import-report.csv', 'text/csv;charset=utf-8', csv);

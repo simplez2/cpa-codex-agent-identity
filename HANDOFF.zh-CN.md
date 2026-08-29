@@ -21,7 +21,7 @@
 
 ## 2. 版本边界
 
-当前修复版本是 v0.3.5，registry 和 pluginVersion 也保持 v0.3.5。本版本包含 CPA schema 协商、CPAMC plugin-pages 资源注册、CPA 原生 Codex 执行器路由、sidecar 默认连接与校验、管理界面和图像桥接修复。
+当前工作区修复目标是 v0.3.6，pluginVersion 已保持 v0.3.6；公开 registry 仍是 v0.3.5，必须在 Linux 资产构建、GitHub Release 和校验值更新完成后再切换。
 
 发布新版本时必须同步：
 
@@ -185,7 +185,7 @@ overlay 与官方 Management Center commit 绑定。每次 CPA 前端升级都�
 
 ### plugin-pages 菜单不显示或资源入口返回 404
 
-确认安装的是 v0.3.5，CPA 的 `plugins.enabled` 和该插件配置的 `enabled` 都为 `true`，然后重启 CPA。CPA 资源入口是 `/v0/resource/plugins/codex-agent-identity/open`，正常应返回 HTML wrapper；若仍为 404，通常是插件没有注册成功、CPA 使用了不支持资源路由的旧版本，或 CPAMC/CPA 仍在使用旧插件进程。直接入口 `/agent-identity/` 和可选 overlay 按钮不依赖该菜单。
+确认安装的是 v0.3.6，CPA 的 `plugins.enabled` 和该插件配置的 `enabled` 都为 `true`，然后重启 CPA。CPA 资源入口是 `/v0/resource/plugins/codex-agent-identity/open`，正常应返回 HTML wrapper；若仍为 404，通常是插件没有注册成功、CPA 使用了不支持资源路由的旧版本，或 CPAMC/CPA 仍在使用旧插件进程。直接入口 `/agent-identity/` 和可选 overlay 按钮不依赖该菜单。
 ### 401
 
 - dashboard API 401：management password 不一致；

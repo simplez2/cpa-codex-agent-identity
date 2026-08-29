@@ -8,7 +8,17 @@ The overlay is pinned to upstream commit
 `6a6a22af85ce8763e8898c0d8641de3137f3ffd9` from
 `router-for-me/Cli-Proxy-API-Management-Center`.
 
-It applies two small, reviewable patches.
+It applies three small, reviewable patches.
+
+`codex-quota-api-bridge.patch` routes the Codex quota and reset-credit calls
+through the installed `codex-agent-identity` plugin route. The plugin forwards
+the CPA-compatible request to the sidecar, which dynamically creates the
+correct `AgentAssertion` or selects the correct PAT Team before calling the
+upstream endpoint. Non-managed native Codex OAuth files are forwarded back to
+CPA's original `/v0/management/api-call`, so installing the overlay does not
+change native OAuth behavior. This bridge is required for Keeper/CPAMC quota
+views because stock CPA's generic api-call would otherwise send the sidecar
+`cais_` client key as a Bearer token and receive a 401.
 
 `reset-credit-visibility.patch` adds official-style reset-credit management to
 the Codex quota card:
@@ -42,7 +52,7 @@ Agent Identity and mounted `codex_access_token` credentials.
 to the installed `codex-agent-identity` plugin card. The button opens the
 configured CPA API origin's `/agent-identity/` sidecar UI in a new tab. It
 does not transfer the Management key or perform identity operations itself.
-The v0.3.5 plugin also registers its own safe `/v0/resource/plugins/.../open`
+The v0.3.6 plugin also registers its own safe `/v0/resource/plugins/.../open`
 wrapper for CPAMC plugin pages; this overlay remains a separate optional card
 shortcut. The sidecar UI performs its own Bearer-key authentication before
 listing, previewing, or importing identities.
@@ -55,7 +65,7 @@ The entry exists only in the generated and mounted overlay. Installing the
 plugin `.so` or adding its registry source does not patch the stock Management
 Center card. With the overlay mounted, open `management.html#/plugins`, find the
 installed `codex-agent-identity` card, and select **Identity management**. On a
-CPAMC build that supports plugin resources, v0.3.5 also exposes a native
+CPAMC build that supports plugin resources, v0.3.6 also exposes a native
 **Codex Agent Identity** plugin-page menu without the overlay. The direct fallback
 remains `/agent-identity/`.
 

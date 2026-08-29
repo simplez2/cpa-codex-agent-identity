@@ -3,7 +3,9 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -176,7 +178,7 @@ func TestRegisterDeclaresAuthAndManagementCapabilities(t *testing.T) {
 	if result.Metadata.Name != pluginName || result.Metadata.GitHubRepository != pluginRepository || result.Metadata.Logo != pluginLogo || !result.Capabilities.AuthProvider || !result.Capabilities.ManagementAPI {
 		t.Fatalf("unexpected registration: %#v", result)
 	}
-	if len(result.Metadata.ConfigFields) != 1 || result.Metadata.ConfigFields[0].Name != configSidecarURL {
+	if len(result.Metadata.ConfigFields) != 2 || result.Metadata.ConfigFields[0].Name != configSidecarURL || result.Metadata.ConfigFields[1].Name != configSidecarAPIURL {
 		t.Fatalf("unexpected config fields: %#v", result.Metadata.ConfigFields)
 	}
 }
@@ -216,12 +218,26 @@ func TestManagementUIRegistersAuthenticatedRouteAndResource(t *testing.T) {
 	}
 	var registered managementRegistration
 	decodePluginResult(t, raw, &registered)
-	if len(registered.Routes) != 1 {
+	if len(registered.Routes) != 2 {
 		t.Fatalf("unexpected routes: %#v", registered.Routes)
 	}
-	route := registered.Routes[0]
+	var route managementRoute
+	for _, candidate := range registered.Routes {
+		if candidate.Method == http.MethodGet && candidate.Path == managementOpenPath {
+			route = candidate
+		}
+	}
 	if route.Method != http.MethodGet || route.Path != managementOpenPath {
 		t.Fatalf("unexpected management route: %#v", route)
+	}
+	var apiRoute managementRoute
+	for _, candidate := range registered.Routes {
+		if candidate.Method == http.MethodPost && candidate.Path == managementAPICallPath {
+			apiRoute = candidate
+		}
+	}
+	if apiRoute.Method != http.MethodPost || apiRoute.Path != managementAPICallPath {
+		t.Fatalf("missing quota API bridge route: %#v", registered.Routes)
 	}
 	if len(registered.Resources) != 1 {
 		t.Fatalf("unexpected resources: %#v", registered.Resources)
@@ -261,6 +277,53 @@ func TestManagementUIRegistersAuthenticatedRouteAndResource(t *testing.T) {
 		if !strings.Contains(response.Headers.Get("Content-Security-Policy"), "frame-ancestors 'self'") || response.Headers.Get("X-Frame-Options") != "SAMEORIGIN" {
 			t.Fatalf("management response can be framed cross-origin: headers=%v", response.Headers)
 		}
+	}
+}
+
+func TestManagementAPICallBridgeForwardsCPARequestToSidecar(t *testing.T) {
+	requestBody := []byte(`{"auth_index":"auth-1","method":"GET","url":"https://chatgpt.com/backend-api/wham/usage","header":{"Authorization":"Bearer $TOKEN$"}}`)
+	var received struct {
+		method        string
+		path          string
+		authorization string
+		cookie        string
+		body          []byte
+	}
+	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received.method = r.Method
+		received.path = r.URL.Path
+		received.authorization = r.Header.Get("Authorization")
+		received.cookie = r.Header.Get("Cookie")
+		received.body, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok","status_code":200,"header":{},"body":"{\"plan_type\":\"pro\"}"}`))
+	}))
+	defer sidecar.Close()
+
+	configurePluginForTest(t, "sidecar_url: http://127.0.0.1:18787/agent-identity/\nsidecar_api_url: "+sidecar.URL)
+	payload, err := json.Marshal(managementRequest{
+		Method: http.MethodPost,
+		Path:   managementAPICallFullPath,
+		Headers: http.Header{
+			"Authorization": []string{"Bearer management-key"},
+			"Cookie":        []string{"must-not-forward"},
+		},
+		Body: requestBody,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := handleMethod(pluginabi.MethodManagementHandle, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response managementResponse
+	decodePluginResult(t, raw, &response)
+	if response.StatusCode != http.StatusOK || !strings.Contains(string(response.Body), `"status_code":200`) {
+		t.Fatalf("unexpected bridge response: status=%d body=%s", response.StatusCode, response.Body)
+	}
+	if received.method != http.MethodPost || received.path != sidecarAPICallPath || received.authorization != "Bearer management-key" || received.cookie != "" || string(received.body) != string(requestBody) {
+		t.Fatalf("sidecar request = method=%s path=%s authorization=%q cookie=%q body=%s", received.method, received.path, received.authorization, received.cookie, received.body)
 	}
 }
 
@@ -375,6 +438,91 @@ func TestDefaultSidecarURLIsUsedWhenConfigIsOmitted(t *testing.T) {
 	}
 	if !strings.Contains(response.Headers.Get("Content-Security-Policy"), defaultSidecarOrigin) {
 		t.Fatalf("default sidecar origin is missing from CSP: %s", response.Headers.Get("Content-Security-Policy"))
+	}
+}
+
+func TestRelativeSidecarURLDerivesSameOriginAuthenticatedBridge(t *testing.T) {
+	target, err := sidecarManagementAPIURL(runtimeState{sidecarURL: "/agent-identity/"}, http.Header{
+		"Origin": []string{"https://cpa.example.com"},
+	})
+	if err != nil || target != "https://cpa.example.com/agent-identity/api/cpa-api-call" {
+		t.Fatalf("derived sidecar API URL = %q, %v", target, err)
+	}
+}
+
+func TestApplyConfigKeepsCustomSidecarOriginForDerivedAPI(t *testing.T) {
+	t.Setenv("CODEX_AGENT_IDENTITY_SIDECAR_API_URL", "")
+	t.Setenv("CODEX_AGENT_IDENTITY_SIDECAR_HOSTS", "")
+	t.Setenv("CODEX_AGENT_IDENTITY_SIDECAR_HTTP_PORTS", "")
+	configurePluginForTest(t, "sidecar_url: https://sidecar.example.test/agent-identity/")
+	got, err := sidecarManagementAPIURL(currentRuntimeState(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "https://sidecar.example.test/v0/management/api-call"; got != want {
+		t.Fatalf("derived custom sidecar API URL = %q, want %q", got, want)
+	}
+}
+
+func TestDefaultRuntimeSidecarAPIURLUsesContainerServiceEnvironment(t *testing.T) {
+	t.Setenv("CODEX_AGENT_IDENTITY_SIDECAR_API_URL", "")
+	t.Setenv("CODEX_AGENT_IDENTITY_SIDECAR_HOSTS", "codex-agent-identity-sidecar,unused")
+	t.Setenv("CODEX_AGENT_IDENTITY_SIDECAR_HTTP_PORTS", "")
+	if got, want := defaultRuntimeSidecarAPIURL(), "http://codex-agent-identity-sidecar:8787/v0/management/api-call"; got != want {
+		t.Fatalf("default container sidecar API URL = %q, want %q", got, want)
+	}
+
+	t.Setenv("CODEX_AGENT_IDENTITY_SIDECAR_HTTP_PORTS", "9876")
+	if got, want := defaultRuntimeSidecarAPIURL(), "http://codex-agent-identity-sidecar:9876/v0/management/api-call"; got != want {
+		t.Fatalf("configured container sidecar API URL = %q, want %q", got, want)
+	}
+
+	t.Setenv("CODEX_AGENT_IDENTITY_SIDECAR_API_URL", "http://sidecar.internal:8787")
+	if got, want := defaultRuntimeSidecarAPIURL(), "http://sidecar.internal:8787/v0/management/api-call"; got != want {
+		t.Fatalf("explicit container sidecar API URL = %q, want %q", got, want)
+	}
+}
+
+func TestManagementAPICallBridgeStripsTransportHeaders(t *testing.T) {
+	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Accept-Encoding") != "identity" {
+			t.Fatalf("sidecar Accept-Encoding = %q, want identity", r.Header.Get("Accept-Encoding"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Encoding", "identity")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("Keep-Alive", "timeout=5")
+		w.Header().Set("Set-Cookie", "should-not-cross-management-boundary")
+		_, _ = w.Write([]byte(`{"status_code":204,"header":{},"body":""}`))
+	}))
+	defer sidecar.Close()
+
+	configurePluginForTest(t, "sidecar_url: http://127.0.0.1:18787/agent-identity/\nsidecar_api_url: "+sidecar.URL)
+	payload, err := json.Marshal(managementRequest{
+		Method: http.MethodPost,
+		Path:   managementAPICallFullPath,
+		Headers: http.Header{
+			"Accept-Encoding": []string{"gzip"},
+			"TE":              []string{"trailers"},
+		},
+		Body: []byte(`{"auth_index":"auth-1"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := handleMethod(pluginabi.MethodManagementHandle, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response managementResponse
+	decodePluginResult(t, raw, &response)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("bridge status=%d body=%s", response.StatusCode, response.Body)
+	}
+	for _, name := range []string{"Content-Length", "Content-Encoding", "Connection", "Keep-Alive", "Set-Cookie", "Transfer-Encoding"} {
+		if response.Headers.Get(name) != "" {
+			t.Fatalf("response header %s crossed management boundary: %v", name, response.Headers)
+		}
 	}
 }
 

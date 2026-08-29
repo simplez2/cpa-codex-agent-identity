@@ -108,8 +108,15 @@ func (m *Manager) material(ctx context.Context, token string) (*Material, error)
 
 // Authorize creates a fresh AgentAssertion for one upstream request.
 func (m *Manager) Authorize(ctx context.Context, identityID, token, sessionID string) (*Authorization, error) {
+	return m.AuthorizeForAccount(ctx, identityID, token, sessionID, "")
+}
+
+// AuthorizeForAccount creates authorization using an optional selected ChatGPT
+// account/workspace for a PAT. An empty account ID keeps legacy behavior.
+func (m *Manager) AuthorizeForAccount(ctx context.Context, identityID, token, sessionID, accountID string) (*Authorization, error) {
+	accountID = strings.TrimSpace(accountID)
 	if IsPersonalAccessToken(token) {
-		credential, err := m.personalAccessToken(ctx, token)
+		credential, err := m.personalAccessTokenForAccount(ctx, token, accountID)
 		if err != nil {
 			return nil, err
 		}

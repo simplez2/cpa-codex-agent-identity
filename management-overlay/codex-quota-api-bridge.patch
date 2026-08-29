@@ -1,0 +1,112 @@
+--- a/src/services/api/apiCall.ts
++++ b/src/services/api/apiCall.ts
+@@ -73,20 +73,39 @@
+   if (status && message) return `${status} ${message}`.trim();
+   if (status) return `HTTP ${status}`;
+   return message || 'Request failed';
+ };
+ 
++const normalizeApiCallResult = (response: Record<string, unknown>): ApiCallResult => {
++  const statusCode = Number(response?.status_code ?? 0);
++  const header = (response?.header ?? {}) as Record<string, string[]>;
++  const { bodyText, body } = normalizeBody(response?.body);
++
++  return {
++    statusCode,
++    header,
++    bodyText,
++    body,
++  };
++};
++
+ export const apiCallApi = {
+   request: async (payload: ApiCallRequest, config?: AxiosRequestConfig): Promise<ApiCallResult> => {
+-    const response = await apiClient.post<Record<string, unknown>>('/api-call', payload, config);
+-    const statusCode = Number(response?.status_code ?? 0);
+-    const header = (response?.header ?? {}) as Record<string, string[]>;
+-    const { bodyText, body } = normalizeBody(response?.body);
+-
+-    return {
+-      statusCode,
+-      header,
+-      bodyText,
+-      body,
+-    };
++    return apiCallApi.requestAt('/api-call', payload, config);
++  },
++  requestAt: async (
++    endpoint: string,
++    payload: ApiCallRequest,
++    config?: AxiosRequestConfig
++  ): Promise<ApiCallResult> => {
++    const normalizedEndpoint = endpoint.trim();
++    if (!['/api-call', '/codex-agent-identity/api-call'].includes(normalizedEndpoint)) {
++      throw new Error('Invalid management API endpoint');
++    }
++    const response = await apiClient.post<Record<string, unknown>>(
++      normalizedEndpoint,
++      payload,
++      config
++    );
++    return normalizeApiCallResult(response);
+   },
+ };
+--- a/src/components/quota/quotaConfigs.ts
++++ b/src/components/quota/quotaConfigs.ts
+@@ -529,10 +529,17 @@
+   }
+ 
+   return windows;
+ };
+ 
++const CODEX_PLUGIN_API_CALL_PATH = '/codex-agent-identity/api-call';
++
++const requestCodexAPICall = (
++  payload: Parameters<typeof apiCallApi.request>[0],
++  config?: Parameters<typeof apiCallApi.request>[1]
++) => apiCallApi.requestAt(CODEX_PLUGIN_API_CALL_PATH, payload, config);
++
+ const buildCodexRequestHeader = (file: AuthFileItem): Record<string, string> => {
+   const accountId = resolveCodexChatgptAccountId(file);
+   const requestHeader: Record<string, string> = {
+     ...CODEX_REQUEST_HEADERS,
+   };
+@@ -546,11 +553,11 @@
+   authIndex: string,
+   requestHeader: Record<string, string>,
+   t: TFunction
+ ): Promise<CodexResetCreditsData> => {
+   try {
+-    const result = await apiCallApi.request(
++    const result = await requestCodexAPICall(
+       {
+         authIndex,
+         method: 'GET',
+         url: CODEX_RATE_LIMIT_RESET_CREDITS_URL,
+         header: {
+@@ -603,11 +610,11 @@
+ 
+   const planTypeFromFile = resolveCodexPlanType(file);
+   const subscriptionActiveUntil = resolveCodexSubscriptionActiveUntil(file);
+   const requestHeader = buildCodexRequestHeader(file);
+ 
+-  const result = await apiCallApi.request({
++  const result = await requestCodexAPICall({
+     authIndex,
+     method: 'GET',
+     url: CODEX_USAGE_URL,
+     header: requestHeader,
+   });
+@@ -672,11 +679,11 @@
+     throw new Error(t('codex_quota.missing_auth_index'));
+   }
+ 
+   const requestHeader = buildCodexRequestHeader(file);
+ 
+-  const result = await apiCallApi.request({
++  const result = await requestCodexAPICall({
+     authIndex,
+     method: 'POST',
+     url: CODEX_RATE_LIMIT_RESET_CREDITS_CONSUME_URL,
+     header: requestHeader,
+     data: JSON.stringify(

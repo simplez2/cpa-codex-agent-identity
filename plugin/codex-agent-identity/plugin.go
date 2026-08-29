@@ -6,8 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -19,33 +23,42 @@ import (
 )
 
 const (
-	pluginID               = "codex-agent-identity"
-	pluginProviderID       = credential.PluginProvider
-	runtimeProviderID      = credential.RuntimeProvider
-	pluginName             = "Codex Agent Identity"
-	pluginAuthor           = "simplez2"
-	pluginRepository       = "https://github.com/simplez2/cpa-codex-agent-identity"
-	pluginLogo             = "https://raw.githubusercontent.com/simplez2/cpa-codex-agent-identity/main/assets/logo.svg"
-	managementOpenPath     = "/codex-agent-identity/open"
-	managementOpenFullPath = "/v0/management" + managementOpenPath
-	resourceOpenFullPath   = "/v0/resource/plugins/" + pluginID + "/open"
-	legacyResourceOpenPath = "/v0/resource/plugins/" + pluginID + managementOpenPath
-	configSidecarURL       = "sidecar_url"
-	defaultSidecarURL      = "http://127.0.0.1:18787/agent-identity/"
-	defaultSidecarOrigin   = "http://127.0.0.1:18787"
-	defaultSidecarEmbedURL = defaultSidecarURL + "?embed=cpamc"
-	minimumSidecarVersion  = "0.3.2"
-	readyMessageType       = "cpa-codex-agent-identity:ready"
-	themeMessageType       = "cpa-codex-agent-identity:theme"
+	pluginID                  = "codex-agent-identity"
+	pluginProviderID          = credential.PluginProvider
+	runtimeProviderID         = credential.RuntimeProvider
+	pluginName                = "Codex Agent Identity"
+	pluginAuthor              = "simplez2"
+	pluginRepository          = "https://github.com/simplez2/cpa-codex-agent-identity"
+	pluginLogo                = "https://raw.githubusercontent.com/simplez2/cpa-codex-agent-identity/main/assets/logo.svg"
+	managementOpenPath        = "/codex-agent-identity/open"
+	managementOpenFullPath    = "/v0/management" + managementOpenPath
+	managementAPICallPath     = "/codex-agent-identity/api-call"
+	managementAPICallFullPath = "/v0/management" + managementAPICallPath
+	sidecarAPICallPath        = "/v0/management/api-call"
+	sidecarRelativeAPICall    = "/api/cpa-api-call"
+	resourceOpenFullPath      = "/v0/resource/plugins/" + pluginID + "/open"
+	legacyResourceOpenPath    = "/v0/resource/plugins/" + pluginID + managementOpenPath
+	configSidecarURL          = "sidecar_url"
+	configSidecarAPIURL       = "sidecar_api_url"
+	defaultSidecarURL         = "http://127.0.0.1:18787/agent-identity/"
+	defaultSidecarOrigin      = "http://127.0.0.1:18787"
+	defaultSidecarAPIURL      = defaultSidecarOrigin + sidecarAPICallPath
+	defaultSidecarHTTPPort    = 8787
+	defaultSidecarEmbedURL    = defaultSidecarURL + "?embed=cpamc"
+	maxForwardBodyBytes       = 1 << 20
+	minimumSidecarVersion     = "0.3.2"
+	readyMessageType          = "cpa-codex-agent-identity:ready"
+	themeMessageType          = "cpa-codex-agent-identity:theme"
 )
 
 var (
-	pluginVersion = "0.3.5"
+	pluginVersion = "0.3.6"
 	stateMu       sync.RWMutex
 	state         = runtimeState{
-		sidecarURL:  defaultSidecarURL,
-		embedURL:    defaultSidecarEmbedURL,
-		frameSource: defaultSidecarOrigin,
+		sidecarURL:    defaultSidecarURL,
+		sidecarAPIURL: defaultSidecarAPIURL,
+		embedURL:      defaultSidecarEmbedURL,
+		frameSource:   defaultSidecarOrigin,
 	}
 )
 
@@ -66,14 +79,16 @@ type lifecycleRequest struct {
 }
 
 type pluginConfig struct {
-	SidecarURL string `yaml:"sidecar_url"`
+	SidecarURL    string `yaml:"sidecar_url"`
+	SidecarAPIURL string `yaml:"sidecar_api_url"`
 }
 
 type runtimeState struct {
-	sidecarURL  string
-	embedURL    string
-	frameSource string
-	configError string
+	sidecarURL    string
+	sidecarAPIURL string
+	embedURL      string
+	frameSource   string
+	configError   string
 }
 
 type registration struct {
@@ -106,8 +121,11 @@ type resourceRoute struct {
 }
 
 type managementRequest struct {
-	Method string `json:"Method"`
-	Path   string `json:"Path"`
+	Method  string      `json:"Method"`
+	Path    string      `json:"Path"`
+	Headers http.Header `json:"Headers,omitempty"`
+	Query   url.Values  `json:"Query,omitempty"`
+	Body    []byte      `json:"Body,omitempty"`
 }
 
 type managementResponse struct {
@@ -135,7 +153,11 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 				ConfigFields: []pluginapi.ConfigField{{
 					Name:        configSidecarURL,
 					Type:        pluginapi.ConfigFieldTypeString,
-					Description: "Browser-reachable sidecar UI URL. Leave blank for the local default http://127.0.0.1:18787/agent-identity/, or use /agent-identity/ behind a same-origin reverse proxy. Plugin Store installs only the .so; start the sidecar separately. Native Codex OAuth remains CPA-managed.",
+					Description: "Browser-reachable sidecar UI URL. Leave blank for the local default http://127.0.0.1:18787/agent-identity/, or use /agent-identity/ behind a same-origin reverse proxy.",
+				}, {
+					Name:        configSidecarAPIURL,
+					Type:        pluginapi.ConfigFieldTypeString,
+					Description: "Optional absolute sidecar Management API URL for quota and reset-credit calls, for example http://127.0.0.1:18787/v0/management/api-call. Leave blank to derive it automatically; Docker installs use CODEX_AGENT_IDENTITY_SIDECAR_HOSTS and CODEX_AGENT_IDENTITY_SIDECAR_HTTP_PORTS.",
 				}},
 			},
 			Capabilities: registrationCapability{AuthProvider: true, ManagementAPI: true},
@@ -146,6 +168,10 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 				Method:      http.MethodGet,
 				Path:        managementOpenPath,
 				Description: "Authenticated Codex Agent Identity management UI. Requires sidecar " + minimumSidecarVersion + " or later.",
+			}, {
+				Method:      http.MethodPost,
+				Path:        managementAPICallPath,
+				Description: "CPA-compatible Codex quota API bridge for sidecar-managed auth files.",
 			}},
 			Resources: []resourceRoute{{
 				Path:        "/open",
@@ -243,7 +269,20 @@ func applyConfig(request []byte) {
 		setRuntimeState(next)
 		return
 	}
+	apiURL, err := normalizeSidecarAPIURL(cfg.SidecarAPIURL)
+	if err != nil {
+		next.configError = err.Error()
+		setRuntimeState(next)
+		return
+	}
+	if apiURL == "" {
+		// An explicit sidecar_url should still derive its API endpoint from the
+		// same origin. Only override that derivation when the container runtime
+		// supplied an internal sidecar endpoint.
+		apiURL = configuredRuntimeSidecarAPIURL()
+	}
 	next.sidecarURL = normalized
+	next.sidecarAPIURL = apiURL
 	next.embedURL = embedURL
 	next.frameSource = frameSource
 	setRuntimeState(next)
@@ -292,6 +331,7 @@ func applyDefaultRuntimeState(next *runtimeState) {
 		return
 	}
 	next.sidecarURL = defaultSidecarURL
+	next.sidecarAPIURL = defaultRuntimeSidecarAPIURL()
 	next.embedURL = defaultSidecarEmbedURL
 	next.frameSource = defaultSidecarOrigin
 }
@@ -325,11 +365,19 @@ func handleManagementRequest(raw []byte) managementResponse {
 		return managementErrorResponse(http.StatusBadRequest, "invalid management request")
 	}
 	method := request.Method
-	path := request.Path
-	if method == "" || path == "" {
+	requestPath := request.Path
+	if method == "" || requestPath == "" {
 		return managementErrorResponse(http.StatusBadRequest, "management method and path are required")
 	}
-	if path != managementOpenFullPath && path != resourceOpenFullPath && path != legacyResourceOpenPath {
+	if requestPath == managementAPICallFullPath {
+		if method != http.MethodPost {
+			response := managementErrorResponse(http.StatusMethodNotAllowed, "method not allowed")
+			response.Headers.Set("Allow", http.MethodPost)
+			return response
+		}
+		return forwardSidecarAPICall(request)
+	}
+	if requestPath != managementOpenFullPath && requestPath != resourceOpenFullPath && requestPath != legacyResourceOpenPath {
 		return managementErrorResponse(http.StatusNotFound, "management route not found")
 	}
 	if method != http.MethodGet {
@@ -338,6 +386,189 @@ func handleManagementRequest(raw []byte) managementResponse {
 		return response
 	}
 	return currentManagementResponse()
+}
+
+func forwardSidecarAPICall(request managementRequest) managementResponse {
+	if len(request.Body) > maxForwardBodyBytes {
+		return managementErrorResponse(http.StatusRequestEntityTooLarge, "management request body is too large")
+	}
+	current := currentRuntimeState()
+	target, err := sidecarManagementAPIURL(current, request.Headers)
+	if err != nil {
+		return managementErrorResponse(http.StatusServiceUnavailable, err.Error())
+	}
+	upstreamRequest, err := http.NewRequest(http.MethodPost, target, bytes.NewReader(request.Body))
+	if err != nil {
+		return managementErrorResponse(http.StatusBadGateway, "failed to build sidecar request")
+	}
+	for name, values := range request.Headers {
+		if blockedForwardHeader(name) {
+			continue
+		}
+		for _, value := range values {
+			upstreamRequest.Header.Add(name, value)
+		}
+	}
+	// The plugin host and CPA both serialize the response body themselves.
+	// Avoid a compressed upstream response and never forward transport framing
+	// headers that describe the sidecar connection rather than this response.
+	upstreamRequest.Header.Set("Accept-Encoding", "identity")
+	upstreamRequest.Header.Set("Content-Type", "application/json")
+	upstreamRequest.Header.Del("Content-Length")
+	response, err := sidecarHTTPClient().Do(upstreamRequest)
+	if err != nil {
+		return managementErrorResponse(http.StatusBadGateway, "sidecar management API unavailable")
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, int64(maxForwardBodyBytes)+1))
+	if err != nil {
+		return managementErrorResponse(http.StatusBadGateway, "failed to read sidecar response")
+	}
+	if len(body) > maxForwardBodyBytes {
+		return managementErrorResponse(http.StatusBadGateway, "sidecar response is too large")
+	}
+	return managementResponse{StatusCode: response.StatusCode, Headers: sanitizeResponseHeaders(response.Header), Body: body}
+}
+
+var sidecarClient = newSidecarHTTPClient()
+
+func sidecarHTTPClient() *http.Client {
+	return sidecarClient
+}
+
+func newSidecarHTTPClient() *http.Client {
+	// The sidecar endpoint is an internal control-plane hop. Do not route it
+	// through HTTP(S)_PROXY from the CPA container, which can make a Docker
+	// service name unreachable or leak management traffic to an external proxy.
+	if base, ok := http.DefaultTransport.(*http.Transport); ok {
+		transport := base.Clone()
+		transport.Proxy = nil
+		return &http.Client{Transport: transport, Timeout: 60 * time.Second}
+	}
+	return &http.Client{Transport: &http.Transport{}, Timeout: 60 * time.Second}
+}
+
+func sidecarManagementAPIURL(current runtimeState, headers http.Header) (string, error) {
+	if configured := strings.TrimSpace(current.sidecarAPIURL); configured != "" {
+		return configured, nil
+	}
+	uiURL, err := url.Parse(strings.TrimSpace(current.sidecarURL))
+	if err != nil {
+		return "", errors.New("sidecar_url is invalid")
+	}
+	if uiURL.IsAbs() {
+		uiURL.Path = sidecarAPICallPath
+		uiURL.RawPath = ""
+		uiURL.RawQuery = ""
+		uiURL.Fragment = ""
+		return uiURL.String(), nil
+	}
+	origin := strings.TrimSpace(headers.Get("Origin"))
+	if origin == "" {
+		origin = strings.TrimSpace(headers.Get("Referer"))
+	}
+	base, err := url.Parse(origin)
+	if err != nil || !base.IsAbs() || base.Host == "" || (base.Scheme != "http" && base.Scheme != "https") {
+		return "", errors.New("sidecar_api_url is required when sidecar_url is relative and no browser origin is available")
+	}
+	base.Path = strings.TrimRight(uiURL.Path, "/") + sidecarRelativeAPICall
+	base.RawPath = ""
+	base.RawQuery = ""
+	base.Fragment = ""
+	return base.String(), nil
+}
+
+func normalizeSidecarAPIURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || !u.IsAbs() || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return "", errors.New("sidecar_api_url must be an absolute http(s) URL")
+	}
+	if u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return "", errors.New("sidecar_api_url must not contain credentials, query parameters, or a fragment")
+	}
+	if u.Path == "" || u.Path == "/" {
+		u.Path = sidecarAPICallPath
+	}
+	u.RawPath = ""
+	return u.String(), nil
+}
+
+func blockedForwardHeader(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "host", "content-length", "content-encoding", "accept-encoding", "connection", "cookie", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto":
+		return true
+	default:
+		return false
+	}
+}
+
+func sanitizeResponseHeaders(headers http.Header) http.Header {
+	sanitized := headers.Clone()
+	for name := range sanitized {
+		switch strings.ToLower(strings.TrimSpace(name)) {
+		case "content-length", "content-encoding", "connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade", "set-cookie":
+			deleteHeaderKey(sanitized, name)
+		}
+	}
+	return sanitized
+}
+
+func deleteHeaderKey(headers http.Header, name string) {
+	delete(headers, name)
+	for key := range headers {
+		if strings.EqualFold(key, name) {
+			delete(headers, key)
+		}
+	}
+}
+
+func defaultRuntimeSidecarAPIURL() string {
+	if configured := configuredRuntimeSidecarAPIURL(); configured != "" {
+		return configured
+	}
+	return defaultSidecarAPIURL
+}
+
+func configuredRuntimeSidecarAPIURL() string {
+	if explicit := strings.TrimSpace(os.Getenv("CODEX_AGENT_IDENTITY_SIDECAR_API_URL")); explicit != "" {
+		if normalized, err := normalizeSidecarAPIURL(explicit); err == nil {
+			return normalized
+		}
+	}
+	hosts := splitRuntimeList(os.Getenv("CODEX_AGENT_IDENTITY_SIDECAR_HOSTS"))
+	if len(hosts) == 0 {
+		return ""
+	}
+	ports := splitRuntimeList(os.Getenv("CODEX_AGENT_IDENTITY_SIDECAR_HTTP_PORTS"))
+	for index, host := range hosts {
+		host = strings.TrimSpace(strings.Trim(host, "[]"))
+		if host == "" || strings.ContainsAny(host, "/?#@\\") || strings.IndexFunc(host, unicodeSpace) >= 0 {
+			continue
+		}
+		port := defaultSidecarHTTPPort
+		if index < len(ports) {
+			candidate, err := strconv.Atoi(ports[index])
+			if err != nil || candidate < 1 || candidate > 65535 {
+				continue
+			}
+			port = candidate
+		}
+		u := url.URL{Scheme: "http", Host: net.JoinHostPort(host, strconv.Itoa(port)), Path: sidecarAPICallPath}
+		return u.String()
+	}
+	return ""
+}
+
+func splitRuntimeList(raw string) []string {
+	return strings.FieldsFunc(raw, func(r rune) bool { return r == ',' || unicodeSpace(r) })
+}
+
+func unicodeSpace(r rune) bool {
+	return r == ' ' || r == '\t' || r == '\r' || r == '\n'
 }
 
 func managementErrorResponse(status int, message string) managementResponse {

@@ -8,6 +8,7 @@ services:
       TZ: ${TZ:-UTC}
       CODEX_AGENT_IDENTITY_SIDECAR_HOSTS: ${CODEX_AGENT_IDENTITY_SIDECAR_HOSTS:-codex-agent-identity-sidecar}
       CODEX_AGENT_IDENTITY_SIDECAR_HTTP_PORTS: ${CODEX_AGENT_IDENTITY_SIDECAR_HTTP_PORTS:-}
+      CODEX_AGENT_IDENTITY_SIDECAR_API_URL: ${CODEX_AGENT_IDENTITY_SIDECAR_API_URL:-}
     volumes:
       - ./config.yaml:/CLIProxyAPI/config.yaml
       - ./auths:/root/.cli-proxy-api

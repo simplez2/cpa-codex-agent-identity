@@ -55,9 +55,19 @@ func IsPersonalAccessToken(token string) bool {
 
 // Inspect verifies a supported Codex access token and returns display/routing metadata.
 func (m *Manager) Inspect(ctx context.Context, token string) (*CredentialInfo, error) {
+	return m.InspectForAccount(ctx, token, "")
+}
+
+// InspectForAccount verifies a credential while optionally selecting a specific
+// ChatGPT account/workspace for a PAT. This mirrors CPA's native Codex routing,
+// where the same PAT may be used with multiple Team account IDs.
+func (m *Manager) InspectForAccount(ctx context.Context, token, accountID string) (*CredentialInfo, error) {
+	accountID = strings.TrimSpace(accountID)
 	if IsPersonalAccessToken(token) {
-		return m.personalAccessToken(ctx, token)
+		return m.personalAccessTokenForAccount(ctx, token, accountID)
 	}
+	// Agent Identity JWTs already carry their account in the signed claims;
+	// an optional account selector is intentionally ignored for compatibility.
 	material, err := m.material(ctx, token)
 	if err != nil {
 		return nil, err
@@ -75,6 +85,10 @@ func (m *Manager) Inspect(ctx context.Context, token string) (*CredentialInfo, e
 }
 
 func (m *Manager) personalAccessToken(ctx context.Context, token string) (*CredentialInfo, error) {
+	return m.personalAccessTokenForAccount(ctx, token, "")
+}
+
+func (m *Manager) personalAccessTokenForAccount(ctx context.Context, token, accountID string) (*CredentialInfo, error) {
 	if m == nil {
 		return nil, errors.New("credential manager is unavailable")
 	}
@@ -84,8 +98,13 @@ func (m *Manager) personalAccessToken(ctx context.Context, token string) (*Crede
 	}
 	digest := sha256.Sum256([]byte(token))
 	tokenHash := hex.EncodeToString(digest[:])
+	cacheKey := tokenHash
+	if accountID != "" {
+		scopedDigest := sha256.Sum256([]byte(tokenHash + "\x00" + accountID))
+		cacheKey = hex.EncodeToString(scopedDigest[:])
+	}
 	m.mu.Lock()
-	if cached := m.personalAccessTokens[tokenHash]; cached != nil {
+	if cached := m.personalAccessTokens[cacheKey]; cached != nil {
 		copyCredential := *cached
 		m.mu.Unlock()
 		return &copyCredential, nil
@@ -99,6 +118,9 @@ func (m *Manager) personalAccessToken(ctx context.Context, token string) (*Crede
 	}
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Accept", "application/json")
+	if accountID != "" {
+		request.Header.Set("ChatGPT-Account-ID", accountID)
+	}
 	response, err := m.client.Do(request)
 	if err != nil {
 		return nil, ErrCredentialServiceUnavailable
@@ -119,9 +141,16 @@ func (m *Manager) personalAccessToken(ctx context.Context, token string) (*Crede
 	if metadata.ChatGPTAccountID == "" || metadata.ChatGPTUserID == "" {
 		return nil, ErrCredentialServiceUnavailable
 	}
+	if accountID != "" && metadata.ChatGPTAccountID != accountID {
+		// The selected Team must be confirmed by the upstream whoami response.
+		// Never relabel a PAT locally, otherwise quota calls can be sent to a
+		// different workspace than the one the user imported.
+		return nil, ErrCredentialInvalid
+	}
+	resolvedAccountID := metadata.ChatGPTAccountID
 	credential := &CredentialInfo{
 		Kind:      CredentialKindPersonalAccessToken,
-		AccountID: metadata.ChatGPTAccountID,
+		AccountID: resolvedAccountID,
 		UserID:    metadata.ChatGPTUserID,
 		Email:     strings.TrimSpace(metadata.Email),
 		PlanType:  strings.TrimSpace(metadata.ChatGPTPlanType),
@@ -129,7 +158,7 @@ func (m *Manager) personalAccessToken(ctx context.Context, token string) (*Crede
 		TokenHash: tokenHash,
 	}
 	m.mu.Lock()
-	m.personalAccessTokens[tokenHash] = credential
+	m.personalAccessTokens[cacheKey] = credential
 	m.mu.Unlock()
 	copyCredential := *credential
 	return &copyCredential, nil

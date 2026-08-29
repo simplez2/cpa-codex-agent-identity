@@ -25,6 +25,7 @@ type batchImportItemResult struct {
 	CredentialKind string     `json:"credential_kind,omitempty"`
 	Email          string     `json:"email,omitempty"`
 	PlanType       string     `json:"plan_type,omitempty"`
+	AccountID      string     `json:"account_id,omitempty"`
 	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
 	FedRAMP        bool       `json:"fedramp,omitempty"`
 	ChannelSynced  bool       `json:"channel_synced"`
@@ -99,7 +100,7 @@ func (s *Server) processBatchImport(ctx context.Context, candidates []importCand
 	seen := make(map[string]int, len(candidates))
 	jobs := make(chan int)
 	for index, candidate := range candidates {
-		identityID := identitystore.IdentityID(candidate.Token)
+		identityID := identitystore.IdentityIDForAccount(candidate.Token, candidate.AccountID)
 		items[index] = batchImportItemResult{Index: candidate.Index, Label: candidate.Label, IdentityID: identityID, Status: "pending"}
 		if first, duplicate := seen[identityID]; duplicate {
 			items[index].Status = "duplicate"
@@ -109,7 +110,8 @@ func (s *Server) processBatchImport(ctx context.Context, candidates []importCand
 			continue
 		}
 		seen[identityID] = candidate.Index
-		if existing, ok := s.store.GetByID(identityID); ok {
+		if existing, ok := s.store.LookupByTokenAndAccount(candidate.Token, candidate.AccountID); ok {
+			items[index].IdentityID = existing.ID
 			items[index].Status = "duplicate"
 			items[index].Code = "already_imported"
 			items[index].Message = "credential is already imported"
@@ -127,7 +129,7 @@ func (s *Server) processBatchImport(ctx context.Context, candidates []importCand
 		go func() {
 			defer workers.Done()
 			for index := range jobs {
-				credential, err := s.manager.Inspect(ctx, candidates[index].Token)
+				credential, err := s.manager.InspectForAccount(ctx, candidates[index].Token, candidates[index].AccountID)
 				if err != nil {
 					if identity.CredentialServiceUnavailable(err) {
 						items[index].Status = "upstream_unavailable"
@@ -180,7 +182,7 @@ func (s *Server) processBatchImport(ctx context.Context, candidates []importCand
 		if items[index].Status != "ready" {
 			continue
 		}
-		result, importErr := s.commitInspectedTokenLocked(ctx, candidates[index].Token, inspections[index].credential, true)
+		result, importErr := s.commitInspectedTokenLocked(ctx, candidates[index].Token, candidates[index].AccountID, inspections[index].credential, true)
 		if importErr == nil && result != nil && result.Duplicate {
 			items[index].Status = "duplicate"
 			items[index].Code = "already_imported"
@@ -307,6 +309,7 @@ func populateBatchCredentialMetadata(item *batchImportItemResult, credential *id
 	item.CredentialKind = string(credential.Kind)
 	item.Email = maskedEmail(credential.Email)
 	item.PlanType = credential.PlanType
+	item.AccountID = credential.AccountID
 	item.FedRAMP = credential.FedRAMP
 	if !credential.ExpiresAt.IsZero() {
 		value := credential.ExpiresAt.UTC()
@@ -321,6 +324,7 @@ func populateBatchStoredMetadata(item *batchImportItemResult, stored *identityst
 	item.CredentialKind = stored.Kind
 	item.Email = maskedEmail(stored.Email)
 	item.PlanType = stored.PlanType
+	item.AccountID = stored.AccountID
 	item.FedRAMP = stored.FedRAMP
 	if !stored.ExpiresAt.IsZero() {
 		value := stored.ExpiresAt.UTC()

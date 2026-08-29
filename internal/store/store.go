@@ -36,6 +36,8 @@ type Identity struct {
 	Kind          string    `json:"-"`
 	Email         string    `json:"-"`
 	PlanType      string    `json:"-"`
+	AccountID     string    `json:"-"`
+	AccountScoped bool      `json:"-"`
 	ExpiresAt     time.Time `json:"-"`
 	FedRAMP       bool      `json:"-"`
 }
@@ -52,28 +54,34 @@ type persistedIdentity struct {
 	Kind            string     `json:"credential_kind,omitempty"`
 	Email           string     `json:"email,omitempty"`
 	PlanType        string     `json:"plan_type,omitempty"`
+	AccountID       string     `json:"account_id,omitempty"`
+	AccountScoped   bool       `json:"account_scoped,omitempty"`
 	ExpiresAt       *time.Time `json:"expires_at,omitempty"`
 	FedRAMP         bool       `json:"fedramp,omitempty"`
 }
 
 // PublicIdentity is the non-secret representation of an identity.
 type PublicIdentity struct {
-	ID        string     `json:"id"`
-	CreatedAt time.Time  `json:"created_at"`
-	Kind      string     `json:"credential_kind,omitempty"`
-	Email     string     `json:"email,omitempty"`
-	PlanType  string     `json:"plan_type,omitempty"`
-	ExpiresAt *time.Time `json:"expires_at,omitempty"`
-	FedRAMP   bool       `json:"fedramp,omitempty"`
+	ID            string     `json:"id"`
+	CreatedAt     time.Time  `json:"created_at"`
+	Kind          string     `json:"credential_kind,omitempty"`
+	Email         string     `json:"email,omitempty"`
+	PlanType      string     `json:"plan_type,omitempty"`
+	AccountID     string     `json:"account_id,omitempty"`
+	AccountScoped bool       `json:"account_scoped,omitempty"`
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
+	FedRAMP       bool       `json:"fedramp,omitempty"`
 }
 
 // CredentialMetadata is the non-secret metadata persisted beside an encrypted token.
 type CredentialMetadata struct {
-	Kind      string
-	Email     string
-	PlanType  string
-	ExpiresAt time.Time
-	FedRAMP   bool
+	Kind          string
+	Email         string
+	PlanType      string
+	AccountID     string
+	AccountScoped bool
+	ExpiresAt     time.Time
+	FedRAMP       bool
 }
 
 // Store persists identities as owner-only JSON files.
@@ -187,7 +195,14 @@ func validIdentity(identity *Identity) bool {
 	if strings.TrimSpace(identity.ID) == "" || strings.TrimSpace(identity.Token) == "" {
 		return false
 	}
-	if subtle.ConstantTimeCompare([]byte(identity.ID), []byte(IdentityID(identity.Token))) != 1 {
+	expectedID := IdentityID(identity.Token)
+	if identity.AccountScoped {
+		if strings.TrimSpace(identity.AccountID) == "" {
+			return false
+		}
+		expectedID = IdentityIDForAccount(identity.Token, identity.AccountID)
+	}
+	if subtle.ConstantTimeCompare([]byte(identity.ID), []byte(expectedID)) != 1 {
 		return false
 	}
 	decoded, err := hex.DecodeString(identity.ClientKeyHash)
@@ -218,7 +233,15 @@ func (s *Store) ImportWithMetadata(token string, metadata CredentialMetadata, no
 	if token == "" {
 		return nil, "", errors.New("codex access token is required")
 	}
+	accountID := strings.TrimSpace(metadata.AccountID)
+	accountScoped := metadata.AccountScoped
+	if accountScoped && accountID == "" {
+		return nil, "", errors.New("account-scoped identity requires an account id")
+	}
 	id := IdentityID(token)
+	if accountScoped {
+		id = IdentityIDForAccount(token, accountID)
+	}
 	clientKey, err := randomClientKey()
 	if err != nil {
 		return nil, "", errors.New("failed to generate sidecar client key")
@@ -234,6 +257,8 @@ func (s *Store) ImportWithMetadata(token string, metadata CredentialMetadata, no
 		Kind:          strings.TrimSpace(metadata.Kind),
 		Email:         strings.TrimSpace(metadata.Email),
 		PlanType:      strings.TrimSpace(metadata.PlanType),
+		AccountID:     accountID,
+		AccountScoped: accountScoped,
 		ExpiresAt:     metadata.ExpiresAt.UTC(),
 		FedRAMP:       metadata.FedRAMP,
 	}
@@ -261,10 +286,24 @@ func (s *Store) ImportWithMetadata(token string, metadata CredentialMetadata, no
 	return &public, clientKey, nil
 }
 
-// IdentityID returns the stable non-secret identifier used for one token.
+// IdentityID returns the stable non-secret identifier used for one unscoped token.
+// It remains compatible with all identities created before account-scoped imports.
 func IdentityID(token string) string {
 	tokenDigest := sha256.Sum256([]byte(strings.TrimSpace(token)))
 	return "agent-" + hex.EncodeToString(tokenDigest[:6])
+}
+
+// IdentityIDForAccount returns a stable identifier for one token selected for a
+// specific ChatGPT account/workspace. This permits one PAT to be imported once
+// per Team workspace while preserving the legacy token-only identity namespace.
+func IdentityIDForAccount(token, accountID string) string {
+	token = strings.TrimSpace(token)
+	accountID = strings.TrimSpace(accountID)
+	if accountID == "" {
+		return IdentityID(token)
+	}
+	digest := sha256.Sum256([]byte("codex-account-scoped-v1\x00" + token + "\x00" + accountID))
+	return "agent-" + hex.EncodeToString(digest[:6])
 }
 
 func randomClientKey() (string, error) {
@@ -368,6 +407,10 @@ func (s *Store) UpdateMetadata(id string, metadata CredentialMetadata) error {
 	next.Kind = strings.TrimSpace(metadata.Kind)
 	next.Email = strings.TrimSpace(metadata.Email)
 	next.PlanType = strings.TrimSpace(metadata.PlanType)
+	if accountID := strings.TrimSpace(metadata.AccountID); accountID != "" {
+		next.AccountID = accountID
+		next.AccountScoped = metadata.AccountScoped || next.AccountScoped
+	}
 	next.ExpiresAt = metadata.ExpiresAt.UTC()
 	next.FedRAMP = metadata.FedRAMP
 	data, err := s.encodeIdentity(&next)
@@ -411,6 +454,32 @@ func (s *Store) GetByID(id string) (*Identity, bool) {
 	copyIdentity := *identity
 	s.mu.RUnlock()
 	return &copyIdentity, true
+}
+
+// LookupByTokenAndAccount finds the identity slot used by an import.
+// Account-scoped imports first use the scoped ID and then recognize a legacy
+// token-only record for the same account as the same credential.
+func (s *Store) LookupByTokenAndAccount(token, accountID string) (*Identity, bool) {
+	token = strings.TrimSpace(token)
+	accountID = strings.TrimSpace(accountID)
+	if token == "" {
+		return nil, false
+	}
+	identityID := IdentityID(token)
+	if accountID != "" {
+		identityID = IdentityIDForAccount(token, accountID)
+	}
+	if identity, ok := s.GetByID(identityID); ok {
+		return identity, true
+	}
+	if accountID == "" {
+		return nil, false
+	}
+	legacy, ok := s.GetByID(IdentityID(token))
+	if !ok || legacy.AccountScoped || strings.TrimSpace(legacy.AccountID) != accountID {
+		return nil, false
+	}
+	return legacy, true
 }
 
 // Directory returns the owner-only directory that contains the persisted
@@ -522,6 +591,8 @@ func (s *Store) encodeIdentity(identity *Identity) ([]byte, error) {
 		Kind:          identity.Kind,
 		Email:         identity.Email,
 		PlanType:      identity.PlanType,
+		AccountID:     identity.AccountID,
+		AccountScoped: identity.AccountScoped,
 		ExpiresAt:     timePointer(identity.ExpiresAt),
 		FedRAMP:       identity.FedRAMP,
 	}
@@ -556,6 +627,8 @@ func (s *Store) decodeIdentity(data []byte) (*Identity, error) {
 		Kind:          strings.TrimSpace(persisted.Kind),
 		Email:         strings.TrimSpace(persisted.Email),
 		PlanType:      strings.TrimSpace(persisted.PlanType),
+		AccountID:     strings.TrimSpace(persisted.AccountID),
+		AccountScoped: persisted.AccountScoped,
 		ExpiresAt:     timeValue(persisted.ExpiresAt),
 		FedRAMP:       persisted.FedRAMP,
 	}
@@ -582,13 +655,15 @@ func publicIdentity(identity *Identity) PublicIdentity {
 		return PublicIdentity{}
 	}
 	return PublicIdentity{
-		ID:        identity.ID,
-		CreatedAt: identity.CreatedAt,
-		Kind:      identity.Kind,
-		Email:     identity.Email,
-		PlanType:  identity.PlanType,
-		ExpiresAt: timePointer(identity.ExpiresAt),
-		FedRAMP:   identity.FedRAMP,
+		ID:            identity.ID,
+		CreatedAt:     identity.CreatedAt,
+		Kind:          identity.Kind,
+		Email:         identity.Email,
+		PlanType:      identity.PlanType,
+		AccountID:     identity.AccountID,
+		AccountScoped: identity.AccountScoped,
+		ExpiresAt:     timePointer(identity.ExpiresAt),
+		FedRAMP:       identity.FedRAMP,
 	}
 }
 

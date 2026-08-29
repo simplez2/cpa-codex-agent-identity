@@ -34,7 +34,7 @@ it. Tests exercise it only through a local httptest upstream.
 
 The plugin targets CPA dynamic plugin ABI v1 and is compiled with Go 1.26.6 or
 later against the current verified source baseline, CLIProxyAPI v7.2.145. The
-published v0.3.5 assets use CLIProxyAPI v7.2.145. The CPA image remains an
+The v0.3.6 release candidate is built against CLIProxyAPI v7.2.145; the public registry remains on v0.3.5 until release assets are published. The CPA image remains an
 environment variable and is never rebuilt or forked here.
 
 A CPA upgrade should follow this sequence:
@@ -55,6 +55,11 @@ are host-mounted independently from the CPA image. This lets 1Panel recreate or
 upgrade the official CPA container without erasing plugin or credential state.
 The plugin mount is read-only by default. Temporarily use a writable mount only
 when intentionally installing or updating through CPA Plugin Store.
+
+When `sidecar_api_url` is blank, the plugin uses `CODEX_AGENT_IDENTITY_SIDECAR_API_URL`
+when provided; otherwise it derives an internal HTTP endpoint from the first
+`CODEX_AGENT_IDENTITY_SIDECAR_HOSTS` entry and its indexed
+`CODEX_AGENT_IDENTITY_SIDECAR_HTTP_PORTS` value (default `8787`).
 
 CODEX_AGENT_IDENTITY_SIDECAR_HOSTS is an explicit plugin-side hostname
 allowlist. It avoids a dependency on one Docker service name without turning

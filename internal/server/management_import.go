@@ -24,25 +24,32 @@ type managementImportError struct {
 	Message    string
 }
 
-func (s *Server) importTokenLocked(ctx context.Context, token string, skipExisting bool) (*credentialImportResult, *managementImportError) {
-	credential, err := s.manager.Inspect(ctx, token)
+func (s *Server) importTokenLocked(ctx context.Context, token, accountID string, skipExisting bool) (*credentialImportResult, *managementImportError) {
+	accountID = strings.TrimSpace(accountID)
+	credential, err := s.manager.InspectForAccount(ctx, token, accountID)
 	if err != nil {
 		if identity.CredentialServiceUnavailable(err) {
 			return nil, &managementImportError{StatusCode: http.StatusBadGateway, Code: "upstream_unavailable", Message: "credential validation service is unavailable"}
 		}
 		return nil, &managementImportError{StatusCode: http.StatusBadRequest, Code: "invalid", Message: "invalid codex access token"}
 	}
-	return s.commitInspectedTokenLocked(ctx, token, credential, skipExisting)
+	return s.commitInspectedTokenLocked(ctx, token, accountID, credential, skipExisting)
 }
 
-func (s *Server) commitInspectedTokenLocked(ctx context.Context, token string, credential *identity.CredentialInfo, skipExisting bool) (*credentialImportResult, *managementImportError) {
-	identityID := identitystore.IdentityID(token)
-	previous, hadPrevious := s.store.GetByID(identityID)
+func (s *Server) commitInspectedTokenLocked(ctx context.Context, token, accountID string, credential *identity.CredentialInfo, skipExisting bool) (*credentialImportResult, *managementImportError) {
+	accountID = strings.TrimSpace(accountID)
+	accountScoped := accountID != ""
+	if accountScoped && credential != nil {
+		copyCredential := *credential
+		copyCredential.AccountID = accountID
+		credential = &copyCredential
+	}
+	previous, hadPrevious := s.store.LookupByTokenAndAccount(token, accountID)
 	if skipExisting && hadPrevious {
 		public := publicIdentityFromStored(previous)
 		return &credentialImportResult{PublicIdentity: &public, Credential: credential, Duplicate: true}, nil
 	}
-	publicIdentity, clientKey, err := s.store.ImportWithMetadata(token, storeMetadata(credential), time.Now())
+	publicIdentity, clientKey, err := s.store.ImportWithMetadata(token, storeMetadata(credential, accountScoped), time.Now())
 	if err != nil {
 		return nil, &managementImportError{StatusCode: http.StatusInternalServerError, Code: "store_failed", Message: "failed to store identity"}
 	}
@@ -76,16 +83,18 @@ func cpaCredential(identityID, clientKey string, credential *identity.Credential
 	}
 }
 
-func storeMetadata(credential *identity.CredentialInfo) identitystore.CredentialMetadata {
+func storeMetadata(credential *identity.CredentialInfo, accountScoped bool) identitystore.CredentialMetadata {
 	if credential == nil {
 		return identitystore.CredentialMetadata{}
 	}
 	return identitystore.CredentialMetadata{
-		Kind:      string(credential.Kind),
-		Email:     credential.Email,
-		PlanType:  credential.PlanType,
-		ExpiresAt: credential.ExpiresAt,
-		FedRAMP:   credential.FedRAMP,
+		Kind:          string(credential.Kind),
+		Email:         credential.Email,
+		PlanType:      credential.PlanType,
+		AccountID:     credential.AccountID,
+		AccountScoped: accountScoped,
+		ExpiresAt:     credential.ExpiresAt,
+		FedRAMP:       credential.FedRAMP,
 	}
 }
 
@@ -99,13 +108,15 @@ func publicIdentityFromStored(stored *identitystore.Identity) identitystore.Publ
 		expiresAt = &value
 	}
 	return identitystore.PublicIdentity{
-		ID:        stored.ID,
-		CreatedAt: stored.CreatedAt,
-		Kind:      stored.Kind,
-		Email:     stored.Email,
-		PlanType:  stored.PlanType,
-		ExpiresAt: expiresAt,
-		FedRAMP:   stored.FedRAMP,
+		ID:            stored.ID,
+		CreatedAt:     stored.CreatedAt,
+		Kind:          stored.Kind,
+		Email:         stored.Email,
+		PlanType:      stored.PlanType,
+		AccountID:     stored.AccountID,
+		AccountScoped: stored.AccountScoped,
+		ExpiresAt:     expiresAt,
+		FedRAMP:       stored.FedRAMP,
 	}
 }
 

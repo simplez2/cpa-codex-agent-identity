@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/simplez2/cpa-codex-agent-identity/internal/cpa"
 	"github.com/simplez2/cpa-codex-agent-identity/internal/identity"
@@ -42,6 +43,7 @@ type requestIdentityState struct {
 	Token      string
 	TokenHash  string
 	SessionID  string
+	AccountID  string
 	Kind       identity.CredentialKind
 }
 
@@ -137,6 +139,7 @@ func New(config Config, store *identitystore.Store, manager *identity.Manager) (
 	mux.HandleFunc("/agent-identity/api/identities", result.handleIdentities)
 	mux.HandleFunc("/agent-identity/api/identities/", result.handleIdentity)
 	mux.HandleFunc("/v0/management/api-call", result.handleCPAAPICall)
+	mux.HandleFunc("/agent-identity/api/cpa-api-call", result.handleCPAAPICall)
 	mux.HandleFunc("/agent-identity", result.handleUI)
 	mux.HandleFunc("/agent-identity/", result.handleUI)
 	mux.HandleFunc(proxyPathPrefix, result.handleProxy)
@@ -218,6 +221,11 @@ type importRequest struct {
 	UpperCodexAccessToken string `json:"CODEX_ACCESS_TOKEN"`
 	AgentIdentity         string `json:"agent_identity"`
 	AccessToken           string `json:"access_token"`
+	Token                 string `json:"token"`
+	AccountID             string `json:"account_id"`
+	ChatGPTAccountID      string `json:"chatgpt_account_id"`
+	TeamID                string `json:"team_id"`
+	WorkspaceID           string `json:"workspace_id"`
 }
 
 func (s *Server) handleImport(writer http.ResponseWriter, request *http.Request) {
@@ -235,13 +243,13 @@ func (s *Server) handleImport(writer http.ResponseWriter, request *http.Request)
 		writeJSON(writer, http.StatusBadRequest, map[string]any{"error": "invalid request body"})
 		return
 	}
-	token, err := parseImportToken(body)
+	token, accountID, err := parseImportRequest(body)
 	if err != nil {
 		writeJSON(writer, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
 	}
 	s.mutationMu.Lock()
-	result, importErr := s.importTokenLocked(request.Context(), token, false)
+	result, importErr := s.importTokenLocked(request.Context(), token, accountID, false)
 	s.mutationMu.Unlock()
 	if importErr != nil {
 		writeJSON(writer, importErr.StatusCode, map[string]any{"error": importErr.Message})
@@ -261,36 +269,78 @@ func (s *Server) handleImport(writer http.ResponseWriter, request *http.Request)
 	})
 }
 
-func parseImportToken(body []byte) (string, error) {
+func parseImportRequest(body []byte) (string, string, error) {
 	body = bytes.TrimSpace(body)
 	if len(body) == 0 {
-		return "", errors.New("codex_access_token is required")
+		return "", "", errors.New("codex_access_token is required")
 	}
 	if body[0] != '{' && body[0] != '"' {
-		return strings.TrimSpace(string(body)), nil
+		token := strings.TrimSpace(string(body))
+		if token == "" {
+			return "", "", errors.New("codex_access_token is required")
+		}
+		return token, "", nil
 	}
 	if body[0] == '"' {
 		var token string
 		if json.Unmarshal(body, &token) != nil || strings.TrimSpace(token) == "" {
-			return "", errors.New("invalid request body")
+			return "", "", errors.New("invalid request body")
 		}
-		return strings.TrimSpace(token), nil
+		return strings.TrimSpace(token), "", nil
 	}
 	var decoded importRequest
 	if json.Unmarshal(body, &decoded) != nil {
-		return "", errors.New("invalid request body")
+		return "", "", errors.New("invalid request body")
 	}
-	for _, token := range []string{
+	token := ""
+	for _, value := range []string{
 		decoded.CodexAccessToken,
 		decoded.UpperCodexAccessToken,
 		decoded.AgentIdentity,
 		decoded.AccessToken,
+		decoded.Token,
 	} {
-		if token = strings.TrimSpace(token); token != "" {
-			return token, nil
+		if value = strings.TrimSpace(value); value != "" {
+			token = value
+			break
 		}
 	}
-	return "", errors.New("codex_access_token is required")
+	if token == "" {
+		return "", "", errors.New("codex_access_token is required")
+	}
+	accountID := ""
+	for _, value := range []string{
+		decoded.AccountID,
+		decoded.ChatGPTAccountID,
+		decoded.TeamID,
+		decoded.WorkspaceID,
+	} {
+		if value = strings.TrimSpace(value); value != "" {
+			accountID = value
+			break
+		}
+	}
+	if err := validateImportAccountID(accountID); err != nil {
+		return "", "", err
+	}
+	return token, accountID, nil
+}
+
+// parseImportToken preserves the original token-only helper for callers that
+// do not need to select a Team workspace.
+func parseImportToken(body []byte) (string, error) {
+	token, _, err := parseImportRequest(body)
+	return token, err
+}
+
+func validateImportAccountID(value string) error {
+	if !utf8.ValidString(value) {
+		return errors.New("account_id is not valid UTF-8")
+	}
+	if len([]rune(value)) > maxBatchAccountIDRunes {
+		return errors.New("account_id is too long")
+	}
+	return nil
 }
 
 func (s *Server) handleIdentities(writer http.ResponseWriter, request *http.Request) {
@@ -310,6 +360,8 @@ func (s *Server) handleIdentities(writer http.ResponseWriter, request *http.Requ
 		CredentialKind  string     `json:"credential_kind,omitempty"`
 		Email           string     `json:"email,omitempty"`
 		PlanType        string     `json:"plan_type,omitempty"`
+		AccountID       string     `json:"account_id,omitempty"`
+		AccountScoped   bool       `json:"account_scoped,omitempty"`
 		ExpiresAt       *time.Time `json:"expires_at,omitempty"`
 		Expired         bool       `json:"expired"`
 		FedRAMP         bool       `json:"fedramp,omitempty"`
@@ -356,6 +408,8 @@ func (s *Server) handleIdentities(writer http.ResponseWriter, request *http.Requ
 			CredentialKind:  kind,
 			Email:           maskedEmail(item.Email),
 			PlanType:        item.PlanType,
+			AccountID:       item.AccountID,
+			AccountScoped:   item.AccountScoped,
 			ExpiresAt:       item.ExpiresAt,
 			Expired:         expired,
 			FedRAMP:         item.FedRAMP,
@@ -447,7 +501,11 @@ func (s *Server) handleIdentity(writer http.ResponseWriter, request *http.Reques
 			return
 		}
 	case "refresh":
-		credential, err := s.manager.Inspect(request.Context(), previous.Token)
+		accountID := ""
+		if identity.IsPersonalAccessToken(previous.Token) && previous.AccountScoped {
+			accountID = previous.AccountID
+		}
+		credential, err := s.manager.InspectForAccount(request.Context(), previous.Token, accountID)
 		if err != nil {
 			if identity.CredentialServiceUnavailable(err) {
 				writeJSON(writer, http.StatusBadGateway, map[string]any{"error": "credential validation service is unavailable"})
@@ -460,7 +518,7 @@ func (s *Server) handleIdentity(writer http.ResponseWriter, request *http.Reques
 			writeJSON(writer, http.StatusConflict, map[string]any{"error": "legacy credential must be re-imported"})
 			return
 		}
-		if err = s.store.UpdateMetadata(id, storeMetadata(credential)); err != nil {
+		if err = s.store.UpdateMetadata(id, storeMetadata(credential, previous.AccountScoped)); err != nil {
 			writeJSON(writer, http.StatusInternalServerError, map[string]any{"error": "failed to update credential metadata"})
 			return
 		}
@@ -563,7 +621,7 @@ func (s *Server) handleCPAAPICall(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 
-	authorization, err := s.manager.Authorize(request.Context(), storedIdentity.ID, storedIdentity.Token, "quota")
+	authorization, err := s.manager.AuthorizeForAccount(request.Context(), storedIdentity.ID, storedIdentity.Token, "quota", selectedAccountID(storedIdentity))
 	if err != nil {
 		writeJSON(writer, http.StatusBadGateway, map[string]any{"error": "codex credential authorization unavailable"})
 		return
@@ -584,7 +642,11 @@ func (s *Server) handleCPAAPICall(writer http.ResponseWriter, request *http.Requ
 		upstreamRequest.Header.Set(name, value)
 	}
 	upstreamRequest.Header.Set("Authorization", authorization.Header)
-	upstreamRequest.Header.Set("ChatGPT-Account-ID", authorization.AccountID)
+	if authorization.AccountID != "" {
+		upstreamRequest.Header.Set("ChatGPT-Account-ID", authorization.AccountID)
+	} else {
+		upstreamRequest.Header.Del("ChatGPT-Account-ID")
+	}
 	if authorization.FedRAMP {
 		upstreamRequest.Header.Set("X-OpenAI-Fedramp", "true")
 	}
@@ -593,6 +655,7 @@ func (s *Server) handleCPAAPICall(writer http.ResponseWriter, request *http.Requ
 		Token:      storedIdentity.Token,
 		TokenHash:  authorization.TokenHash,
 		SessionID:  "quota",
+		AccountID:  selectedAccountID(storedIdentity),
 		Kind:       authorization.Kind,
 	}
 	upstreamRequest = upstreamRequest.WithContext(context.WithValue(upstreamRequest.Context(), requestIdentityStateKey{}, state))
@@ -713,13 +776,17 @@ func (s *Server) handleProxy(writer http.ResponseWriter, request *http.Request) 
 		return
 	}
 	sessionID := logicalSessionID(request.Header)
-	authorization, err := s.manager.Authorize(request.Context(), storedIdentity.ID, storedIdentity.Token, sessionID)
+	authorization, err := s.manager.AuthorizeForAccount(request.Context(), storedIdentity.ID, storedIdentity.Token, sessionID, selectedAccountID(storedIdentity))
 	if err != nil {
 		writeJSON(writer, http.StatusBadGateway, map[string]any{"error": "codex credential authorization unavailable"})
 		return
 	}
 	request.Header.Set("Authorization", authorization.Header)
-	request.Header.Set("ChatGPT-Account-ID", authorization.AccountID)
+	if authorization.AccountID != "" {
+		request.Header.Set("ChatGPT-Account-ID", authorization.AccountID)
+	} else {
+		request.Header.Del("ChatGPT-Account-ID")
+	}
 	if authorization.FedRAMP {
 		request.Header.Set("X-OpenAI-Fedramp", "true")
 	} else {
@@ -730,6 +797,7 @@ func (s *Server) handleProxy(writer http.ResponseWriter, request *http.Request) 
 		Token:      storedIdentity.Token,
 		TokenHash:  authorization.TokenHash,
 		SessionID:  sessionID,
+		AccountID:  selectedAccountID(storedIdentity),
 		Kind:       authorization.Kind,
 	}
 	request = request.WithContext(context.WithValue(request.Context(), requestIdentityStateKey{}, state))
@@ -738,6 +806,13 @@ func (s *Server) handleProxy(writer http.ResponseWriter, request *http.Request) 
 		return
 	}
 	s.proxy.ServeHTTP(writer, request)
+}
+
+func selectedAccountID(stored *identitystore.Identity) string {
+	if stored == nil || !stored.AccountScoped || !identity.IsPersonalAccessToken(stored.Token) {
+		return ""
+	}
+	return strings.TrimSpace(stored.AccountID)
 }
 
 func bearerToken(value string) string {
@@ -812,14 +887,18 @@ func (t *authorizationRetryTransport) RoundTrip(request *http.Request) (*http.Re
 	if request.Body != nil && request.Body != http.NoBody && request.GetBody == nil {
 		return response, nil
 	}
-	authorization, authorizeErr := t.manager.Authorize(request.Context(), state.IdentityID, state.Token, state.SessionID)
+	authorization, authorizeErr := t.manager.AuthorizeForAccount(request.Context(), state.IdentityID, state.Token, state.SessionID, state.AccountID)
 	if authorizeErr != nil {
 		return response, nil
 	}
 	retry := request.Clone(request.Context())
 	retry.Header = request.Header.Clone()
 	retry.Header.Set("Authorization", authorization.Header)
-	retry.Header.Set("ChatGPT-Account-ID", authorization.AccountID)
+	if authorization.AccountID != "" {
+		retry.Header.Set("ChatGPT-Account-ID", authorization.AccountID)
+	} else {
+		retry.Header.Del("ChatGPT-Account-ID")
+	}
 	if authorization.FedRAMP {
 		retry.Header.Set("X-OpenAI-Fedramp", "true")
 	} else {
