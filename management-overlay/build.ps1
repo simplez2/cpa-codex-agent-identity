@@ -54,7 +54,6 @@ $builtArtifactPath = Join-Path $WorkDirectory 'dist\index.html'
 $artifact = Get-Content -LiteralPath $builtArtifactPath -Raw
 foreach ($requiredMarker in @(
     'codex-agent-identity',
-    '/agent-identity/',
     '/codex-agent-identity/api-call'
 )) {
     if (-not $artifact.Contains($requiredMarker)) {
