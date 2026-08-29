@@ -54,6 +54,8 @@ build-plugin:
 
 package-plugin: build-plugin
 	GOOS= GOARCH= CGO_ENABLED=0 $(GO) run ./.github/scripts/package-release.go -library "$(PLUGIN_OUTPUT)" -archive "$(PLUGIN_ARCHIVE)" -checksum "$(PLUGIN_CHECKSUM)"
+	mkdir -p "$(ASSETS_DIR)"
+	cp "$(PLUGIN_ARCHIVE)" "$(PLUGIN_CHECKSUM)" "$(ASSETS_DIR)/"
 
 checksums: package-plugin
 	cat $(BUILD_DIR)/*.sha256 | sort -k 2 > $(BUILD_DIR)/checksums.txt

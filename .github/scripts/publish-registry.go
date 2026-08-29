@@ -12,8 +12,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
+
+	"github.com/simplez2/cpa-codex-agent-identity/internal/releaseversion"
 )
 
 type registryDocument struct {
@@ -48,8 +49,6 @@ type registryArtifact struct {
 	Size   int64  `json:"size"`
 }
 
-var versionPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$`)
-
 func main() {
 	root := flag.String("root", ".", "repository root")
 	assetsDir := flag.String("assets-dir", "dist/release-assets", "directory containing the released plugin zip archives")
@@ -70,8 +69,9 @@ func publish(root, assetsDir, requestedVersion string) error {
 	if err != nil {
 		return fmt.Errorf("read VERSION: %w", err)
 	}
-	if !versionPattern.MatchString(sourceVersion) {
-		return fmt.Errorf("VERSION %q is invalid", sourceVersion)
+	source, err := releaseversion.Parse(sourceVersion)
+	if err != nil {
+		return fmt.Errorf("VERSION %q is invalid: %w", sourceVersion, err)
 	}
 	if requestedVersion == "" {
 		requestedVersion = sourceVersion
@@ -96,10 +96,11 @@ func publish(root, assetsDir, requestedVersion string) error {
 	if plugin.ID != "codex-agent-identity" || plugin.Install.Type != "direct" {
 		return errors.New("registry.json does not describe codex-agent-identity direct artifacts")
 	}
-	if !versionPattern.MatchString(plugin.Version) {
-		return fmt.Errorf("current registry version %q is invalid", plugin.Version)
+	published, err := releaseversion.Parse(plugin.Version)
+	if err != nil {
+		return fmt.Errorf("current registry version %q is invalid: %w", plugin.Version, err)
 	}
-	if compareVersion(plugin.Version, requestedVersion) >= 0 {
+	if releaseversion.Compare(published, source) >= 0 {
 		return fmt.Errorf("registry version %s is not older than requested publish version %s", plugin.Version, requestedVersion)
 	}
 
@@ -208,26 +209,4 @@ func writeAtomically(path string, data []byte) error {
 func readTrimmed(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	return strings.TrimSpace(string(data)), err
-}
-
-func compareVersion(left, right string) int {
-	parse := func(value string) [3]int {
-		core := strings.SplitN(value, "-", 2)[0]
-		parts := strings.Split(core, ".")
-		var result [3]int
-		for index := range result {
-			result[index], _ = strconv.Atoi(parts[index])
-		}
-		return result
-	}
-	leftParts, rightParts := parse(left), parse(right)
-	for index := range leftParts {
-		if leftParts[index] < rightParts[index] {
-			return -1
-		}
-		if leftParts[index] > rightParts[index] {
-			return 1
-		}
-	}
-	return 0
 }

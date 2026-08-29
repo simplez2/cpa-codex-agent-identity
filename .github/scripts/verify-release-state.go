@@ -8,8 +8,9 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
+
+	"github.com/simplez2/cpa-codex-agent-identity/internal/releaseversion"
 )
 
 type registryDocument struct {
@@ -26,15 +27,6 @@ type registryDocument struct {
 		} `json:"install"`
 	} `json:"plugins"`
 }
-
-type semver struct {
-	major      int
-	minor      int
-	patch      int
-	prerelease []string
-}
-
-var semverPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$`)
 
 func main() {
 	root := flag.String("root", ".", "repository root")
@@ -54,7 +46,7 @@ func verify(root, tag string, requireRegistryMatch bool) error {
 	if err != nil {
 		return fmt.Errorf("read VERSION: %w", err)
 	}
-	source, err := parseSemver(sourceText)
+	source, err := releaseversion.Parse(sourceText)
 	if err != nil {
 		return fmt.Errorf("VERSION %q is invalid: %w", sourceText, err)
 	}
@@ -83,11 +75,11 @@ func verify(root, tag string, requireRegistryMatch bool) error {
 	if len(minimumSidecar) != 2 {
 		return errors.New("plugin.go does not declare minimumSidecarVersion")
 	}
-	minimumSidecarVersion, err := parseSemver(minimumSidecar[1])
+	minimumSidecarVersion, err := releaseversion.Parse(minimumSidecar[1])
 	if err != nil {
 		return fmt.Errorf("minimumSidecarVersion %q is invalid: %w", minimumSidecar[1], err)
 	}
-	if compareSemver(minimumSidecarVersion, source) > 0 {
+	if releaseversion.Compare(minimumSidecarVersion, source) > 0 {
 		return fmt.Errorf("minimumSidecarVersion %s is newer than source version %s", minimumSidecar[1], sourceText)
 	}
 
@@ -103,11 +95,11 @@ func verify(root, tag string, requireRegistryMatch bool) error {
 		return fmt.Errorf("registry must contain exactly one plugin, got %d", len(registry.Plugins))
 	}
 	publishedText := strings.TrimSpace(registry.Plugins[0].Version)
-	published, err := parseSemver(publishedText)
+	published, err := releaseversion.Parse(publishedText)
 	if err != nil {
 		return fmt.Errorf("registry version %q is invalid: %w", publishedText, err)
 	}
-	if compareSemver(published, source) > 0 {
+	if releaseversion.Compare(published, source) > 0 {
 		return fmt.Errorf("registry version %s is ahead of source version %s", publishedText, sourceText)
 	}
 	if requireRegistryMatch && publishedText != sourceText {
@@ -188,94 +180,4 @@ func readFile(path string) (string, error) {
 func readTrimmed(path string) (string, error) {
 	value, err := readFile(path)
 	return strings.TrimSpace(value), err
-}
-
-func parseSemver(value string) (semver, error) {
-	matches := semverPattern.FindStringSubmatch(value)
-	if len(matches) != 5 {
-		return semver{}, errors.New("expected MAJOR.MINOR.PATCH with an optional prerelease")
-	}
-	result := semver{}
-	for index, target := range []*int{&result.major, &result.minor, &result.patch} {
-		parsed, err := strconv.Atoi(matches[index+1])
-		if err != nil {
-			return semver{}, fmt.Errorf("numeric component %q is invalid: %w", matches[index+1], err)
-		}
-		*target = parsed
-	}
-	if matches[4] != "" {
-		for _, identifier := range strings.Split(matches[4], ".") {
-			if identifier == "" {
-				return semver{}, errors.New("prerelease contains an empty identifier")
-			}
-			if isNumeric(identifier) && len(identifier) > 1 && identifier[0] == '0' {
-				return semver{}, fmt.Errorf("numeric prerelease identifier %q has a leading zero", identifier)
-			}
-			result.prerelease = append(result.prerelease, identifier)
-		}
-	}
-	return result, nil
-}
-
-func isNumeric(value string) bool {
-	for _, char := range value {
-		if char < '0' || char > '9' {
-			return false
-		}
-	}
-	return value != ""
-}
-
-func compareSemver(left, right semver) int {
-	for _, pair := range [][2]int{{left.major, right.major}, {left.minor, right.minor}, {left.patch, right.patch}} {
-		if pair[0] < pair[1] {
-			return -1
-		}
-		if pair[0] > pair[1] {
-			return 1
-		}
-	}
-	if len(left.prerelease) == 0 && len(right.prerelease) == 0 {
-		return 0
-	}
-	if len(left.prerelease) == 0 {
-		return 1
-	}
-	if len(right.prerelease) == 0 {
-		return -1
-	}
-	for index := 0; index < len(left.prerelease) && index < len(right.prerelease); index++ {
-		leftID, rightID := left.prerelease[index], right.prerelease[index]
-		leftNumeric, rightNumeric := isNumeric(leftID), isNumeric(rightID)
-		if leftNumeric && rightNumeric {
-			leftValue, _ := strconv.Atoi(leftID)
-			rightValue, _ := strconv.Atoi(rightID)
-			if leftValue < rightValue {
-				return -1
-			}
-			if leftValue > rightValue {
-				return 1
-			}
-			continue
-		}
-		if leftNumeric != rightNumeric {
-			if leftNumeric {
-				return -1
-			}
-			return 1
-		}
-		if leftID < rightID {
-			return -1
-		}
-		if leftID > rightID {
-			return 1
-		}
-	}
-	if len(left.prerelease) < len(right.prerelease) {
-		return -1
-	}
-	if len(left.prerelease) > len(right.prerelease) {
-		return 1
-	}
-	return 0
 }
