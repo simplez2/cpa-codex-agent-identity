@@ -244,7 +244,7 @@ overlay 与官方 Management Center commit 绑定。每次 CPA 前端升级都�
 
 - 不要把原 token、cais_ key、Management key、encryption key 或 proxy password 提交到 GitHub。
 - 不要把生产 auth 文件、encrypted data 或生成的 management.html 提交到仓库。
-- 不要把动态管理 UI 放回 /v0/resource/plugins/...。
+- 不要把凭证列表、预检、导入、启用、停用、刷新、删除等特权操作或 secret 放回 /v0/resource/plugins/...；该路由只允许返回不含凭据和 Management key 的 HTML wrapper。
 - 不要为了修权限让 sidecar 以 root 运行或把 secret chmod 777。
 - 不要在健康检查或自动任务中调用 reset-credit consume。
 - 不要对 PAT 401进行 Agent Identity 重试。
