@@ -38,13 +38,13 @@ account identifiers, request bodies, and private hostnames.
 
 ## Management and browser boundary
 
-- The plugin registers no dynamic route under `/v0/resource/plugins/...`.
+- The plugin registers only a browser-navigable HTML wrapper under `/v0/resource/plugins/codex-agent-identity/open`; it contains no credential, Management key, or privileged host callback. Identity operations remain behind the sidecar Bearer management key.
   Those routes are not protected by the CPA Management key and must be limited
   to passive static assets.
-- The optional plugin HTML wrapper is exposed only at the authenticated
-  `/v0/management/codex-agent-identity/open` route. It is not registered with a
-  `Menu`, because current CPA versions convert menu-bearing GET management
-  routes into unauthenticated resources.
+- The authenticated `/v0/management/codex-agent-identity/open` route remains
+  available for direct Management-key clients. The separate ResourceRoute is
+  only a passive iframe wrapper for CPAMC plugin pages; it does not carry the
+  Management key or expose privileged operations.
 - The dashboard may be served publicly, but every identity API requires the
   management key and compares it in constant time.
 - The browser stores that key only in sessionStorage. It is intentionally not
