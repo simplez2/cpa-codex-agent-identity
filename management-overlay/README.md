@@ -8,7 +8,7 @@ The overlay is pinned to upstream commit
 `6a6a22af85ce8763e8898c0d8641de3137f3ffd9` from
 `router-for-me/Cli-Proxy-API-Management-Center`.
 
-It applies three small, reviewable patches.
+It applies two small, reviewable patches.
 
 `codex-quota-api-bridge.patch` routes the Codex quota and reset-credit calls
 through the installed `codex-agent-identity` plugin route. The plugin forwards
