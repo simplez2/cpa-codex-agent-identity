@@ -20,9 +20,12 @@ import (
 )
 
 const (
-	authMode       = "agent_identity_sidecar"
-	authFilePrefix = "codex-agent-identity-"
-	pluginSettle   = 750 * time.Millisecond
+	authMode          = "agent_identity_sidecar"
+	pluginProviderID  = "codex-agent-identity"
+	runtimeProviderID = "codex"
+	legacyProviderID  = "codex" // legacy sidecar auth files emitted before provider separation
+	authFilePrefix    = "codex-agent-identity-"
+	pluginSettle      = 750 * time.Millisecond
 )
 
 // Credential is the non-secret CPA-facing representation of an Agent Identity.
@@ -92,6 +95,10 @@ func NewManager(rawBaseURL, managementKey, sidecarBaseURL string, client *http.C
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
 		return nil, errors.New("CPA management URL must use HTTP or HTTPS")
 	}
+	sidecarBaseURL, err = normalizeSidecarBaseURL(sidecarBaseURL)
+	if err != nil {
+		return nil, err
+	}
 	if client == nil {
 		client = http.DefaultClient
 	}
@@ -101,6 +108,23 @@ func NewManager(rawBaseURL, managementKey, sidecarBaseURL string, client *http.C
 		client:         client,
 		sidecarBaseURL: sidecarBaseURL,
 	}, nil
+}
+
+func normalizeSidecarBaseURL(value string) (string, error) {
+	value = strings.TrimRight(strings.TrimSpace(value), "/")
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.ForceQuery || parsed.Opaque != "" {
+		return "", errors.New("sidecar base URL is invalid")
+	}
+	scheme := strings.ToLower(strings.TrimSpace(parsed.Scheme))
+	if (scheme != "http" && scheme != "https") || parsed.Host == "" || parsed.Hostname() == "" {
+		return "", errors.New("sidecar base URL must be an absolute HTTP or HTTPS URL")
+	}
+	if parsed.EscapedPath() != "/backend-api/codex" {
+		return "", errors.New("sidecar base URL must end at /backend-api/codex")
+	}
+	parsed.Scheme = scheme
+	return parsed.String(), nil
 }
 
 // UpsertIdentity creates or replaces the sidecar-owned Codex auth file for an identity.
@@ -472,8 +496,9 @@ func (m *Manager) credentialJSONWithDisabled(credential Credential, disabled boo
 		email = credential.IdentityID + "@agent-identity.local"
 	}
 	payload := map[string]any{
-		"type":              "codex",
+		"type":              pluginProviderID,
 		"auth_mode":         authMode,
+		"auth_kind":         "oauth",
 		"email":             email,
 		"access_token":      credential.ClientKey,
 		"base_url":          m.sidecarBaseURL,
@@ -582,7 +607,8 @@ func managedCredentialIdentity(raw []byte) (string, bool) {
 	if json.Unmarshal(raw, &payload) != nil {
 		return "", false
 	}
-	managed := strings.EqualFold(strings.TrimSpace(payload.Type), "codex") &&
+	payloadType := strings.ToLower(strings.TrimSpace(payload.Type))
+	managed := (payloadType == pluginProviderID || payloadType == legacyProviderID) &&
 		strings.EqualFold(strings.TrimSpace(payload.AuthMode), authMode) &&
 		validateIdentityID(payload.IdentityID) == nil
 	return strings.TrimSpace(payload.IdentityID), managed
@@ -593,12 +619,28 @@ func managedCredentialDisabled(raw []byte, exists bool) bool {
 		return false
 	}
 	var payload struct {
-		Disabled bool `json:"disabled"`
+		Disabled any `json:"disabled"`
 	}
 	if json.Unmarshal(raw, &payload) != nil {
 		return false
 	}
-	return payload.Disabled
+	return boolValue(payload.Disabled)
+}
+
+func boolValue(value any) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		trimmed := strings.ToLower(strings.TrimSpace(typed))
+		return trimmed == "true" || trimmed == "1" || trimmed == "yes" || trimmed == "on"
+	case float64:
+		return typed == 1
+	case json.Number:
+		return typed.String() == "1"
+	default:
+		return false
+	}
 }
 
 func equivalentJSON(left, right []byte) bool {

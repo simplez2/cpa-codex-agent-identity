@@ -12,13 +12,13 @@
   <p>English · <a href="README.zh-CN.md">简体中文</a></p>
 </div>
 
-> **Release boundary:** the newest public release is **v0.3.3**, built against CLIProxyAPI **v7.2.95**. The current draft PR contains additional production-validated team-workspace and reset-credit behavior, but it is not a published v0.3.4 release until version metadata, tag, registry, and assets are updated together.
+> **Release boundary:** the newest public release is **v0.3.4**, built against CLIProxyAPI **v7.2.145**. It keeps CPA native Codex OAuth login/refresh ownership while routing Agent Identity records through CPA's native Codex executor, and includes the sidecar validation, management entry, and direct image bridge fixes.
 
 CPA-native management and routing support for Codex Agent Identity JWTs and opaque Personal Access Tokens whose current prefix is at-.
 
 The project combines two deliberately separate components:
 
-- A CPA dynamic plugin named codex-agent-identity.so. It registers the Codex auth parser and one authenticated Management API route.
+- A CPA dynamic plugin named codex-agent-identity.so. It claims the private `codex-agent-identity` auth-file provider, recognizes only files marked `auth_mode: agent_identity_sidecar`, and maps the resulting records to CPA's native `codex` runtime executor. Ordinary `type: codex` OAuth files and CPA's native login/refresh flow remain untouched. It also exposes one authenticated Management API route.
 - A hardened sidecar. It validates credentials, encrypts original tokens, creates AgentAssertion headers, forwards Codex traffic, synchronizes native CPA auth files, and follows CPA proxy changes without a restart.
 
 The first public release keeps the mature sidecar data plane instead of rewriting streaming, image, quota, WebSocket, and AgentAssertion behavior inside the plugin. The CPA control plane is native today, while a future pure-plugin executor can be added without changing the encrypted data format.
@@ -70,7 +70,7 @@ Codex client
   -> https://chatgpt.com/backend-api/codex
 ~~~
 
-CPA never receives the original Agent Identity JWT or PAT. It receives only a random, revocable sidecar client key plus non-secret display and routing metadata.
+CPA never receives the original Agent Identity JWT or PAT. It receives only a random, revocable sidecar client key plus non-secret display and routing metadata. The auth file uses `type: codex-agent-identity` for plugin dispatch; after parsing, the runtime auth provider is `codex`, which is the key that selects CPA's stock Codex executor.
 
 ## Security boundary
 
@@ -97,7 +97,7 @@ Treat the management password, encryption key, and generated cais_ values as sec
 ## Requirements
 
 - A CPA build with dynamic plugin ABI v1, AuthProvider, Management API routes, and host auth-file management support.
-- CLIProxyAPI v7.2.95 is the SDK baseline for release v0.3.3. The plugin uses
+- CLIProxyAPI v7.2.145 is the verified SDK baseline for the current v0.3.4 release. The plugin uses
   dynamic plugin ABI v1; always canary-test it against the exact CPA image you
   plan to deploy.
 - Linux amd64 or Linux arm64 for the released .so files.
@@ -106,14 +106,14 @@ Treat the management password, encryption key, and generated cais_ values as sec
 
 ## Build and test
 
-The repository requires Go 1.26.5 or later. The Makefile runs both Go modules:
+The repository requires Go 1.26.6 or later. The Makefile runs both Go modules:
 
 ~~~bash
 make test
 make race
 make vet
 make build
-make package-plugin VERSION=0.3.3 GOOS=linux GOARCH=amd64
+make package-plugin VERSION=0.3.4 GOOS=linux GOARCH=amd64
 ~~~
 
 Equivalent direct commands are:
@@ -154,7 +154,9 @@ remains `/agent-identity/`.
 ### CPAMC Plugin Store
 
 The official `router-for-me/CLIProxyAPI-Plugins-Store` registry currently lists
-`codex-agent-identity` version `0.3.3`. If an older CPA build or a stale store
+`codex-agent-identity` version `0.3.4`. When installing into a stock CPA build, leave
+`sidecar_url` blank to use the local default, or set `/agent-identity/` when CPA and
+sidecar are published behind the same origin. If an older CPA build or a stale store
 cache does not show it yet, this repository's registry remains a direct fallback
 that can be added to the host-mounted CPA configuration:
 
@@ -168,8 +170,8 @@ plugins:
 The released Plugin Store assets follow CPA's required names:
 
 ~~~text
-codex-agent-identity_0.3.3_linux_amd64.zip
-codex-agent-identity_0.3.3_linux_arm64.zip
+codex-agent-identity_0.3.4_linux_amd64.zip
+codex-agent-identity_0.3.4_linux_arm64.zip
 checksums.txt
 ~~~
 
@@ -177,6 +179,10 @@ Each archive contains codex-agent-identity.so at its root. CPA verifies the
 archive checksum before installation. A containerized CPA needs a writable
 host plugin mount during the install or update. Restore read-only mode after
 the operation.
+The store installs the `.so` only; it cannot safely create the sidecar container,
+Docker network, encryption key, management key, or persistent data directory.
+For a fresh deployment, `deploy/bootstrap-runtime.sh --start` prepares those
+prerequisites so the Plugin Store step is the only manual installation action.
 
 The registry uses CPA schema v2 direct artifacts with pinned sizes and SHA-256
 digests. Installation therefore does not consume the server's anonymous GitHub
@@ -197,7 +203,7 @@ Mount the host directory into CPA:
 ~~~yaml
 services:
   cli-proxy-api:
-    image: eceasy/cli-proxy-api:v7.2.95
+    image: eceasy/cli-proxy-api:v7.2.145
     volumes:
       - ./config.yaml:/CLIProxyAPI/config.yaml
       - ./auths:/root/.cli-proxy-api
@@ -220,18 +226,33 @@ plugins:
 The sidecar_url value is used only to construct the authenticated plugin
 Management API response. It can be a root-relative same-origin URL or a full
 HTTP/HTTPS URL and must not contain credentials, query parameters, or a
-fragment. It never creates a public plugin-resource route.
+fragment. When omitted, `/`, or the historical local root URL, it defaults to
+`http://127.0.0.1:18787/agent-identity/`. It never creates a public
+plugin-resource route.
 
-Do not load codex-agent-identity.so and the legacy codex-agent-identity-auth.so at the same time. Both claim the Codex auth parser.
+Do not load codex-agent-identity.so and the legacy codex-agent-identity-auth.so at the same time. Both claim the Codex Agent Identity auth-file provider/parser.
 
 ## Sidecar deployment
 
-The durable example is deploy/docker-compose.production.yml. Generate two independent secrets before starting it:
+For a new checkout, the bootstrap helper creates the runtime directories, two independent secrets, a fresh CPA config with the plugin enabled, a random CPA API key, and the external Docker network. It can start the official CPA image and sidecar immediately:
+
+~~~bash
+sudo sh deploy/bootstrap-runtime.sh --start
+~~~
+
+The default local setup uses <code>http://127.0.0.1:18787/agent-identity/</code> as the browser-facing sidecar URL. The plugin also defaults to this value when `sidecar_url` is omitted. If CPA is published behind a reverse proxy, use the same-origin path instead:
+
+~~~bash
+sudo sh deploy/bootstrap-runtime.sh --sidecar-url /agent-identity/ --start
+~~~
+
+For an existing deployment, keep its config and env files and apply the equivalent settings manually. The durable example is deploy/docker-compose.production.yml; use an explicit project directory so the root-level config, auth, logs, and runtime paths resolve correctly:
 
 ~~~bash
 sudo sh deploy/init-runtime.sh ./runtime
 cp .env.example .env
 docker network inspect agent-identity >/dev/null 2>&1 || docker network create agent-identity
+docker compose --project-directory . --env-file .env -f deploy/docker-compose.production.yml up -d
 ~~~
 
 Use the same management password for CPA and the sidecar when automatic native auth-file synchronization is enabled.
@@ -252,15 +273,22 @@ Important environment variables:
 | MANAGEMENT_KEY_FILE | none | Preferred sidecar management-key file |
 | CPA_MANAGEMENT_URL | none | CPA management base used for native auth-file sync and proxy hot reload |
 | CPA_MANAGEMENT_KEY_FILE | sidecar key | CPA management-key file |
-| PUBLIC_CPA_BASE_URL | internal sidecar URL | URL written to CPA auth files |
+| PUBLIC_CPA_BASE_URL | http://127.0.0.1:8787/backend-api/codex | URL written to CPA auth files; Compose overrides this with the sidecar service name |
 | CPA_PROXY_CONFIG_POLL_INTERVAL | 1s | CPA global proxy polling interval |
 | OUTBOUND_PROXY_FILE | none | Fallback HTTP, HTTPS, or SOCKS proxy file |
-| EMBED_ALLOWED_ORIGINS | none | Comma-separated trusted origins allowed to frame the sidecar UI |
+| EMBED_ALLOWED_ORIGINS | http://127.0.0.1:8317 | Comma-separated trusted origins allowed to frame the sidecar UI; add the complete CPA origin when using a custom domain |
 | UPSTREAM_ORIGIN | https://chatgpt.com | Fixed Codex upstream origin |
 | JWKS_URL | official Agent Identity JWKS | JWT signing keys |
 | AUTH_API_BASE_URL | official account API | Agent Identity task registration |
 | PERSONAL_ACCESS_TOKEN_AUTH_API_BASE_URL | official account API | PAT whoami validation |
 | MAX_REPLAY_BODY_BYTES | 16777216 | Maximum body retained for a safe 401 retry |
+| CODEX_AGENT_IDENTITY_SIDECAR_HOSTS | built-in container names plus loopback | Additional comma-separated sidecar hostnames accepted by the CPA plugin parser |
+| CODEX_AGENT_IDENTITY_SIDECAR_HTTP_PORTS | none | Additional explicit HTTP ports; 8787 is always allowed and loopback also allows 18787 |
+
+Direct image requests selected by CPA for `gpt-image-1.5` or `gpt-image-2`
+are bridged back through the Codex Responses image tool. JSON and multipart
+edits, `response_format=url`, partial-image SSE, completed-image SSE, and the
+Agent Identity 401 re-registration retry are preserved.
 
 Use secret files instead of environment values whenever possible so credentials are not exposed by container inspection.
 
@@ -401,7 +429,7 @@ checksums.txt
 
 `registry.json` is a directly usable CPA Plugin Store source. The built-in
 official `router-for-me/CLIProxyAPI-Plugins-Store` registry also currently
-includes `codex-agent-identity` version `0.3.3`; this repository source remains
+includes `codex-agent-identity` version `0.3.4`; this repository source remains
 useful as an explicit fallback or pin.
 
 ## Optional Management Center overlay

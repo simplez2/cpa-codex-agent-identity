@@ -12,19 +12,22 @@
   <p>简体中文 · <a href="README.md">English</a></p>
 </div>
 
-> **版本边界：** 当前最新正式 Release 是 **v0.3.3**，编译基线为 CLIProxyAPI **v7.2.95**。现有 Draft PR 包含已经过生产验证的多 Team workspace 与 reset-credit 后续能力，但在版本元数据、tag、registry 和发布资产同步前，不能称为已发布 v0.3.4。
+> **版本边界：** 当前最新正式 Release 是 **v0.3.4**，其发布资产使用 CLIProxyAPI **v7.2.145**。该版本同步了 CPA 原生 Codex OAuth 执行器路由、sidecar URL 校验、管理入口和直接图像桥接修复。
 
 这是一个面向 CLIProxyAPI（CPA）的 Codex Agent Identity / Personal Access
 Token 集成项目。首个公开版本由两个部分组成：
 
-- codex-agent-identity.so：CPA 原生动态插件，注册 Codex AuthProvider 和一条
-  受 Management key 保护的管理路由。
+- codex-agent-identity.so：CPA 动态插件只声明私有的 `codex-agent-identity`
+  auth-file provider；它只接管带有 `auth_mode: agent_identity_sidecar` 的 sidecar
+  文件，然后把解析结果映射到 CPA 原生 `codex` runtime executor。原生 `type: codex`
+  OAuth 的解析、登录、刷新和执行路径仍由 CPA 自己处理。插件只暴露一个受
+  Management key 保护的管理路由。
 - sidecar：负责官方凭证验证、AES-256-GCM 加密存储、AgentAssertion、PAT
   转发、批量导入、CPA auth 文件同步以及 HTTP/SOCKS 代理热加载。
 
 CPA 只会看到随机生成的 cais_ 客户端密钥，不会保存原始 Agent Identity
-JWT 或 PAT。现有官方 OAuth 和第三方 API 渠道不由本插件接管。
-
+JWT 或 PAT。auth 文件使用 `type: codex-agent-identity` 触发插件解析，解析后
+runtime provider 仍为 `codex`，因此会进入 CPA 原生 Codex executor。现有官方 OAuth 和第三方 API 渠道不由本插件接管。
 ## 文档导航
 
 - [运行逻辑与安全边界](RUNTIME_LOGIC.zh-CN.md)
@@ -50,8 +53,8 @@ JWT 或 PAT。现有官方 OAuth 和第三方 API 渠道不由本插件接管。
 
 ## 版本边界
 
-v0.3.3 要求 Go 1.26.5 或更高补丁版本，并以 CLIProxyAPI v7.2.95 SDK 为编译
-基线。插件使用
+当前源码要求 Go 1.26.6 或更高补丁版本，并以 CLIProxyAPI v7.2.145 SDK 作为当前版本编译
+基线；已发布 v0.3.4 资产基于 v7.2.145。插件使用
 动态插件 ABI v1，但正式升级 CPA 前仍必须用目标官方镜像做独立 canary。
 
 首版保留稳定 sidecar 数据面，没有仓促把 AgentAssertion、PAT、图片、SSE、
@@ -74,7 +77,7 @@ Management key。旧的
 
 - **插件商店目录**：CPA 官方
   `router-for-me/CLIProxyAPI-Plugins-Store` 当前已收录
-  `codex-agent-identity` v0.3.3，正常可在
+  `codex-agent-identity` v0.3.4，正常可在
   `management.html#/plugin-store` 搜索到。旧 CPA 或陈旧缓存未显示时，可刷新商店
   或把本仓库 `registry.json` 加入 `store-sources` 作为明确回退。
 - **已安装插件列表**：`.so` 被发现并注册后，会在
@@ -92,7 +95,7 @@ Management key。旧的
 
 ## 从 CPAMC Plugin Store 安装
 
-官方 CPA Plugin Store 当前已收录 `codex-agent-identity` v0.3.3。若目标 CPA
+官方 CPA Plugin Store 当前已收录 `codex-agent-identity` v0.3.4。若目标 CPA
 版本或商店缓存仍未显示，可把本仓库注册表加入宿主机挂载的 CPA 配置：
 
 ~~~yaml
@@ -109,6 +112,7 @@ plugins:
 
 `sidecar_url` 只用于构造受认证的插件 Management API 响应，不会再创建公开的
 插件资源路由。它不能包含用户信息、查询参数或片段。
+The plugin defaults to `http://127.0.0.1:18787/agent-identity/` when this field is blank; `/` and the historical local root URL are normalized to `/agent-identity/`.
 
 容器内 CPA 若要通过 Plugin Store 安装或升级，插件目录需要在该操作期间可写。
 完成后建议恢复只读挂载。正常运行时推荐：
@@ -127,15 +131,29 @@ codex-agent-identity.so，并由 checksums.txt 提供 SHA-256 校验。
 不要同时加载旧的 codex-agent-identity-auth.so 和新的
 codex-agent-identity.so，两者都会声明 Codex 凭证解析能力。
 
+插件商店只会安装 `.so`，无法安全地自动创建 sidecar 容器、Docker network、加密密钥、management key 和持久化目录。全新部署建议先运行 `sh deploy/bootstrap-runtime.sh --start`，之后在 CPA 插件商店点击安装即可。
+
 ## 部署 sidecar
 
-参考 deploy/docker-compose.production.yml：
+全新 checkout 推荐使用 bootstrap helper。它会创建 runtime 目录和两份独立密钥，生成已启用插件的 CPA 配置、随机 CPA API key 和外部 Docker network，并可直接启动官方 CPA 与 sidecar：
+
+~~~bash
+sudo sh deploy/bootstrap-runtime.sh --start
+~~~
+
+默认本机浏览器使用 <code>http://127.0.0.1:18787/agent-identity/</code> 访问 sidecar。若 CPA 通过反向代理发布，推荐使用同源路径：
+
+~~~bash
+sudo sh deploy/bootstrap-runtime.sh --sidecar-url /agent-identity/ --start
+~~~
+
+已有部署不要覆盖原 config 和 .env；请手动合并同样的设置。参考 deploy/docker-compose.production.yml 时，要显式指定 project directory，确保根目录的 config、auth、logs 和 runtime 路径解析正确：
 
 ~~~bash
 sudo sh deploy/init-runtime.sh ./runtime
 cp .env.example .env
 docker network inspect agent-identity >/dev/null 2>&1 || docker network create agent-identity
-docker compose -f deploy/docker-compose.production.yml up -d
+docker compose --project-directory . --env-file .env -f deploy/docker-compose.production.yml up -d
 ~~~
 
 CPA remote-management 密码与 sidecar 的 management-key 应保持一致，这样
@@ -158,6 +176,10 @@ location ^~ /agent-identity/ {
 如果确实需要跨来源嵌入，必须把受信任页面的完整 origin 加入
 EMBED_ALLOWED_ORIGINS。管理密码只保存在当前标签页的 sessionStorage，不会
 写入 localStorage、URL、Cookie 或导出文件。
+
+插件解析器默认允许容器服务名以及 `localhost`、`127.0.0.1`、`::1`。HTTP 默认只允许 8787，loopback 额外允许宿主机映射端口 18787；其他明确需要的 HTTP 端口必须通过 `CODEX_AGENT_IDENTITY_SIDECAR_HTTP_PORTS` 逐项加入。
+
+CPA 选择 `gpt-image-1.5` 或 `gpt-image-2` 的 direct image 路径时，sidecar 会转回 Codex Responses image tool，并保留 JSON/multipart 编辑、`response_format=url`、partial/completed SSE 以及 Agent Identity 401 重新注册重试。
 
 ## 批量导入格式
 
@@ -207,7 +229,7 @@ make test
 make race
 make vet
 make build
-make package-plugin VERSION=0.3.3 GOOS=linux GOARCH=amd64
+make package-plugin VERSION=0.3.4 GOOS=linux GOARCH=amd64
 ~~~
 
 vX.Y.Z 标签会生成 Linux amd64/arm64 插件 zip、sidecar tar.gz、

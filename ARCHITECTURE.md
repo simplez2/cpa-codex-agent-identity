@@ -3,11 +3,15 @@
 The project extends an otherwise unmodified CLIProxyAPI (CPA) deployment. The
 integration is split into three independently replaceable parts:
 
-1. **CPA plugin control plane**: registers the Codex AuthProvider and one
-   authenticated Management API route. It recognizes only sidecar-owned Codex
-   auth files and supplies their internal base URL and opaque cais_ key to
-   CPA's stock Codex executor. It never receives an original Agent Identity
-   JWT or Personal Access Token and registers no unauthenticated ResourceRoute.
+1. **CPA plugin control plane**: registers an AuthProvider under the private
+   `codex-agent-identity` provider key and one authenticated Management API route.
+   It recognizes only sidecar-owned auth files marked `auth_mode=agent_identity_sidecar`,
+   supplies their internal base URL and opaque cais_ key, and returns
+   `AuthData.Provider=codex` so those records use CPA's first-class Codex executor.
+   Native `type=codex` OAuth files keep CPA's built-in parser, login, refresh, and
+   executor path; the plugin never claims the native `codex` AuthProvider. It never
+   receives an original Agent Identity JWT or Personal Access Token and registers no
+   unauthenticated ResourceRoute.
 2. **Sidecar management plane**: validates single or batch imports, stores
    credentials encrypted, and transactionally adds, disables, refreshes, or
    removes native Codex auth files through CPA's management API.
@@ -28,10 +32,10 @@ it. Tests exercise it only through a local httptest upstream.
 
 ## Upgrade boundary
 
-The plugin targets CPA dynamic plugin ABI v1 and is compiled with Go 1.26.5 or
-later against the latest verified CPA SDK baseline. Release v0.3.3 uses
-CLIProxyAPI v7.2.95. The CPA image remains an environment variable and is never
-rebuilt or forked here.
+The plugin targets CPA dynamic plugin ABI v1 and is compiled with Go 1.26.6 or
+later against the current verified source baseline, CLIProxyAPI v7.2.145. The
+published v0.3.4 assets use CLIProxyAPI v7.2.145. The CPA image remains an
+environment variable and is never rebuilt or forked here.
 
 A CPA upgrade should follow this sequence:
 
@@ -54,7 +58,16 @@ when intentionally installing or updating through CPA Plugin Store.
 
 CODEX_AGENT_IDENTITY_SIDECAR_HOSTS is an explicit plugin-side hostname
 allowlist. It avoids a dependency on one Docker service name without turning
-the sidecar base URL into an arbitrary request destination.
+the sidecar base URL into an arbitrary request destination. The parser also
+trusts loopback (`localhost`, `127.0.0.1`, and `::1`) for standalone and Plugin
+Store deployments. Plain HTTP stays restricted to port 8787, plus port 18787
+for loopback; additional intentional ports require
+CODEX_AGENT_IDENTITY_SIDECAR_HTTP_PORTS.
+
+The direct image compatibility bridge accepts both JSON and multipart edits,
+honors `response_format`, translates partial/completed image streams, and uses
+the same assertion-aware 401 retry transport as normal Codex requests. This
+keeps CPA's native image routes working when CPA selects a direct image model.
 
 ## Trust boundaries
 

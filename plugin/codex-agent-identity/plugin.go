@@ -20,6 +20,8 @@ import (
 
 const (
 	pluginID               = "codex-agent-identity"
+	pluginProviderID       = credential.PluginProvider
+	runtimeProviderID      = credential.RuntimeProvider
 	pluginName             = "Codex Agent Identity"
 	pluginAuthor           = "simplez2"
 	pluginRepository       = "https://github.com/simplez2/cpa-codex-agent-identity"
@@ -27,15 +29,22 @@ const (
 	managementOpenPath     = "/codex-agent-identity/open"
 	managementOpenFullPath = "/v0/management" + managementOpenPath
 	configSidecarURL       = "sidecar_url"
+	defaultSidecarURL      = "http://127.0.0.1:18787/agent-identity/"
+	defaultSidecarOrigin   = "http://127.0.0.1:18787"
+	defaultSidecarEmbedURL = defaultSidecarURL + "?embed=cpamc"
 	minimumSidecarVersion  = "0.3.2"
 	readyMessageType       = "cpa-codex-agent-identity:ready"
 	themeMessageType       = "cpa-codex-agent-identity:theme"
 )
 
 var (
-	pluginVersion = "0.3.3"
+	pluginVersion = "0.3.4"
 	stateMu       sync.RWMutex
-	state         = runtimeState{configError: "sidecar_url is required"}
+	state         = runtimeState{
+		sidecarURL:  defaultSidecarURL,
+		embedURL:    defaultSidecarEmbedURL,
+		frameSource: defaultSidecarOrigin,
+	}
 )
 
 type envelope struct {
@@ -116,7 +125,7 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 				ConfigFields: []pluginapi.ConfigField{{
 					Name:        configSidecarURL,
 					Type:        pluginapi.ConfigFieldTypeString,
-					Description: "Codex Agent Identity sidecar root URL used only by the authenticated plugin Management API route.",
+					Description: "Browser-reachable sidecar UI URL. Leave blank for the local default http://127.0.0.1:18787/agent-identity/, or use /agent-identity/ behind a same-origin reverse proxy. Plugin Store installs only the .so; start the sidecar separately. Native Codex OAuth remains CPA-managed.",
 				}},
 			},
 			Capabilities: registrationCapability{AuthProvider: true, ManagementAPI: true},
@@ -130,7 +139,7 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 	case pluginabi.MethodManagementHandle:
 		return okEnvelope(handleManagementRequest(request))
 	case pluginabi.MethodAuthIdentifier:
-		return okEnvelope(identifierResponse{Identifier: "codex"})
+		return okEnvelope(identifierResponse{Identifier: pluginProviderID})
 	case pluginabi.MethodAuthParse:
 		var req pluginapi.AuthParseRequest
 		if err := json.Unmarshal(request, &req); err != nil {
@@ -143,39 +152,26 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 		if !handled || parsed == nil {
 			return okEnvelope(pluginapi.AuthParseResponse{Handled: false})
 		}
-		return okEnvelope(pluginapi.AuthParseResponse{Handled: true, Auth: pluginapi.AuthData{
-			Provider:    "codex",
-			ID:          parsed.ID,
-			FileName:    parsed.FileName,
-			Label:       parsed.Label,
-			Prefix:      parsed.Prefix,
-			StorageJSON: parsed.StorageJSON,
-			Metadata:    parsed.Metadata,
-			Attributes:  parsed.Attributes,
-		}})
+		return okEnvelope(pluginapi.AuthParseResponse{Handled: true, Auth: authDataFromParsed(parsed)})
 	case pluginabi.MethodAuthRefresh:
 		var req pluginapi.AuthRefreshRequest
 		if err := json.Unmarshal(request, &req); err != nil {
 			return nil, errors.New("invalid auth refresh request")
 		}
 		fileName := req.AuthID
-		if rawName, ok := req.Metadata["file_name"].(string); ok && rawName != "" {
+		if rawName, ok := req.Metadata["file_name"].(string); ok && strings.TrimSpace(rawName) != "" {
 			fileName = rawName
 		}
+		refreshed, err := authDataForRefresh(req, fileName)
+		if err != nil {
+			return nil, err
+		}
 		return okEnvelope(pluginapi.AuthRefreshResponse{
-			Auth: pluginapi.AuthData{
-				Provider:    "codex",
-				ID:          req.AuthID,
-				FileName:    fileName,
-				Label:       labelFromMetadata(req.Metadata, req.AuthID),
-				StorageJSON: req.StorageJSON,
-				Metadata:    req.Metadata,
-				Attributes:  req.Attributes,
-			},
-			NextRefreshAfter: time.Now().Add(24 * time.Hour).UTC(),
+			Auth:             refreshed,
+			NextRefreshAfter: refreshed.NextRefreshAfter,
 		})
 	case pluginabi.MethodAuthLoginStart:
-		return okEnvelope(pluginapi.AuthLoginStartResponse{Provider: "codex", ExpiresAt: time.Now().UTC()})
+		return nil, errors.New("Codex Agent Identity login is managed through the plugin management page; native Codex OAuth login is unchanged")
 	case pluginabi.MethodAuthLoginPoll:
 		return okEnvelope(pluginapi.AuthLoginPollResponse{Status: pluginapi.AuthLoginStatusError, Message: "use the Agent Identity management page"})
 	default:
@@ -186,7 +182,7 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 func applyConfig(request []byte) {
 	next := runtimeState{}
 	if len(bytes.TrimSpace(request)) == 0 {
-		next.configError = "sidecar_url is required"
+		applyDefaultRuntimeState(&next)
 		setRuntimeState(next)
 		return
 	}
@@ -225,34 +221,48 @@ func applyConfig(request []byte) {
 func normalizeSidecarURL(raw string) (string, string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return "", "", errors.New("sidecar_url is required")
+		raw = defaultSidecarURL
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
 		return "", "", fmt.Errorf("sidecar_url is invalid: %w", err)
 	}
-	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+	if u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
 		return "", "", errors.New("sidecar_url must not contain credentials, query parameters, or a fragment")
+	}
+	if !u.IsAbs() && u.Host != "" {
+		return "", "", errors.New("sidecar_url must be absolute or start with /")
 	}
 	frameSource := "'self'"
 	if u.IsAbs() {
-		if u.Scheme != "http" && u.Scheme != "https" {
+		scheme := strings.ToLower(strings.TrimSpace(u.Scheme))
+		if scheme != "http" && scheme != "https" {
 			return "", "", errors.New("sidecar_url must use http:// or https://")
 		}
 		if u.Host == "" {
 			return "", "", errors.New("sidecar_url host is required")
 		}
-		frameSource = u.Scheme + "://" + u.Host
+		u.Scheme = scheme
+		frameSource = scheme + "://" + u.Host
 	} else if !strings.HasPrefix(u.Path, "/") {
 		return "", "", errors.New("sidecar_url must be absolute or start with /")
 	}
-	if u.Path == "" {
-		u.Path = "/"
-	}
-	if !strings.HasSuffix(u.Path, "/") {
+	if u.Path == "" || u.Path == "/" {
+		u.Path = "/agent-identity/"
+	} else if !strings.HasSuffix(u.Path, "/") {
 		u.Path += "/"
 	}
+	u.RawPath = ""
 	return u.String(), frameSource, nil
+}
+
+func applyDefaultRuntimeState(next *runtimeState) {
+	if next == nil {
+		return
+	}
+	next.sidecarURL = defaultSidecarURL
+	next.embedURL = defaultSidecarEmbedURL
+	next.frameSource = defaultSidecarOrigin
 }
 
 func embedURLForSidecarURL(raw string) (string, error) {
@@ -377,8 +387,8 @@ func managementHTML(sidecarURL, embedURL string) string {
 <body>
   <main class="shell">
     <iframe id="identityFrame" class="identity-frame" title="Codex Agent Identity" data-src="__EMBED_URL__"></iframe>
-    <section class="status"><div class="panel">正在连接 Codex Agent Identity...</div></section>
-    <section class="fallback"><div class="panel"><h1>Codex Agent Identity 暂时不可用</h1><p>请确认 <span class="code">sidecar_url</span> 指向可访问的 sidecar 管理页，并已允许被 CPA 管理中心嵌入。</p><p>要求 sidecar __MIN_VERSION__ 或更高版本。建议通过与 CPAMC 相同的域名发布，例如 <span class="code">/agent-identity/</span>。</p><div class="actions"><button id="retry" class="primary" type="button">重试</button><button id="open" type="button">新窗口打开</button></div></div></section>
+    <section class="status"><div class="panel">Connecting to Codex Agent Identity...</div></section>
+    <section class="fallback"><div class="panel"><h1>Codex Agent Identity temporarily unavailable</h1><p>Confirm <span class="code">sidecar_url</span> points to an accessible sidecar management page and allows embedding by CPA Management Center.</p><p>Requires sidecar __MIN_VERSION__ or later. Prefer serving it under the same origin as CPAMC, for example <span class="code">/agent-identity/</span>.</p><div class="actions"><button id="retry" class="primary" type="button">Retry</button><button id="open" type="button">Open in new window</button></div></div></section>
   </main>
   <script>
   (function(){
@@ -531,14 +541,153 @@ func configFallbackHTML(message string) string {
 	if strings.TrimSpace(message) == "" {
 		message = "sidecar_url is not configured"
 	}
-	return `<!doctype html><html lang="zh-CN" data-theme="white"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Codex Agent Identity</title><style>:root{color-scheme:light;font:14px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;--bg-primary:#fff;--bg-secondary:#fff;--bg-tertiary:#f6f6f6;--text-primary:#2d2a26;--text-secondary:#6d6760;--border-color:#e5e5e5;--primary-color:#8b8680}:root[data-theme="dark"]{color-scheme:dark;--bg-primary:#1d1b18;--bg-secondary:#151412;--bg-tertiary:#262320;--text-primary:#f6f4f1;--text-secondary:#c9c3bb;--border-color:#3a3530;--primary-color:#8b8680}*{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg-primary);color:var(--text-primary)}body{min-height:100vh;display:grid;place-items:center;padding:20px}.panel{width:min(620px,100%);padding:28px;border:1px solid var(--border-color);border-radius:12px;background:var(--bg-secondary);line-height:1.65}.panel p{color:var(--text-secondary)}.code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--bg-tertiary);color:var(--text-primary);border-radius:6px;padding:2px 6px}</style></head><body><main class="panel"><h1>Codex Agent Identity</h1><p>插件配置尚未完成：</p><p>` + html.EscapeString(message) + `</p><p>请在 CPA 插件配置中设置 <span class="code">sidecar_url</span>。</p></main><script>(function(){'use strict';const key='cli-proxy-theme';const root=document.documentElement;const media=window.matchMedia('(prefers-color-scheme: dark)');const names=['--bg-primary','--bg-secondary','--bg-tertiary','--text-primary','--text-secondary','--border-color','--primary-color'];function normalized(value){return String(value||'').toLowerCase()==='dark'?'dark':'white'}function parentRoot(){try{if(window.parent!==window&&window.parent.document)return window.parent.document.documentElement}catch(_){}return null}function stored(){try{const raw=localStorage.getItem(key);if(!raw)return '';const payload=JSON.parse(raw);const state=payload&&payload.state?payload.state:payload;if(!state||typeof state!=='object')return '';if(!state.theme||state.theme==='auto'||state.theme==='system')return media.matches?'dark':'white';return normalized(state.theme||state.resolvedTheme)}catch(_){return ''}}function apply(){const source=parentRoot();const attr=source&&source.getAttribute('data-theme');root.dataset.theme=attr?normalized(attr):(stored()||(media.matches?'dark':'white'));names.forEach(function(name){root.style.removeProperty(name)});if(source){try{const view=source.ownerDocument&&source.ownerDocument.defaultView?source.ownerDocument.defaultView:window;const styles=view.getComputedStyle(source);names.forEach(function(name){const value=styles.getPropertyValue(name).trim();if(value&&value.length<=256)root.style.setProperty(name,value)})}catch(_){}}}const source=parentRoot();if(source&&typeof MutationObserver==='function')new MutationObserver(apply).observe(source,{attributes:true,attributeFilter:['data-theme','style','class']});window.addEventListener('storage',function(event){if(event.key===key)apply()});if(typeof media.addEventListener==='function')media.addEventListener('change',apply);else if(typeof media.addListener==='function')media.addListener(apply);apply()})();</script></body></html>`
+	escapedMessage := html.EscapeString(message)
+	return `<!doctype html>
+<html lang="zh-CN" data-theme="white">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Codex Agent Identity</title>
+  <style>
+    :root{color-scheme:light;font:14px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;--bg:#fff;--panel:#fff;--muted:#6d6760;--text:#2d2a26;--border:#e5e5e5;--code:#f6f6f6;--accent:#2563eb;--error-bg:#fff7ed;--error:#9a3412}
+    :root[data-theme="dark"]{color-scheme:dark;--bg:#1d1b18;--panel:#151412;--muted:#c9c3bb;--text:#f6f4f1;--border:#3a3530;--code:#262320;--accent:#93c5fd;--error-bg:#3b2417;--error:#fdba74}
+    *{box-sizing:border-box}html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text)}body{min-height:100vh;display:grid;place-items:center;padding:20px}.panel{width:min(680px,100%);padding:28px;border:1px solid var(--border);border-radius:14px;background:var(--panel);line-height:1.65;box-shadow:0 10px 30px rgba(0,0,0,.08)}h1{margin:0 0 8px;font-size:22px}p,li{color:var(--muted)}.error{padding:10px 12px;border:1px solid color-mix(in srgb,var(--error) 28%,var(--border));border-radius:8px;background:var(--error-bg);color:var(--error)}ol{padding-left:24px}code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--code);color:var(--text);border-radius:6px;padding:2px 6px;overflow-wrap:anywhere}.note{margin-bottom:0;font-size:13px}
+  </style>
+</head>
+<body>
+  <main class="panel">
+    <h1>Codex Agent Identity</h1>
+    <p>The plugin is installed but cannot connect to the sidecar.</p>
+    <p class="error">` + escapedMessage + `</p>
+    <ol>
+      <li>Start the Codex Agent Identity sidecar separately and configure it to use the same management key as CPA.</li>
+      <li>In CPA plugin settings, enter a browser-reachable <code>sidecar_url</code>. A same-origin reverse proxy path such as <code>/agent-identity/</code> is recommended; direct local access can use <code>http://127.0.0.1:18787/agent-identity/</code>.</li>
+      <li>Save the configuration and reopen this management page. Batch import and auth-file synchronization start here.</li>
+    </ol>
+    <p class="note">The CPA Plugin Store installs only the .so; it does not create the sidecar container, Docker network, keys, or data directory. CPA native Codex OAuth login remains managed by CPA and is not intercepted by this plugin.</p>
+  </main>
+  <script>
+    (function(){'use strict';
+      const key='cli-proxy-theme',root=document.documentElement,media=window.matchMedia('(prefers-color-scheme: dark)');
+      function normalize(value){return String(value||'').toLowerCase()==='dark'?'dark':'white'}
+      function parentTheme(){try{if(window.parent!==window&&window.parent.document)return window.parent.document.documentElement.getAttribute('data-theme')}catch(_){}return ''}
+      function storedTheme(){try{const raw=localStorage.getItem(key);if(!raw)return '';const value=JSON.parse(raw);const state=value&&value.state?value.state:value;if(!state||typeof state!=='object')return '';return state.theme||state.resolvedTheme||''}catch(_){}return ''}
+      function apply(){root.dataset.theme=normalize(parentTheme()||storedTheme()||(media.matches?'dark':'white'))}
+      const parent=window.parent===window?null:(function(){try{return window.parent.document.documentElement}catch(_){return null}})();
+      if(parent&&typeof MutationObserver==='function')new MutationObserver(apply).observe(parent,{attributes:true,attributeFilter:['data-theme']});
+      window.addEventListener('storage',function(event){if(event.key===key)apply()});
+      if(typeof media.addEventListener==='function')media.addEventListener('change',apply);else if(typeof media.addListener==='function')media.addListener(apply);apply();
+    })();
+  </script>
+</body>
+</html>`
+}
+func authDataFromParsed(parsed *credential.Parsed) pluginapi.AuthData {
+	if parsed == nil {
+		return pluginapi.AuthData{}
+	}
+	return pluginapi.AuthData{
+		Provider:         runtimeProviderID,
+		ID:               parsed.ID,
+		FileName:         parsed.FileName,
+		Label:            parsed.Label,
+		Prefix:           parsed.Prefix,
+		ProxyURL:         parsed.ProxyURL,
+		Disabled:         parsed.Disabled,
+		StorageJSON:      append([]byte(nil), parsed.StorageJSON...),
+		Metadata:         cloneAnyMap(parsed.Metadata),
+		Attributes:       cloneStringMap(parsed.Attributes),
+		NextRefreshAfter: parsed.NextRefreshAfter,
+	}
+}
+
+func authDataForRefresh(req pluginapi.AuthRefreshRequest, fileName string) (pluginapi.AuthData, error) {
+	provider := strings.TrimSpace(req.AuthProvider)
+	if provider == "" {
+		provider = runtimeProviderID
+	}
+	if len(bytes.TrimSpace(req.StorageJSON)) > 0 {
+		parsed, handled, err := credential.Parse(provider, fileName, req.StorageJSON)
+		if err != nil {
+			return pluginapi.AuthData{}, err
+		}
+		if handled && parsed != nil {
+			return authDataFromParsed(parsed), nil
+		}
+	}
+	metadata := cloneAnyMap(req.Metadata)
+	attributes := cloneStringMap(req.Attributes)
+	refreshed := pluginapi.AuthData{
+		Provider:    provider,
+		ID:          strings.TrimSpace(req.AuthID),
+		FileName:    strings.TrimSpace(fileName),
+		Label:       labelFromMetadata(metadata, req.AuthID),
+		ProxyURL:    firstNonEmptyString(metadata["proxy_url"], attributes["proxy_url"]),
+		Disabled:    boolFromValue(metadata["disabled"]) || strings.EqualFold(strings.TrimSpace(attributes["disabled"]), "true"),
+		StorageJSON: append([]byte(nil), req.StorageJSON...),
+		Metadata:    metadata,
+		Attributes:  attributes,
+		// A non-sidecar Codex file belongs to CPA's native OAuth refresher. A
+		// zero value tells the host to retain its existing refresh schedule.
+		NextRefreshAfter: time.Time{},
+	}
+	return refreshed, nil
 }
 
 func labelFromMetadata(metadata map[string]any, fallback string) string {
-	if email, ok := metadata["email"].(string); ok && email != "" {
-		return email
+	if value := firstNonEmptyString(metadata["email"]); value != "" {
+		return value
 	}
-	return fallback
+	return strings.TrimSpace(fallback)
+}
+
+func cloneAnyMap(input map[string]any) map[string]any {
+	if len(input) == 0 {
+		return nil
+	}
+	output := make(map[string]any, len(input))
+	for key, value := range input {
+		output[key] = value
+	}
+	return output
+}
+
+func cloneStringMap(input map[string]string) map[string]string {
+	if len(input) == 0 {
+		return nil
+	}
+	output := make(map[string]string, len(input))
+	for key, value := range input {
+		output[key] = value
+	}
+	return output
+}
+
+func firstNonEmptyString(values ...any) string {
+	for _, value := range values {
+		switch typed := value.(type) {
+		case string:
+			if trimmed := strings.TrimSpace(typed); trimmed != "" {
+				return trimmed
+			}
+		}
+	}
+	return ""
+}
+
+func boolFromValue(value any) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		return strings.EqualFold(strings.TrimSpace(typed), "true") || strings.TrimSpace(typed) == "1"
+	case float64:
+		return typed == 1
+	case json.Number:
+		return typed.String() == "1"
+	default:
+		return false
+	}
 }
 
 func okEnvelope(value any) ([]byte, error) {

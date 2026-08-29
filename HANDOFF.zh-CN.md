@@ -21,7 +21,7 @@
 
 ## 2. 版本边界
 
-当前正式 Release 是 v0.3.3，registry 和 pluginVersion 也保持 v0.3.3。Draft PR 包含多 Team workspace 和 reset-credit applicability 等后续能力，但在发布前不能将生产 branch build 标记成正式 v0.3.4。
+当前正式 Release 是 v0.3.4，registry 和 pluginVersion 也保持 v0.3.4。本版本包含 CPA 原生 Codex 执行器路由修复、sidecar 默认连接与校验、管理界面和图像桥接优化。
 
 发布新版本时必须同步：
 
