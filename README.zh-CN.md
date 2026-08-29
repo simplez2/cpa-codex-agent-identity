@@ -12,7 +12,7 @@
   <p>简体中文 · <a href="README.md">English</a></p>
 </div>
 
-> **版本边界：** 当前源码开发线为 **v0.3.7**，编译基线为 CLIProxyAPI **v7.2.145**。截至目前（2026 年 8 月 29 日），公开 registry 与可直接安装的发布资产仍为 **v0.3.6**。只有在 v0.3.7 完成测试、打包、Release、校验值和 registry 更新后，插件商店才会切换到 v0.3.7。
+> **版本边界：** 当前源码开发线为 **v0.3.8**，编译基线为 CLIProxyAPI **v7.2.145**。截至目前（2026 年 8 月 29 日），公开 registry 与可直接安装的发布资产仍为 **v0.3.7**。只有在 v0.3.8 完成测试、打包、Release、校验值和 registry 更新后，插件商店才会切换到 v0.3.8。
 
 这是一个面向 CLIProxyAPI（CPA）的 Codex Agent Identity / Personal Access
 Token 集成项目。首个公开版本由两个部分组成：

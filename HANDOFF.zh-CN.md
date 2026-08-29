@@ -21,7 +21,7 @@
 
 ## 2. 版本边界
 
-当前源码开发线是 v0.3.7，pluginVersion 与根目录 VERSION 必须一致；公开 registry 和可直接安装资产仍是 v0.3.6。只有 Linux 资产、GitHub Release、checksums 和下载验证全部完成后，才能在单独的发布提交中把 registry 切换到 v0.3.7。
+当前源码开发线是 v0.3.8，pluginVersion 与根目录 VERSION 必须一致；公开 registry 和可直接安装资产仍是 v0.3.7。只有 Linux 资产、GitHub Release、checksums 和下载验证全部完成后，才能在单独的发布提交中把 registry 切换到 v0.3.8。
 
 发布新版本时必须同步：
 
@@ -182,7 +182,7 @@ overlay 与官方 Management Center commit 绑定。每次 CPA 前端升级都�
 
 ### 插件-pages 菜单不显示或资源入口返回 404
 
-当前插件不再依赖外挂卡片按钮。确认安装的是包含 ResourceRoute 的插件版本（源码开发线为 v0.3.7；公开 registry 在 v0.3.7 发布前仍可能提供 v0.3.6），CPA 的 `plugins.enabled` 和该插件配置的 `enabled` 都为 `true`，然后重启 CPA。CPA 资源入口是 `/v0/resource/plugins/codex-agent-identity/open`，正常应返回 HTML wrapper；若仍为 404，通常是插件没有注册成功、CPA 使用不支持资源路由的旧版本，或 CPAMC/CPA 仍在使用旧插件进程。直接入口 `/agent-identity/` 仍可作为回退。
+当前插件不再依赖外挂卡片按钮。确认安装的是包含 ResourceRoute 的插件版本（源码开发线为 v0.3.8；公开 registry 在 v0.3.8 发布前仍可能提供 v0.3.7），CPA 的 `plugins.enabled` 和该插件配置的 `enabled` 都为 `true`，然后重启 CPA。CPA 资源入口是 `/v0/resource/plugins/codex-agent-identity/open`，正常应返回 HTML wrapper；若仍为 404，通常是插件没有注册成功、CPA 使用不支持资源路由的旧版本，或 CPAMC/CPA 仍在使用旧插件进程。直接入口 `/agent-identity/` 仍可作为回退。
 
 ### 401
 

@@ -12,7 +12,7 @@
   <p>English · <a href="README.zh-CN.md">简体中文</a></p>
 </div>
 
-> **Release boundary:** this working tree targets **v0.3.7**, built against CLIProxyAPI **v7.2.145**. The last published registry entry and directly installable Plugin Store assets remain **v0.3.6** until the v0.3.7 Linux archives are built, released, and checksummed. The v0.3.7 changes keep CPA native Codex OAuth login/refresh ownership while routing Agent Identity records through CPA's native Codex executor.
+> **Release boundary:** this working tree targets **v0.3.8**, built against CLIProxyAPI **v7.2.145**. The latest published registry entry and directly installable Plugin Store assets are **v0.3.7**, backed by the checksummed Linux archives in the v0.3.7 GitHub Release. The v0.3.8 development line keeps CPA native Codex OAuth login/refresh ownership while routing Agent Identity records through CPA's native Codex executor.
 
 CPA-native management and routing support for Codex Agent Identity JWTs and opaque Personal Access Tokens whose current prefix is at-.
 
@@ -101,7 +101,7 @@ Treat the management password, encryption key, and generated cais_ values as sec
 ## Requirements
 
 - A CPA build with dynamic plugin ABI v1, AuthProvider, Management API routes, and host auth-file management support.
-- CLIProxyAPI v7.2.145 is the verified SDK baseline for the v0.3.7 development line. The plugin uses
+- CLIProxyAPI v7.2.145 is the verified SDK baseline for the v0.3.8 development line. The plugin uses
   dynamic plugin ABI v1; always canary-test it against the exact CPA image you
   plan to deploy.
 - Linux amd64 or Linux arm64 for the released .so files.
@@ -156,9 +156,9 @@ modify the installed plugin card.
 ### CPAMC Plugin Store
 
 The public `router-for-me/CLIProxyAPI-Plugins-Store` registry currently serves
-`codex-agent-identity` version `0.3.6`.
-The next store update must be `0.3.7` and may be committed only after the tagged
-release assets and checksums exist. When installing into a stock CPA build, leave
+`codex-agent-identity` version `0.3.7`, backed by the checksummed Linux archives
+in the v0.3.7 GitHub Release. The next store update must be `0.3.8` and may be
+committed only after the tagged release assets and checksums exist. When installing into a stock CPA build, leave
 `sidecar_url` blank to use the local default, or set `/agent-identity/` in a legacy
 configuration when CPA and sidecar are published behind the same origin. If an older CPA build or a stale store
 cache does not show it yet, this repository's registry remains a direct fallback
@@ -436,9 +436,10 @@ checksums.txt
 ~~~
 
 `registry.json` is a directly usable CPA Plugin Store source. The built-in official `router-for-me/CLIProxyAPI-Plugins-Store` registry
-currently exposes `codex-agent-identity` version `0.3.6`. This repository
-`registry.json` is the explicit fallback; it is updated to `0.3.7` only in the
-post-release publication commit described in [Release process](RELEASE.md).
+currently exposes `codex-agent-identity` version `0.3.7`. This repository
+`registry.json` is the explicit fallback and is kept at the latest verified
+release; the next update to `0.3.8` belongs in the post-release publication
+commit described in [Release process](RELEASE.md).
 
 ## Optional Management Center overlay
 
