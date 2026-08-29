@@ -5,9 +5,164 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginabi"
+	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginapi"
 )
+
+func TestPluginAndRuntimeProvidersAreDistinct(t *testing.T) {
+	if pluginProviderID == runtimeProviderID {
+		t.Fatal("plugin provider must not claim CPA's native codex provider")
+	}
+}
+
+func TestAuthParseLeavesNativeCodexOAuthToCPA(t *testing.T) {
+	request, err := json.Marshal(pluginapi.AuthParseRequest{
+		Provider: "codex",
+		FileName: "oauth.json",
+		RawJSON:  []byte(`{"type":"codex","access_token":"oauth-token"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := handleMethod(pluginabi.MethodAuthParse, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response pluginapi.AuthParseResponse
+	decodePluginResult(t, raw, &response)
+	if response.Handled {
+		t.Fatalf("native Codex OAuth auth was intercepted: %#v", response)
+	}
+}
+
+func TestAuthParseMapsManagedCredentialToNativeCodexOAuthShape(t *testing.T) {
+	storage := []byte(`{
+		"type":"codex-agent-identity",
+		"auth_mode":"agent_identity_sidecar",
+		"auth_kind":"oauth",
+		"email":"agent@example.invalid",
+		"access_token":"cais_test_0000000000000000000000000000",
+		"base_url":"http://codex-agent-identity-sidecar:8787/backend-api/codex",
+		"agent_identity_id":"agent-aabbccddeeff",
+		"account_id":"account-a",
+		"chatgpt_user_id":"user-a",
+		"plan_type":"free",
+		"credential_kind":"agent_identity",
+		"websockets":"true",
+		"disabled":"true",
+		"proxy_url":"socks5://127.0.0.1:1080"
+	}`)
+	request, err := json.Marshal(pluginapi.AuthParseRequest{Provider: pluginProviderID, FileName: "managed.json", RawJSON: storage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := handleMethod(pluginabi.MethodAuthParse, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response pluginapi.AuthParseResponse
+	decodePluginResult(t, raw, &response)
+	auth := response.Auth
+	if !response.Handled || auth.Provider != "codex" || !auth.Disabled || auth.ProxyURL != "socks5://127.0.0.1:1080" {
+		t.Fatalf("managed auth state was not mapped: %#v", response)
+	}
+	if auth.Attributes["auth_kind"] != "oauth" || auth.Attributes["plan_type"] != "free" || auth.Attributes["account_id"] != "account-a" || auth.Attributes["chatgpt_user_id"] != "user-a" {
+		t.Fatalf("native Codex routing attributes are incomplete: %#v", auth.Attributes)
+	}
+	if strings.TrimSpace(auth.Attributes["api_key"]) != "" || auth.Metadata["access_token"] != "cais_test_0000000000000000000000000000" {
+		t.Fatalf("managed auth was not kept on the OAuth-compatible executor path: metadata=%#v attributes=%#v", auth.Metadata, auth.Attributes)
+	}
+	if string(auth.StorageJSON) != string(storage) || auth.NextRefreshAfter.Before(time.Now().UTC()) {
+		t.Fatalf("provider storage or refresh schedule was lost: %#v", auth)
+	}
+}
+
+func TestAuthRefreshPreservesManagedCredentialState(t *testing.T) {
+	storage := []byte(`{
+		"type":"codex-agent-identity",
+		"auth_mode":"agent_identity_sidecar",
+		"email":"agent@example.invalid",
+		"access_token":"cais_test_0000000000000000000000000000",
+		"base_url":"http://codex-agent-identity-sidecar:8787/backend-api/codex",
+		"agent_identity_id":"agent-aabbccddeeff",
+		"plan_type":"team",
+		"websockets":true,
+		"disabled":true,
+		"proxy_url":"http://proxy.internal:8080"
+	}`)
+	request, err := json.Marshal(pluginapi.AuthRefreshRequest{
+		AuthID:       "managed.json",
+		AuthProvider: pluginProviderID,
+		StorageJSON:  storage,
+		Metadata:     map[string]any{"file_name": "managed.json", "disabled": true},
+		Attributes:   map[string]string{"auth_kind": "oauth", "plan_type": "team"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := handleMethod(pluginabi.MethodAuthRefresh, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response pluginapi.AuthRefreshResponse
+	decodePluginResult(t, raw, &response)
+	if !response.Auth.Disabled || response.Auth.ProxyURL != "http://proxy.internal:8080" || response.Auth.Attributes["auth_kind"] != "oauth" || response.Auth.Attributes["plan_type"] != "team" {
+		t.Fatalf("refresh dropped managed auth state: %#v", response.Auth)
+	}
+	if string(response.Auth.StorageJSON) != string(storage) || response.NextRefreshAfter.IsZero() || response.NextRefreshAfter.Before(time.Now().UTC()) {
+		t.Fatalf("refresh dropped storage or returned a stale schedule: %#v", response)
+	}
+}
+
+func TestAuthRefreshPassesThroughNativeCodexOAuth(t *testing.T) {
+	storage := []byte(`{"type":"codex","access_token":"oauth-token","email":"oauth@example.invalid"}`)
+	request, err := json.Marshal(pluginapi.AuthRefreshRequest{
+		AuthID:       "oauth.json",
+		AuthProvider: "codex",
+		StorageJSON:  storage,
+		Metadata:     map[string]any{"file_name": "oauth.json", "email": "oauth@example.invalid"},
+		Attributes:   map[string]string{"auth_kind": "oauth"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := handleMethod(pluginabi.MethodAuthRefresh, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response pluginapi.AuthRefreshResponse
+	decodePluginResult(t, raw, &response)
+	if response.Auth.Provider != "codex" || response.Auth.ID != "oauth.json" || response.Auth.Label != "oauth@example.invalid" {
+		t.Fatalf("native OAuth auth was not passed through: %#v", response.Auth)
+	}
+	if string(response.Auth.StorageJSON) != string(storage) || !response.NextRefreshAfter.IsZero() {
+		t.Fatalf("native OAuth storage or refresh schedule changed: %#v", response)
+	}
+}
+
+func TestAuthLoginStartDoesNotImpersonateNativeCodexOAuth(t *testing.T) {
+	request, err := json.Marshal(pluginapi.AuthLoginStartRequest{Provider: pluginProviderID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = handleMethod(pluginabi.MethodAuthLoginStart, request); err == nil || !strings.Contains(err.Error(), "native Codex OAuth login is unchanged") {
+		t.Fatalf("unexpected login start result: %v", err)
+	}
+}
+
+func TestAuthIdentifierUsesPluginProviderIDWithoutClaimingNativeCodex(t *testing.T) {
+	raw, err := handleMethod(pluginabi.MethodAuthIdentifier, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response identifierResponse
+	decodePluginResult(t, raw, &response)
+	if response.Identifier != pluginProviderID || response.Identifier == runtimeProviderID {
+		t.Fatalf("identifier=%q, want plugin provider %q distinct from runtime provider %q", response.Identifier, pluginProviderID, runtimeProviderID)
+	}
+}
 
 func TestRegisterDeclaresAuthAndManagementCapabilities(t *testing.T) {
 	configurePluginForTest(t, "sidecar_url: /agent-identity/")
@@ -153,6 +308,11 @@ func TestInvalidSidecarURLRendersConfigurationFallback(t *testing.T) {
 	var response managementResponse
 	decodePluginResult(t, raw, &response)
 	body := string(response.Body)
+	for _, mojibake := range []string{"\u93bb", "\u7e60", "\u7487", "\u951b"} {
+		if strings.Contains(body, mojibake) {
+			t.Fatalf("configuration fallback contains mojibake %q: %s", mojibake, body)
+		}
+	}
 	if response.StatusCode != http.StatusServiceUnavailable || !strings.Contains(body, "sidecar_url must use") {
 		t.Fatalf("unexpected fallback: status=%d body=%s", response.StatusCode, response.Body)
 	}
@@ -164,19 +324,49 @@ func TestInvalidSidecarURLRendersConfigurationFallback(t *testing.T) {
 	}
 }
 
+func TestDefaultSidecarURLIsUsedWhenConfigIsOmitted(t *testing.T) {
+	configurePluginForTest(t, "")
+	raw, err := handleMethod(pluginabi.MethodManagementHandle, managementPayload(t, http.MethodGet, managementOpenFullPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response managementResponse
+	decodePluginResult(t, raw, &response)
+	body := string(response.Body)
+	if response.StatusCode != http.StatusOK || !strings.Contains(body, defaultSidecarURL+"?embed=cpamc") {
+		t.Fatalf("default sidecar URL was not applied: status=%d body=%s", response.StatusCode, body)
+	}
+	if !strings.Contains(response.Headers.Get("Content-Security-Policy"), defaultSidecarOrigin) {
+		t.Fatalf("default sidecar origin is missing from CSP: %s", response.Headers.Get("Content-Security-Policy"))
+	}
+}
+
 func TestNormalizeSidecarURLRejectsCredentialsAndQuery(t *testing.T) {
 	for _, value := range []string{
 		"https://user:pass@example.com/agent-identity/",
 		"https://example.com/agent-identity/?secret=1",
+		"https://example.com/agent-identity/?",
+		"//example.com/agent-identity/",
 		"relative/path",
 	} {
 		if _, _, err := normalizeSidecarURL(value); err == nil {
 			t.Fatalf("normalizeSidecarURL(%q) succeeded", value)
 		}
 	}
-	got, source, err := normalizeSidecarURL("https://cpa.example.com/agent-identity")
-	if err != nil || got != "https://cpa.example.com/agent-identity/" || source != "https://cpa.example.com" {
-		t.Fatalf("got=%q source=%q err=%v", got, source, err)
+	for _, test := range []struct {
+		input  string
+		want   string
+		source string
+	}{
+		{input: "", want: defaultSidecarURL, source: defaultSidecarOrigin},
+		{input: "/", want: "/agent-identity/", source: "'self'"},
+		{input: "http://127.0.0.1:18787/", want: defaultSidecarURL, source: defaultSidecarOrigin},
+		{input: "https://cpa.example.com/agent-identity", want: "https://cpa.example.com/agent-identity/", source: "https://cpa.example.com"},
+	} {
+		got, source, err := normalizeSidecarURL(test.input)
+		if err != nil || got != test.want || source != test.source {
+			t.Fatalf("normalizeSidecarURL(%q) = %q, %q, %v; want %q, %q", test.input, got, source, err, test.want, test.source)
+		}
 	}
 }
 

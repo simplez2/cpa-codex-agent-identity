@@ -7,6 +7,7 @@ services:
     environment:
       TZ: ${TZ:-UTC}
       CODEX_AGENT_IDENTITY_SIDECAR_HOSTS: ${CODEX_AGENT_IDENTITY_SIDECAR_HOSTS:-codex-agent-identity-sidecar}
+      CODEX_AGENT_IDENTITY_SIDECAR_HTTP_PORTS: ${CODEX_AGENT_IDENTITY_SIDECAR_HTTP_PORTS:-}
     volumes:
       - ./config.yaml:/CLIProxyAPI/config.yaml
       - ./auths:/root/.cli-proxy-api
@@ -42,7 +43,7 @@ services:
       CPA_MANAGEMENT_KEY_FILE: /run/secrets/management_key
       CPA_PROXY_CONFIG_POLL_INTERVAL: 1s
       PUBLIC_CPA_BASE_URL: ${PUBLIC_CPA_BASE_URL:-http://codex-agent-identity-sidecar:8787/backend-api/codex}
-      EMBED_ALLOWED_ORIGINS: ${EMBED_ALLOWED_ORIGINS:-}
+      EMBED_ALLOWED_ORIGINS: ${EMBED_ALLOWED_ORIGINS:-http://127.0.0.1:8317}
     volumes:
       - ${SIDECAR_ROOT:-./runtime}/data-v3:/data
       - ${SIDECAR_ROOT:-./runtime}/secrets/management-key:/run/secrets/management_key:ro

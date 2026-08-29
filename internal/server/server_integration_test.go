@@ -1001,6 +1001,115 @@ func TestSidecarConcurrentRequestsRegisterOneTask(t *testing.T) {
 	}
 }
 
+func TestSidecarDirectImageBridgeRetriesAgentIdentityAndStripsInternalHeaders(t *testing.T) {
+	fixture := newAgentFixture(t)
+	var registrations atomic.Int32
+	var upstreamCalls atomic.Int32
+
+	services := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch {
+		case request.URL.Path == "/jwks":
+			_ = json.NewEncoder(writer).Encode(fixture.jwks)
+		case strings.HasPrefix(request.URL.Path, "/accounts/v1/agent/"):
+			var body struct {
+				Timestamp string `json:"timestamp"`
+				Signature string `json:"signature"`
+			}
+			if json.NewDecoder(request.Body).Decode(&body) != nil {
+				http.Error(writer, "bad registration", http.StatusBadRequest)
+				return
+			}
+			signature, err := base64.StdEncoding.DecodeString(body.Signature)
+			if err != nil || !ed25519.Verify(fixture.edPublicKey, []byte(fixture.runtimeID+":"+body.Timestamp), signature) {
+				http.Error(writer, "bad signature", http.StatusUnauthorized)
+				return
+			}
+			registration := registrations.Add(1)
+			_ = json.NewEncoder(writer).Encode(map[string]string{"task_id": fmt.Sprintf("task-%d", registration)})
+		case request.URL.Path == "/backend-api/codex/responses":
+			call := upstreamCalls.Add(1)
+			if err := verifyAssertion(request, fixture, fmt.Sprintf("task-%d", call)); err != nil {
+				http.Error(writer, "bad assertion", http.StatusUnauthorized)
+				return
+			}
+			if request.Header.Get("X-Agent-Identity-Sidecar-Key") != "" || request.Header.Get("X-Forwarded-For") != "" {
+				http.Error(writer, "internal header leaked", http.StatusBadRequest)
+				return
+			}
+			var payload map[string]any
+			if json.NewDecoder(request.Body).Decode(&payload) != nil {
+				http.Error(writer, "invalid translated request", http.StatusBadRequest)
+				return
+			}
+			tools, _ := payload["tools"].([]any)
+			if len(tools) != 1 || tools[0].(map[string]any)["action"] != "generate" {
+				http.Error(writer, "image tool missing", http.StatusBadRequest)
+				return
+			}
+			if call == 1 {
+				writer.WriteHeader(http.StatusUnauthorized)
+				_, _ = writer.Write([]byte(`{"error":{"code":"auth_unavailable"}}`))
+				return
+			}
+			writer.Header().Set("Content-Type", "text/event-stream")
+			writer.Header().Set("X-Upstream-Request-ID", "image-request-2")
+			_, _ = writer.Write([]byte("data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"image_generation_call\",\"result\":\"AA==\",\"output_format\":\"png\"}}\n\n"))
+			_, _ = writer.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"created_at\":123,\"tool_usage\":{\"image_gen\":{\"total_tokens\":4}},\"output\":[]}}\n\n"))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer services.Close()
+
+	credentialStore, err := identitystore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := identity.NewManager(services.URL+"/jwks", services.URL+"/accounts", services.Client())
+	upstreamURL, _ := url.Parse(services.URL)
+	handler, err := server.New(server.Config{
+		UpstreamOrigin:     upstreamURL,
+		PublicCPABaseURL:   "http://sidecar:8787/backend-api/codex",
+		ManagementKey:      "management-key-at-least-24-characters",
+		MaxReplayBodyBytes: 1 << 20,
+		OutboundTransport:  services.Client().Transport,
+	}, credentialStore, manager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sidecar := httptest.NewServer(handler)
+	defer sidecar.Close()
+
+	clientKey := importIdentity(t, sidecar.URL, fixture.token)
+	request, err := http.NewRequest(http.MethodPost, sidecar.URL+"/backend-api/codex/images/generations", strings.NewReader(`{"model":"gpt-image-2","prompt":"draw a fox"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+clientKey)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Session_id", "image-session")
+	request.Header.Set("X-Agent-Identity-Sidecar-Key", "must-not-leak")
+	request.Header.Set("X-Forwarded-For", "203.0.113.5")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	responseBody, _ := io.ReadAll(response.Body)
+	if response.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%s", response.StatusCode, responseBody)
+	}
+	if response.Header.Get("X-Upstream-Request-ID") != "image-request-2" {
+		t.Fatalf("upstream response header missing: %v", response.Header)
+	}
+	if !strings.Contains(string(responseBody), `"b64_json":"AA=="`) || !strings.Contains(string(responseBody), `"total_tokens":4`) {
+		t.Fatalf("unexpected image response: %s", responseBody)
+	}
+	if registrations.Load() != 2 || upstreamCalls.Load() != 2 {
+		t.Fatalf("registrations=%d upstream_calls=%d, want 2/2", registrations.Load(), upstreamCalls.Load())
+	}
+}
+
 type agentFixture struct {
 	token       string
 	jwks        identity.JWKS

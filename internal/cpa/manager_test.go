@@ -141,7 +141,7 @@ func TestManagerUpsertStatusAndRemoveUsesNativeAuthFiles(t *testing.T) {
 	if json.Unmarshal(raw, &payload) != nil {
 		t.Fatalf("invalid stored payload: %s", raw)
 	}
-	if payload["auth_mode"] != authMode || payload["access_token"] != credential.ClientKey || payload["base_url"] != "http://sidecar:8787/backend-api/codex" || payload["email"] != credential.Email || payload["plan_type"] != credential.PlanType || payload["disabled"] != false {
+	if payload["type"] != pluginProviderID || payload["auth_mode"] != authMode || payload["auth_kind"] != "oauth" || payload["access_token"] != credential.ClientKey || payload["base_url"] != "http://sidecar:8787/backend-api/codex" || payload["email"] != credential.Email || payload["plan_type"] != credential.PlanType || payload["disabled"] != false {
 		t.Fatalf("unexpected stored payload: %#v", payload)
 	}
 
@@ -155,6 +155,55 @@ func TestManagerUpsertStatusAndRemoveUsesNativeAuthFiles(t *testing.T) {
 	}
 	if _, exists := files["existing-codex.json"]; !exists {
 		t.Fatal("unrelated auth file was removed")
+	}
+}
+
+func TestManagedCredentialIdentityRecognizesNewAndLegacyFormats(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{name: "legacy plugin provider", raw: `{"type":"codex-agent-identity","auth_mode":"agent_identity_sidecar","agent_identity_id":"agent-aabbccddeeff"}`, want: true},
+		{name: "legacy native provider", raw: `{"type":"codex","auth_mode":"agent_identity_sidecar","agent_identity_id":"agent-aabbccddeeff"}`, want: true},
+		{name: "ordinary codex oauth", raw: `{"type":"codex","access_token":"oauth-token"}`, want: false},
+		{name: "other provider", raw: `{"type":"gemini","auth_mode":"agent_identity_sidecar","agent_identity_id":"agent-aabbccddeeff"}`, want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			identityID, managed := managedCredentialIdentity([]byte(tc.raw))
+			if managed != tc.want || (managed && identityID != "agent-aabbccddeeff") {
+				t.Fatalf("identity=%q managed=%v, want managed=%v: %s", identityID, managed, tc.want, tc.raw)
+			}
+		})
+	}
+}
+
+func TestManagedCredentialDisabledAcceptsCompatibleBooleanShapes(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{name: "json true", raw: `{"disabled":true}`, want: true},
+		{name: "string true", raw: `{"disabled":"true"}`, want: true},
+		{name: "string one", raw: `{"disabled":"1"}`, want: true},
+		{name: "string yes", raw: `{"disabled":"yes"}`, want: true},
+		{name: "number one", raw: `{"disabled":1}`, want: true},
+		{name: "json false", raw: `{"disabled":false}`, want: false},
+		{name: "string false", raw: `{"disabled":"false"}`, want: false},
+		{name: "invalid value", raw: `{"disabled":"sometimes"}`, want: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := managedCredentialDisabled([]byte(test.raw), true); got != test.want {
+				t.Fatalf("managedCredentialDisabled(%s) = %v, want %v", test.raw, got, test.want)
+			}
+		})
+	}
+	if managedCredentialDisabled([]byte(`{"disabled":true}`), false) {
+		t.Fatal("missing auth file must not report disabled")
 	}
 }
 
@@ -172,7 +221,7 @@ func TestManagerForwardAPICallPreservesCPAResponse(t *testing.T) {
 		_, _ = writer.Write(raw)
 	}))
 	defer service.Close()
-	manager, _ := NewManager(service.URL+"/v0/management", "management-key", "http://sidecar", service.Client())
+	manager, _ := NewManager(service.URL+"/v0/management", "management-key", "http://sidecar:8787/backend-api/codex", service.Client())
 	raw := []byte(`{"auth_index":"oauth-index","method":"GET","url":"https://example.test"}`)
 	status, headers, body, err := manager.ForwardAPICall(context.Background(), raw)
 	if err != nil || status != http.StatusCreated || headers.Get("X-Test") != "forwarded" || string(body) != string(raw) {
@@ -182,7 +231,7 @@ func TestManagerForwardAPICallPreservesCPAResponse(t *testing.T) {
 
 func TestCredentialJSONLabelsPersonalAccessTokenWithoutExposingIt(t *testing.T) {
 	t.Parallel()
-	manager, err := NewManager("https://example.com/v0/management", "management-key", "http://sidecar/backend-api/codex", http.DefaultClient)
+	manager, err := NewManager("https://example.com/v0/management", "management-key", "http://sidecar:8787/backend-api/codex", http.DefaultClient)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +272,7 @@ func TestManagerRefusesUnmanagedCollision(t *testing.T) {
 		}
 	}))
 	defer service.Close()
-	manager, _ := NewManager(service.URL+"/v0/management", "management-key", "http://sidecar", service.Client())
+	manager, _ := NewManager(service.URL+"/v0/management", "management-key", "http://sidecar:8787/backend-api/codex", service.Client())
 	err := manager.UpsertIdentity(context.Background(), Credential{IdentityID: "agent-aabbccddeeff", ClientKey: "cais_secret", Email: "user@example.invalid", PlanType: "k12"})
 	if err == nil || !strings.Contains(err.Error(), "unmanaged") {
 		t.Fatalf("unexpected error: %v", err)
@@ -280,7 +329,7 @@ func TestAuthFileNameSeparatesSameEmailTeamWorkspaces(t *testing.T) {
 
 func TestNewRequestPreservesManagementBasePath(t *testing.T) {
 	t.Parallel()
-	manager, _ := NewManager("https://example.com/v0/management", "management-key", "http://sidecar", http.DefaultClient)
+	manager, _ := NewManager("https://example.com/v0/management", "management-key", "http://sidecar:8787/backend-api/codex", http.DefaultClient)
 	request, err := manager.newRequest(context.Background(), http.MethodGet, "/auth-files/download", nil, "a b.json")
 	if err != nil {
 		t.Fatal(err)
@@ -288,5 +337,38 @@ func TestNewRequestPreservesManagementBasePath(t *testing.T) {
 	parsed, _ := url.Parse(request.URL.String())
 	if parsed.Path != "/v0/management/auth-files/download" || parsed.Query().Get("name") != "a b.json" {
 		t.Fatalf("unexpected URL: %s", parsed)
+	}
+}
+
+func TestNewManagerValidatesSidecarBaseURL(t *testing.T) {
+	t.Parallel()
+	valid := []string{
+		"http://127.0.0.1:8787/backend-api/codex",
+		"http://sidecar:8787/backend-api/codex/",
+		"https://sidecar.internal/backend-api/codex",
+	}
+	for _, endpoint := range valid {
+		manager, err := NewManager("https://example.com/v0/management", "management-key", endpoint, http.DefaultClient)
+		if err != nil {
+			t.Fatalf("NewManager(%q): %v", endpoint, err)
+		}
+		if manager.sidecarBaseURL != strings.TrimRight(endpoint, "/") {
+			t.Fatalf("normalized sidecar URL = %q, want %q", manager.sidecarBaseURL, strings.TrimRight(endpoint, "/"))
+		}
+	}
+
+	invalid := []string{
+		"http://sidecar:8787",
+		"http://sidecar:8787/backend-api/codex?token=x",
+		"http://sidecar:8787/backend-api/codex#fragment",
+		"http://user:pass@sidecar:8787/backend-api/codex",
+		"//sidecar:8787/backend-api/codex",
+		"ftp://sidecar/backend-api/codex",
+		"http://sidecar:8787/backend-api/%63odex",
+	}
+	for _, endpoint := range invalid {
+		if _, err := NewManager("https://example.com/v0/management", "management-key", endpoint, http.DefaultClient); err == nil {
+			t.Fatalf("NewManager accepted invalid sidecar URL %q", endpoint)
+		}
 	}
 }

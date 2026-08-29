@@ -1,6 +1,7 @@
 # CPA Codex Agent Identity 运行逻辑与安全边界
 
-本文按当前源码说明插件、sidecar、CPA auth 文件、批量导入、代理热加载和 reset-credit 的真实运行路径。正式 Release 仍是 v0.3.3；Draft PR 中后续行为只有在合并、打 tag 和发布后才成为新正式版本。
+本文按当前源码说明插件、sidecar、CPA auth 文件、批量导入、代理热加载和 reset-credit 的真实运行路径。当前正式 Release 是 v0.3.4，本文所述行为与该版本一致。
+Current release baseline: CLIProxyAPI v7.2.145; v0.3.4 plugin assets are built against the same verified SDK baseline.
 
 ## 1. 三个可独立替换的平面
 
@@ -17,9 +18,9 @@ flowchart LR
 
 ### CPA plugin control plane
 
-- 注册 Codex AuthProvider；
-- 只识别 sidecar 管理的 Codex auth 文件；
-- 把随机 cais_ key 和内部 base URL交给 CPA 原生 Codex executor；
+- 注册私有的 `codex-agent-identity` AuthProvider，不声明 native `codex`；
+- 只识别 `type: codex-agent-identity` 且带有 `auth_mode: agent_identity_sidecar` 的 sidecar auth 文件；
+- 把随机 cais_ key 和内部 base URL 放入 CPA auth 的 OAuth 兼容字段，并返回 `Provider: codex`，从而进入 CPA 原生 Codex executor；
 - 注册受 CPA Management key 保护的 GET /v0/management/codex-agent-identity/open；
 - 不注册任何 /v0/resource/plugins/... 动态路由。
 
@@ -87,7 +88,7 @@ ALLOW_PLAINTEXT_STORE=true 只用于本地迁移/测试，生产必须关闭。�
 
 ~~~json
 {
-  "type": "codex",
+  "type": "codex-agent-identity",
   "auth_mode": "agent_identity_sidecar",
   "access_token": "cais_<random>",
   "base_url": "<internal-sidecar-url>",
@@ -97,6 +98,7 @@ ALLOW_PLAINTEXT_STORE=true 只用于本地迁移/测试，生产必须关闭。�
 ~~~
 
 CPA 文件不含原始 JWT/PAT。同步逻辑先读取已存在文件，在写入或字段验证失败时恢复原内容。刷新 identity 时保留 disabled 状态。
+The plugin parser only claims `type=codex-agent-identity` files carrying `auth_mode=agent_identity_sidecar`; it returns `Provider: codex` for the runtime. Ordinary `type=codex` OAuth files remain on CPA native parse/login/refresh/executor paths.
 
 ### 同邮箱多个 Team workspace
 
@@ -110,7 +112,7 @@ codex-<workspace-hash>-<sanitized-email>-<plan>.json
 
 ## 5. Agent Identity 请求路径
 
-1. CPA 选择 native Codex auth 文件；
+1. CPA 选择并解析 sidecar-owned auth 文件；
 2. CPA 将 cais_ key 发给 sidecar；
 3. sidecar 常数时间匹配 client-key hash；
 4. 解密 JWT，验证 JWKS、issuer/audience/expiry 和 claims；
@@ -140,6 +142,7 @@ GET /v0/management/codex-agent-identity/open 由 CPA Management key 保护，返
 ### 独立 sidecar UI
 
 /agent-identity/ 静态页面本身可以通过反代访问，但以下 API 都要求 Bearer management key：
+The default browser URL is `http://127.0.0.1:18787/agent-identity/`; blank, `/`, and the historical local root URL are normalized to `/agent-identity/`.
 
 - identities list；
 - single import；

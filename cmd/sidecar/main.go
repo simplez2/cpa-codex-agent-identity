@@ -141,7 +141,7 @@ func run(logger *log.Logger) error {
 	if err != nil {
 		return err
 	}
-	publicCPABaseURL := envOrDefault("PUBLIC_CPA_BASE_URL", "http://codex-agent-identity-sidecar:8787/backend-api/codex")
+	publicCPABaseURL := envOrDefault("PUBLIC_CPA_BASE_URL", "http://127.0.0.1:8787/backend-api/codex")
 	reconcileOnStart, err := boolEnv("CPA_RECONCILE_ON_START", true)
 	if err != nil {
 		return err
