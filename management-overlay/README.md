@@ -41,10 +41,11 @@ Agent Identity and mounted `codex_access_token` credentials.
 `agent-identity-management-entry.patch` adds an **Identity management** button
 to the installed `codex-agent-identity` plugin card. The button opens the
 configured CPA API origin's `/agent-identity/` sidecar UI in a new tab. It
-deliberately does not register or consume a CPA
-`/v0/resource/plugins/...` route, does not restore a plugin menu, and does not
-transfer the Management key. The sidecar UI performs its own Bearer-key
-authentication before listing, previewing, or importing identities.
+does not transfer the Management key or perform identity operations itself.
+The v0.3.5 plugin also registers its own safe `/v0/resource/plugins/.../open`
+wrapper for CPAMC plugin pages; this overlay remains a separate optional card
+shortcut. The sidecar UI performs its own Bearer-key authentication before
+listing, previewing, or importing identities.
 
 The sidecar import flow supports pasted text or a local file, requires a
 preview, reports ready/duplicate/invalid entries, and can commit atomically.
@@ -52,10 +53,11 @@ Sensitive import text is not stored by this overlay.
 
 The entry exists only in the generated and mounted overlay. Installing the
 plugin `.so` or adding its registry source does not patch the stock Management
-Center. With the overlay mounted, open `management.html#/plugins`, find the
-installed `codex-agent-identity` card, and select **Identity management**. The
-direct fallback is `/agent-identity/`; the plugin-specific sidebar menu remains
-absent by design.
+Center card. With the overlay mounted, open `management.html#/plugins`, find the
+installed `codex-agent-identity` card, and select **Identity management**. On a
+CPAMC build that supports plugin resources, v0.3.5 also exposes a native
+**Codex Agent Identity** plugin-page menu without the overlay. The direct fallback
+remains `/agent-identity/`.
 
 ## Rebuild
 
