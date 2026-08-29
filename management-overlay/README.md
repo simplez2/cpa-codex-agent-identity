@@ -48,12 +48,11 @@ is guessed from the monthly quota window, because that reset time is not the
 reset credit's expiry. The sidecar forwards the request body unchanged for both
 Agent Identity and mounted `codex_access_token` credentials.
 
-`agent-identity-management-entry.patch` adds an **Identity management** button
-to the installed `codex-agent-identity` plugin card. The button opens the
-configured CPA API origin's `/agent-identity/` sidecar UI in a new tab. It
-does not transfer the Management key or perform identity operations itself.
-The v0.3.6 plugin also registers its own safe `/v0/resource/plugins/.../open`
-wrapper for CPAMC plugin pages; this overlay remains a separate optional card
+The overlay intentionally does not modify the CPA plugin card or add a
+second management entry point. The `codex-agent-identity` plugin registers its
+own safe `/v0/resource/plugins/.../open` resource, which CPAMC exposes through
+its native plugin-pages menu. This keeps the plugin discoverable through the
+same surface as other CPA plugins instead of introducing a card-specific
 shortcut. The sidecar UI performs its own Bearer-key authentication before
 listing, previewing, or importing identities.
 
@@ -61,13 +60,11 @@ The sidecar import flow supports pasted text or a local file, requires a
 preview, reports ready/duplicate/invalid entries, and can commit atomically.
 Sensitive import text is not stored by this overlay.
 
-The entry exists only in the generated and mounted overlay. Installing the
-plugin `.so` or adding its registry source does not patch the stock Management
-Center card. With the overlay mounted, open `management.html#/plugins`, find the
-installed `codex-agent-identity` card, and select **Identity management**. On a
-CPAMC build that supports plugin resources, v0.3.6 also exposes a native
-**Codex Agent Identity** plugin-page menu without the overlay. The direct fallback
-remains `/agent-identity/`.
+Installing the plugin `.so` or adding its registry source is enough for the
+native plugin-pages entry on CPA builds that support ResourceRoute menus. Open
+`management.html#/plugins`, select the **Codex Agent Identity** menu, and use
+the embedded page. The direct fallback remains `/agent-identity/`. The overlay
+is optional and only supplies reset-credit visibility plus the quota bridge.
 
 ## Rebuild
 
@@ -77,7 +74,8 @@ Run the PowerShell helper from the repository root:
 .\management-overlay\build.ps1 -BunPath (Get-Command bun).Source
 ```
 
-The helper clones the pinned public upstream, applies both patches in order,
+The helper clones the pinned public upstream, applies the two functional
+patches in order,
 runs tests/lint/build, and writes the verified single-file page to
 `management-overlay/out/management.html`. CI pins the upstream-declared Bun
 release and verifies required entry markers plus the absence of the legacy

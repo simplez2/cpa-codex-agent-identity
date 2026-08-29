@@ -27,6 +27,8 @@ jobs:
           test ! -s /tmp/gofmt.out
       - name: Validate plugin registry
         run: jq -e -f .github/scripts/validate-registry.jq registry.json
+      - name: Verify version lifecycle state
+        run: go run ./.github/scripts/verify-release-state.go -root .
       - name: Enforce private release metadata
         shell: bash
         run: |
@@ -52,26 +54,6 @@ jobs:
           ./management-overlay/build.ps1 `
             -BunPath (Get-Command bun).Source `
             -OutputPath "$env:RUNNER_TEMP/management.html"
-      - name: Verify management-entry security boundary
-        shell: bash
-        run: |
-          set -euo pipefail
-          artifact="${RUNNER_TEMP}/management.html"
-          patch="management-overlay/agent-identity-management-entry.patch"
-          test -s "${artifact}"
-          grep -Fq 'codex-agent-identity' "${artifact}"
-          grep -Fq '/agent-identity/' "${artifact}"
-          grep -Fq 'Identity management' "${artifact}"
-          grep -Fq '身份管理与导入' "${artifact}"
-          grep -Fq 'noopener,noreferrer' "${artifact}"
-          if grep -Fq '/v0/resource/plugins/codex-agent-identity/open' "${artifact}"; then
-            echo '::error::Overlay restored the legacy public plugin route.'
-            exit 1
-          fi
-          if grep -Eiq 'management[-_ ]?key|managementKey|x-management-key|authorization|bearer' "${patch}"; then
-            echo '::error::Management entry patch crosses the authentication boundary.'
-            exit 1
-          fi
 
   secrets:
     runs-on: ubuntu-24.04

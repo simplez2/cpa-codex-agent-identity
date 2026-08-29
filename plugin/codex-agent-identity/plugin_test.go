@@ -178,8 +178,27 @@ func TestRegisterDeclaresAuthAndManagementCapabilities(t *testing.T) {
 	if result.Metadata.Name != pluginName || result.Metadata.GitHubRepository != pluginRepository || result.Metadata.Logo != pluginLogo || !result.Capabilities.AuthProvider || !result.Capabilities.ManagementAPI {
 		t.Fatalf("unexpected registration: %#v", result)
 	}
-	if len(result.Metadata.ConfigFields) != 2 || result.Metadata.ConfigFields[0].Name != configSidecarURL || result.Metadata.ConfigFields[1].Name != configSidecarAPIURL {
-		t.Fatalf("unexpected config fields: %#v", result.Metadata.ConfigFields)
+	if len(result.Metadata.ConfigFields) != 0 {
+		t.Fatalf("internal sidecar endpoints must not appear in public plugin metadata: %#v", result.Metadata.ConfigFields)
+	}
+}
+
+func TestLegacySidecarConfigRemainsAcceptedWhenFieldsAreHidden(t *testing.T) {
+	configurePluginForTest(t, "sidecar_url: http://127.0.0.1:18787/agent-identity/\nsidecar_api_url: http://127.0.0.1:18787/v0/management/api-call")
+	current := currentRuntimeState()
+	if current.sidecarURL != "http://127.0.0.1:18787/agent-identity/" || current.sidecarAPIURL != "http://127.0.0.1:18787/v0/management/api-call" {
+		t.Fatalf("legacy sidecar config was not retained: %#v", current)
+	}
+	raw, err := handleMethod(pluginabi.MethodPluginRegister, lifecyclePayload(t, "sidecar_url: http://127.0.0.1:18787/agent-identity/\nsidecar_api_url: http://127.0.0.1:18787/v0/management/api-call"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result registration
+	decodePluginResult(t, raw, &result)
+	for _, field := range result.Metadata.ConfigFields {
+		if field.Name == configSidecarURL || field.Name == configSidecarAPIURL {
+			t.Fatalf("legacy internal config leaked into public metadata: %#v", result.Metadata.ConfigFields)
+		}
 	}
 }
 

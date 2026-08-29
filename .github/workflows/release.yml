@@ -33,17 +33,8 @@ jobs:
           test ! -s /tmp/gofmt.out
       - name: Validate registry
         run: jq -e -f .github/scripts/validate-registry.jq registry.json
-      - name: Verify tag matches source version
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="${GITHUB_REF_NAME#v}"
-          [[ "${version}" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]
-          grep -Fx "VERSION ?= ${version}" Makefile
-          grep -Fq 'pluginVersion = "'"${version}"'"' plugin/codex-agent-identity/plugin.go
-          minimum_sidecar="$(sed -nE 's/^[[:space:]]*minimumSidecarVersion[[:space:]]*=[[:space:]]*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' plugin/codex-agent-identity/plugin.go)"
-          test -n "${minimum_sidecar}"
-          test "$(printf '%s\n%s\n' "${minimum_sidecar}" "${version%%-*}" | sort -V | head -n1)" = "${minimum_sidecar}"
+      - name: Verify tag and version lifecycle state
+        run: go run ./.github/scripts/verify-release-state.go -root . -tag "${GITHUB_REF_NAME}"
       - run: make test
       - run: make race
       - run: make vet

@@ -1,7 +1,8 @@
-VERSION ?= 0.3.6
+VERSION ?= $(strip $(file <VERSION))
 PLUGIN_NAME ?= codex-agent-identity
 PLUGIN_DIR ?= plugin/codex-agent-identity
 BUILD_DIR ?= dist
+ASSETS_DIR ?= $(BUILD_DIR)/release-assets
 GO ?= go
 GOOS ?= $(shell $(GO) env GOOS)
 GOARCH ?= $(shell $(GO) env GOARCH)
@@ -17,7 +18,7 @@ PLUGIN_ARCHIVE ?= $(BUILD_DIR)/$(PLUGIN_NAME)_$(VERSION)_$(GOOS)_$(GOARCH).zip
 PLUGIN_CHECKSUM ?= $(PLUGIN_ARCHIVE).sha256
 SIDECAR_OUTPUT ?= $(BUILD_DIR)/cpa-codex-agent-identity-sidecar
 
-.PHONY: test race vet build build-sidecar build-plugin package-plugin checksums clean
+.PHONY: test race vet verify-release-state verify-published-release publish-registry build build-sidecar build-plugin package-plugin checksums clean
 
 test:
 	$(GO) test ./... -count=1
@@ -30,6 +31,15 @@ race:
 vet:
 	$(GO) vet ./...
 	cd $(PLUGIN_DIR) && $(GO) vet ./...
+
+verify-release-state:
+	$(GO) run ./.github/scripts/verify-release-state.go -root .
+
+verify-published-release:
+	$(GO) run ./.github/scripts/verify-release-state.go -root . -require-registry-match
+
+publish-registry:
+	$(GO) run ./.github/scripts/publish-registry.go -root . -assets-dir "$(ASSETS_DIR)"
 
 build: build-sidecar build-plugin
 

@@ -12,7 +12,7 @@
   <p>English · <a href="README.zh-CN.md">简体中文</a></p>
 </div>
 
-> **Release boundary:** this working tree targets **v0.3.6**, built against CLIProxyAPI **v7.2.145**. The last published registry entry remains **v0.3.5** until the v0.3.6 Linux archives are built, released, and checksummed. The v0.3.6 changes keep CPA native Codex OAuth login/refresh ownership while routing Agent Identity records through CPA's native Codex executor.
+> **Release boundary:** this working tree targets **v0.3.7**, built against CLIProxyAPI **v7.2.145**. The last published registry entry and directly installable Plugin Store assets remain **v0.3.6** until the v0.3.7 Linux archives are built, released, and checksummed. The v0.3.7 changes keep CPA native Codex OAuth login/refresh ownership while routing Agent Identity records through CPA's native Codex executor.
 
 CPA-native management and routing support for Codex Agent Identity JWTs and opaque Personal Access Tokens whose current prefix is at-.
 
@@ -31,6 +31,7 @@ The first public release keeps the mature sidecar data plane instead of rewritin
 - [Architecture](ARCHITECTURE.md)
 - [Security policy](SECURITY.md)
 - [Management Center overlay](management-overlay/README.md)
+- [Release process](RELEASE.md)
 
 ## Highlights
 
@@ -100,7 +101,7 @@ Treat the management password, encryption key, and generated cais_ values as sec
 ## Requirements
 
 - A CPA build with dynamic plugin ABI v1, AuthProvider, Management API routes, and host auth-file management support.
-- CLIProxyAPI v7.2.145 is the verified SDK baseline for the v0.3.6 release candidate. The plugin uses
+- CLIProxyAPI v7.2.145 is the verified SDK baseline for the v0.3.7 development line. The plugin uses
   dynamic plugin ABI v1; always canary-test it against the exact CPA image you
   plan to deploy.
 - Linux amd64 or Linux arm64 for the released .so files.
@@ -116,7 +117,8 @@ make test
 make race
 make vet
 make build
-make package-plugin VERSION=0.3.6 GOOS=linux GOARCH=amd64
+make verify-release-state
+make package-plugin GOOS=linux GOARCH=amd64
 ~~~
 
 Equivalent direct commands are:
@@ -134,29 +136,31 @@ CGO_ENABLED=1 go build -trimpath -buildvcs=false -buildmode=c-shared -o ../../bi
 
 The integration suite covers JWT and PAT validation, HTTP, SSE, WebSocket, images, quota/reset-credit routing, task rebuild after 401, concurrent task reuse, proxy hot reload, batch preview, duplicate detection, non-atomic import, atomic abort, rollback helpers, authenticated ManagementRoute and ResourceRoute registration, and schema-version negotiation.
 
-### v0.3.6 plugin-page compatibility fix
+### Native plugin-page entry
 
 CPA deliberately leaves `/v0/resource/plugins/...` outside Management-key
-authentication because CPAMC loads these resources inside an iframe. v0.3.6
-therefore advertises `/open` as a browser-navigable ResourceRoute while keeping
+authentication because CPAMC loads these resources inside an iframe. The current
+development line therefore advertises `/open` as a browser-navigable ResourceRoute while keeping
 all credential operations in the sidecar's own Bearer-key-protected API. The
 wrapper contains no Management key, token, or host callback.
 
 On a CPAMC build with plugin resources enabled, restart CPA after installing the
 plugin and the **Codex Agent Identity** entry should appear under plugin pages.
 The authenticated fallback remains `/v0/management/codex-agent-identity/open`,
-and the direct sidecar entry remains `/agent-identity/`. The optional
-`management-overlay` is still useful for its card button and reset-credit UI, but
-it is not required for the plugin-page entry.
+and the direct sidecar entry remains `/agent-identity/`. The `management-overlay` is optional and only supplies reset-credit visibility
+and the quota API bridge; it is not required for the plugin-page entry and does not
+modify the installed plugin card.
 
 ## CPA plugin installation
 
 ### CPAMC Plugin Store
 
-The official `router-for-me/CLIProxyAPI-Plugins-Store` registry should list
-`codex-agent-identity` version `0.3.6` after the v0.3.6 release and store PR are merged. When installing into a stock CPA build, leave
-`sidecar_url` blank to use the local default, or set `/agent-identity/` when CPA and
-sidecar are published behind the same origin. If an older CPA build or a stale store
+The public `router-for-me/CLIProxyAPI-Plugins-Store` registry currently serves
+`codex-agent-identity` version `0.3.6`.
+The next store update must be `0.3.7` and may be committed only after the tagged
+release assets and checksums exist. When installing into a stock CPA build, leave
+`sidecar_url` blank to use the local default, or set `/agent-identity/` in a legacy
+configuration when CPA and sidecar are published behind the same origin. If an older CPA build or a stale store
 cache does not show it yet, this repository's registry remains a direct fallback
 that can be added to the host-mounted CPA configuration:
 
@@ -170,8 +174,8 @@ plugins:
 The released Plugin Store assets follow CPA's required names:
 
 ~~~text
-codex-agent-identity_0.3.6_linux_amd64.zip
-codex-agent-identity_0.3.6_linux_arm64.zip
+codex-agent-identity_<version>_linux_amd64.zip
+codex-agent-identity_<version>_linux_arm64.zip
 checksums.txt
 ~~~
 
@@ -224,15 +228,14 @@ plugins:
     codex-agent-identity:
       enabled: true
       priority: 1000
-      sidecar_url: "/agent-identity/"
 ~~~
 
-The sidecar_url value is used to construct the Management API wrapper and
-the CPAMC plugin-page resource. It can be a root-relative same-origin URL or a
-full HTTP/HTTPS URL and must not contain credentials, query parameters, or a
-fragment. When omitted, `/`, or the historical local root URL, it defaults to
-`http://127.0.0.1:18787/agent-identity/`. The wrapper contains no secret; the
-sidecar UI must still authenticate before listing, previewing, or importing.
+Fresh installations should omit `sidecar_url`: the plugin derives the local or
+Docker sidecar endpoint automatically. The legacy `sidecar_url` value remains
+accepted for an existing same-origin reverse-proxy deployment. It may be a
+root-relative URL or a full HTTP/HTTPS URL, and must not contain credentials,
+query parameters, or a fragment. The wrapper contains no secret; the sidecar UI
+must still authenticate before listing, previewing, or importing.
 
 Do not load codex-agent-identity.so and the legacy codex-agent-identity-auth.so at the same time. Both claim the Codex Agent Identity auth-file provider/parser.
 
@@ -286,7 +289,7 @@ Important environment variables:
 | AUTH_API_BASE_URL | official account API | Agent Identity task registration |
 | PERSONAL_ACCESS_TOKEN_AUTH_API_BASE_URL | official account API | PAT whoami validation |
 | MAX_REPLAY_BODY_BYTES | 16777216 | Maximum body retained for a safe 401 retry |
-| CODEX_AGENT_IDENTITY_SIDECAR_API_URL | none | Optional internal sidecar Management API URL; when blank, derive from the first configured sidecar host |
+| CODEX_AGENT_IDENTITY_SIDECAR_API_URL | none | Advanced compatibility override; leave blank for automatic sidecar discovery |
 | CODEX_AGENT_IDENTITY_SIDECAR_HOSTS | built-in container names plus loopback | Additional comma-separated sidecar hostnames accepted by the CPA plugin parser and used by the quota bridge |
 | CODEX_AGENT_IDENTITY_SIDECAR_HTTP_PORTS | none | Indexed internal sidecar ports; the first host defaults to 8787, while additional explicit ports are also accepted by the parser |
 
@@ -406,7 +409,7 @@ the plugin ABI and Management Center frontend can change independently.
 1. Back up the sidecar data directory, encryption key, CPA config, and auth directory.
 2. Keep the sidecar data volume unchanged.
 3. Replace codex-agent-identity-auth.so with codex-agent-identity.so.
-4. Rename the CPA plugin config key to codex-agent-identity and set sidecar_url.
+4. Rename the CPA plugin config key to codex-agent-identity; keep an existing sidecar_url only if the deployment uses a custom reverse-proxy path, otherwise omit it.
 5. Restart only the staging CPA instance first.
 6. Confirm that the legacy public resource path returns 404, the protected
    Management route returns 401 without a key, and the direct dashboard,
@@ -432,19 +435,18 @@ cpa-codex-agent-identity-sidecar_<version>_linux_arm64.tar.gz
 checksums.txt
 ~~~
 
-`registry.json` is a directly usable CPA Plugin Store source. The built-in
-official `router-for-me/CLIProxyAPI-Plugins-Store` registry is being updated to
-`codex-agent-identity` version `0.3.6`; this repository source remains useful as
-an explicit fallback or version pin while the store cache propagates.
+`registry.json` is a directly usable CPA Plugin Store source. The built-in official `router-for-me/CLIProxyAPI-Plugins-Store` registry
+currently exposes `codex-agent-identity` version `0.3.6`. This repository
+`registry.json` is the explicit fallback; it is updated to `0.3.7` only in the
+post-release publication commit described in [Release process](RELEASE.md).
 
 ## Optional Management Center overlay
 
 `management-overlay` contains reproducible patches for reset-credit visibility
-and a safe **Identity management** button on the installed plugin card. The
-button opens the separately authenticated sidecar UI and does not transfer the
-Management key. The overlay remains optional: v0.3.6 can render its plugin page
-from the stock CPAMC resource menu, while the overlay still provides a convenient
-card button. Generated `management.html` is intentionally ignored by Git so
+and the Codex quota API bridge. It deliberately does **not** add a second
+Identity management button to the installed plugin card. The overlay remains
+optional: the plugin registers its own native ResourceRoute, which CPAMC can
+show under the plugin-pages menu without modifying stock card UI. Generated `management.html` is intentionally ignored by Git so
 public history contains the patches and build recipe, not an environment-specific
 build artifact.
 
