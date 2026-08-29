@@ -4,7 +4,11 @@ All notable changes to `cpa-codex-agent-identity` are documented here.
 Published registry and release assets are updated only after the tagged release
 workflow has produced and checksummed the artifacts.
 
-## [Unreleased] - 0.3.7
+## [Unreleased] - 0.3.8
+
+The next development line is intentionally empty until new changes are staged.
+
+## [0.3.7] - 2026-08-29
 
 ### Changed
 
@@ -18,8 +22,8 @@ workflow has produced and checksummed the artifacts.
 
 ### Compatibility
 
-- The current published registry remains `0.3.6` until the `v0.3.7` release
-  assets are built, published, and checksummed.
+- Published the v0.3.7 Linux plugin archives and checksums, then updated the
+  registry metadata to the verified archive sizes and SHA-256 values.
 - This release line does not claim to replace CPA's native Codex OAuth login
   implementation; native OAuth files remain owned by CPA.
 
