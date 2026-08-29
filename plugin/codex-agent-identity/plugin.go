@@ -52,7 +52,7 @@ const (
 )
 
 var (
-	pluginVersion = "0.3.6"
+	pluginVersion = "0.3.7"
 	stateMu       sync.RWMutex
 	state         = runtimeState{
 		sidecarURL:    defaultSidecarURL,
@@ -150,15 +150,10 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 				Author:           pluginAuthor,
 				GitHubRepository: pluginRepository,
 				Logo:             pluginLogo,
-				ConfigFields: []pluginapi.ConfigField{{
-					Name:        configSidecarURL,
-					Type:        pluginapi.ConfigFieldTypeString,
-					Description: "Browser-reachable sidecar UI URL. Leave blank for the local default http://127.0.0.1:18787/agent-identity/, or use /agent-identity/ behind a same-origin reverse proxy.",
-				}, {
-					Name:        configSidecarAPIURL,
-					Type:        pluginapi.ConfigFieldTypeString,
-					Description: "Optional absolute sidecar Management API URL for quota and reset-credit calls, for example http://127.0.0.1:18787/v0/management/api-call. Leave blank to derive it automatically; Docker installs use CODEX_AGENT_IDENTITY_SIDECAR_HOSTS and CODEX_AGENT_IDENTITY_SIDECAR_HTTP_PORTS.",
-				}},
+				// Sidecar endpoints are deliberately not exposed as plugin-store fields.
+				// A fresh installation uses the local/reverse-proxy defaults; the legacy
+				// sidecar_url and sidecar_api_url YAML keys remain accepted for upgrades.
+				ConfigFields: nil,
 			},
 			Capabilities: registrationCapability{AuthProvider: true, ManagementAPI: true},
 		})

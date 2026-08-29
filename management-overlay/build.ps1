@@ -17,15 +17,8 @@ $upstreamRepository = 'https://github.com/router-for-me/Cli-Proxy-API-Management
 $upstreamCommit = '6a6a22af85ce8763e8898c0d8641de3137f3ffd9'
 $patchPaths = @(
     (Join-Path $PSScriptRoot 'reset-credit-visibility.patch'),
-    (Join-Path $PSScriptRoot 'agent-identity-management-entry.patch'),
     (Join-Path $PSScriptRoot 'codex-quota-api-bridge.patch')
 )
-$entryPatch = Get-Content -LiteralPath $patchPaths[1] -Raw
-if ($entryPatch.Contains('/v0/resource/plugins/codex-agent-identity/open') -or
-    $entryPatch -match '(?i)management[-_ ]?key|managementKey|x-management-key|authorization|bearer') {
-    throw 'Management entry patch crosses the authentication boundary'
-}
-
 if (Test-Path -LiteralPath $WorkDirectory) {
     throw "WorkDirectory already exists: $WorkDirectory"
 }
@@ -62,16 +55,11 @@ $artifact = Get-Content -LiteralPath $builtArtifactPath -Raw
 foreach ($requiredMarker in @(
     'codex-agent-identity',
     '/agent-identity/',
-    'Identity management',
-    'noopener,noreferrer',
     '/codex-agent-identity/api-call'
 )) {
     if (-not $artifact.Contains($requiredMarker)) {
         throw "Management overlay is missing required marker: $requiredMarker"
     }
-}
-if ($artifact.Contains('/v0/resource/plugins/codex-agent-identity/open')) {
-    throw 'Management overlay restored the legacy public plugin route'
 }
 
 $outputDirectory = Split-Path -Parent $OutputPath

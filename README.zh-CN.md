@@ -12,7 +12,7 @@
   <p>简体中文 · <a href="README.md">English</a></p>
 </div>
 
-> **版本边界：** 当前工作区修复目标为 **v0.3.6（未发布）**，其发布资产使用 CLIProxyAPI **v7.2.145**。当前公开 registry 仍为 **v0.3.5**；v0.3.6 需要先完成 Linux 资产构建、Release 和校验值更新后才能在插件商店安装。
+> **版本边界：** 当前源码开发线为 **v0.3.7**，编译基线为 CLIProxyAPI **v7.2.145**。截至目前（2026 年 8 月 29 日），公开 registry 与可直接安装的发布资产仍为 **v0.3.6**。只有在 v0.3.7 完成测试、打包、Release、校验值和 registry 更新后，插件商店才会切换到 v0.3.7。
 
 这是一个面向 CLIProxyAPI（CPA）的 Codex Agent Identity / Personal Access
 Token 集成项目。首个公开版本由两个部分组成：
@@ -35,6 +35,7 @@ runtime provider 仍为 `codex`，因此会进入 CPA 原生 Codex executor。�
 - [Architecture](ARCHITECTURE.md)
 - [Security policy](SECURITY.md)
 - [Management Center overlay](management-overlay/README.md)
+- [发布与版本管理](RELEASE.md)
 
 ## 主要能力
 
@@ -53,58 +54,21 @@ runtime provider 仍为 `codex`，因此会进入 CPA 原生 Codex executor。�
 
 ## 版本边界
 
-当前源码要求 Go 1.26.6 或更高补丁版本，并以 CLIProxyAPI v7.2.145 SDK 作为当前版本编译
-目标 v0.3.6 资产将基于 v7.2.145；当前公开 registry 仍是 v0.3.5。插件使用动态插件 ABI v1，但正式升级 CPA 前仍必须用目标官方镜像做独立 canary。
+当前源码要求 Go 1.26.6 或更高补丁版本，并以 CLIProxyAPI v7.2.145 SDK 作为当前开发线的编译基线。版本状态由根目录的 VERSION、CHANGELOG.md、发布 workflow 和 registry 分阶段管理：源码可以先进入下一版本，但 registry 不得指向尚未发布的资产。
 
-首版保留稳定 sidecar 数据面，没有仓促把 AgentAssertion、PAT、图片、SSE、
-WebSocket、额度和代理逻辑全部重写进进程内插件。以后可以在同一仓库增加纯
-Executor 实现，并保持现有加密数据格式不变。
+### 当前 plugin-pages 入口
 
-### v0.3.6 æä»¶é¡µé¢å
-¼å®¹æ§ä¿®å¤
+CPA 的 /v0/resource/plugins/... 资源路由不经过 Management key 认证，因为 CPAMC 会在 iframe 中加载它。插件通过 ResourceRoute 注册 /open，由 CPA 原生 plugin-pages 菜单显示 Codex Agent Identity。这个 wrapper 不包含 Management key、token 或宿主回调，只负责嵌入 sidecar 页面；真正的身份列表、预检、导入、启用、停用和删除仍由 sidecar 的 Bearer 管理认证保护。
 
-CPA ç `/v0/resource/plugins/...` ä¸ç»è¿ Management key è®¤è¯ï¼ä½ CPAMC æ­£æ¯éè¿
-è¿ç»èµæºè·¯ç±å è½½æä»¶é¡µé¢ iframeãv0.3.6 éæ°æ³¨å `/open` èµæºå
-¥å£ï¼å
-¥å£æ¬èº«ä¸å«
-Management keyãtoken æå®¿ä¸»åè°ï¼åªè´è´£åµå
-¥ sidecar é¡µé¢ï¼çæ­£çèº«ä»½åè¡¨ãé¢æ£ã
-å¯¼å
-¥ãå¯ç¨ãåç¨åå é¤æä½ä»ç± sidecar ç Bearer ç®¡çå¯ç ä¿æ¤ã
+不要再把卡片按钮、外挂 overlay 入口和 plugin-pages 菜单混为一谈。当前推荐入口是 CPA 原生 plugin-pages；management-overlay 仅用于 reset-credit 可见性和 Codex 额度 API bridge，不修改插件卡片。
 
-### åç«¯å
-¥å£ä¸åè¡¨è¾¹ç
+### 关于 CPA 原生 OAuth
 
-è¿éæä¸ç§ä¸åçâæä»¶æ¾ç¤ºâï¼ä¸è¦æ··ä¸ºä¸è°ï¼
+插件保留 CPA 原生 Codex OAuth 文件的解析、刷新和执行归属，不冒充 CPA 的 codex OAuth provider。Agent Identity / PAT 文件使用独立的 codex-agent-identity 类型触发插件解析，然后映射到 CPA 的 Codex runtime executor。这样可避免接管现有官方 OAuth 账号；如果要让导入流程直接复用 CPA OAuth 页面，还需要 CPA host 提供“源 provider 与 runtime provider 分离”的登录保存契约，当前版本不伪造这一流程。
 
-- **æä»¶ååºç®å½**ï¼CPA å®æ¹ `router-for-me/CLIProxyAPI-Plugins-Store` æ´æ°åå¹¶åä¼æ¶å½
-  `codex-agent-identity` v0.3.6ãæ§ CPA æéæ§ç¼å­æªæ¾ç¤ºæ¶ï¼å¯å·æ°ååºï¼æææ¬ä»åº
-  `registry.json` å å
-¥ `store-sources` ä½ä¸ºæç¡®åéã
-- **å·²å®è£
-æä»¶åè¡¨**ï¼`.so` è¢«åç°å¹¶æ³¨ååï¼ä¼å¨ `management.html#/plugins` æ¾ç¤º
-  `codex-agent-identity` å¡çãè¥æ¾ç¤ºâæªæ³¨åâï¼å
-ç¡®è®¤ `plugins.enabled: true`ãæä»¶é
-ç½®
-  `enabled: true`ï¼ç¶åéå¯ CPAï¼v0.3.6 ä¼æ ¹æ® CPA åæ¥ç schema çæ¬ååè¿åå¼ï¼å
-¼å®¹æ§ç CPAã
-- **å·¦ä¾§æä»¶é¡µé¢èå**ï¼æ¯æ Resources ç CPAMC ä¼ä»æä»¶æ³¨åç»æçæ `Codex Agent Identity`
-  èåï¼ç¹å»åå è½½ `/v0/resource/plugins/codex-agent-identity/open`ãå¦æç®æ  CPAMC çæ¬å¤ªæ§ï¼
-  ä»å¯ç´æ¥æå¼ `/agent-identity/`ï¼æä½¿ç¨å¯é overlay çå¡çæé®ã
-
-å¯é `management-overlay` ä¼å¨å·²å®è£
-æä»¶å¡çä¸å¢å  **èº«ä»½ç®¡çä¸å¯¼å
-¥** æé®ãç¹å»åå¨æ°æ ç­¾é¡µ
-æå¼åä¸ CPA API origin ç `/agent-identity/`ï¼ä¸ä¼ä¼ é Management keyï¼é¡µé¢ä¼è¦æ±éæ°è¾å
-¥ä¸ CPA
-ä¸è´çç®¡çå¯ç ãä»
-å®è£
- `.so` ææ·»å æä»¶ååºæºä¸ä¼ä¿®æ¹åç `management.html`ï¼ä½æ¯æèµæºèåç
-çæ¬æ é overlay ä¹è½æ¾ç¤ºæä»¶é¡µé¢ã
 ## 从 CPAMC Plugin Store 安装
 
-å®æ¹ CPA Plugin Store æ´æ°åå¹¶åå°æ¶å½ `codex-agent-identity` v0.3.6ãè¥ç®æ  CPA
-版本或商店缓存仍未显示，可把本仓库注册表加入宿主机挂载的 CPA 配置：
+官方 CPA Plugin Store 在 registry 更新后会收录已发布版本。若目标 CPA 版本或商店缓存尚未显示，可把本仓库的 registry.json 加入宿主机挂载的 CPA 配置作为明确回退：
 
 ~~~yaml
 plugins:
@@ -115,12 +79,11 @@ plugins:
     codex-agent-identity:
       enabled: true
       priority: 1000
-      sidecar_url: "/agent-identity/"
 ~~~
 
-`sidecar_url` 只用于构造受认证的插件 Management API 响应，不会再创建公开的
-插件资源路由。它不能包含用户信息、查询参数或片段。
-The plugin defaults to `http://127.0.0.1:18787/agent-identity/` when this field is blank; `/` and the historical local root URL are normalized to `/agent-identity/`.
+全新安装通常不需要填写 sidecar_url 或 sidecar_api_url。插件默认使用本机 sidecar 地址；Docker 部署通过 CODEX_AGENT_IDENTITY_SIDECAR_HOSTS 和端口环境变量自动发现。旧版本配置仍会被兼容解析，但这些内部地址不再作为普通 Plugin Store 配置项展示。
+
+如果 CPA 与 sidecar 通过反向代理发布，可在旧配置中保留 sidecar_url: "/agent-identity/"；它只能是无凭据、无查询参数和无片段的 HTTP(S) 地址或同源路径。
 
 容器内 CPA 若要通过 Plugin Store 安装或升级，插件目录需要在该操作期间可写。
 完成后建议恢复只读挂载。正常运行时推荐：
@@ -141,7 +104,7 @@ codex-agent-identity.so，两者都会声明 Codex 凭证解析能力。
 
 插件商店只会安装 `.so`，无法安全地自动创建 sidecar 容器、Docker network、加密密钥、management key 和持久化目录。全新部署建议先运行 `sh deploy/bootstrap-runtime.sh --start`，之后在 CPA 插件商店点击安装即可。
 
-Docker 部署中，`sidecar_api_url` 留空时插件会自动读取 `CODEX_AGENT_IDENTITY_SIDECAR_HOSTS`，并默认使用 sidecar 容器的 `8787` 端口；宿主机安装仍使用 `http://127.0.0.1:18787/v0/management/api-call`。
+Docker 部署中，`sidecar_api_url` 留空时插件会自动读取 `CODEX_AGENT_IDENTITY_SIDECAR_HOSTS`，并默认使用 sidecar 容器的 `8787` 端口；宿主机安装仍使用 `http://127.0.0.1:18787/v0/management/api-call`。这是旧配置兼容项，新安装不需要填写。
 
 ## 部署 sidecar
 
@@ -234,12 +197,14 @@ digest 并替换生产。不要直接用 latest 覆盖正在工作的实例。
 
 ## 构建与发布
 
+版本流程和发布边界记录在 [CHANGELOG.md](CHANGELOG.md)；`VERSION` 是源码开发线版本，`registry.json` 是已发布可安装版本。不要在 Release 资产尚未生成和校验前修改 registry。推荐先运行 `go run ./.github/scripts/verify-release-state.go`，再执行构建、测试、打 tag、等待 Release，最后单独更新 registry。
+
 ~~~bash
 make test
 make race
 make vet
 make build
-make package-plugin VERSION=0.3.6 GOOS=linux GOARCH=amd64
+make package-plugin GOOS=linux GOARCH=amd64
 ~~~
 
 vX.Y.Z 标签会生成 Linux amd64/arm64 插件 zip、sidecar tar.gz、

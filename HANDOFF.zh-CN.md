@@ -21,13 +21,14 @@
 
 ## 2. 版本边界
 
-当前工作区修复目标是 v0.3.6，pluginVersion 已保持 v0.3.6；公开 registry 仍是 v0.3.5，必须在 Linux 资产构建、GitHub Release 和校验值更新完成后再切换。
+当前源码开发线是 v0.3.7，pluginVersion 与根目录 VERSION 必须一致；公开 registry 和可直接安装资产仍是 v0.3.6。只有 Linux 资产、GitHub Release、checksums 和下载验证全部完成后，才能在单独的发布提交中把 registry 切换到 v0.3.7。
 
 发布新版本时必须同步：
 
-- Makefile VERSION 默认值；
+- 根目录 VERSION；
 - plugin/codex-agent-identity/plugin.go 的 pluginVersion；
-- registry.json version、asset URL、size、SHA-256；
+- CHANGELOG.md 的 Unreleased 版本；
+- registry.json version、asset URL、size、SHA-256（仅在资产发布后更新）；
 - Git tag；
 - plugin zip、sidecar tar、checksums；
 - GHCR tag/digest；
@@ -66,7 +67,7 @@ deployment/
 2. 把 management-key 配置为 CPA remote-management.secret-key，或明确挂载独立 CPA key。
 3. 下载 Release 资产并对照 checksums.txt。
 4. 将动态库放到 runtime/cpa-plugins 根目录。
-5. 配置 codex-agent-identity 插件和 sidecar_url。
+5. 启用 codex-agent-identity 插件；新安装不要填写 sidecar_url，只有旧的自定义反向代理部署才保留它。
 6. 使用 deploy/docker-compose.canary.yml 先启动隔离 canary。
 7. 验证 plugin registration、/healthz、/agent-identity/ 登录和空 identity list。
 8. 预检一条测试凭据，再确认 CPA auth 文件只含 cais_ key。
@@ -103,7 +104,7 @@ overlay 与官方 Management Center commit 绑定。每次 CPA 前端升级都�
 1. 更新 pinned upstream commit；
 2. 重新应用两个 patch；
 3. 运行 TypeScript、lint、locale JSON 和 production build；
-4. 确认包含 Identity management 按钮和 reset-credit UI；
+4. 确认包含 reset-credit UI 和 Codex quota bridge；
 5. 确认不包含旧 public resource route 或任何 Management key 文本；
 6. 原子替换宿主 management.html。
 
@@ -179,13 +180,10 @@ overlay 与官方 Management Center commit 绑定。每次 CPA 前端升级都�
 
 确认使用包含 workspace-hash 命名修复的 branch/release，并确认 credential inspection 返回 account_id。不要人工把两个 workspace 改成同一个 auth 文件名。
 
-### Identity management 入口不显示
+### 插件-pages 菜单不显示或资源入口返回 404
 
-区分 Plugin Store、已安装插件卡片和侧边栏菜单。只安装动态库不会修改 stock management.html。需要构建并挂载 overlay，然后在 management.html#/plugins 卡片点击按钮；直接入口始终是 /agent-identity/。
+当前插件不再依赖外挂卡片按钮。确认安装的是包含 ResourceRoute 的插件版本（源码开发线为 v0.3.7；公开 registry 在 v0.3.7 发布前仍可能提供 v0.3.6），CPA 的 `plugins.enabled` 和该插件配置的 `enabled` 都为 `true`，然后重启 CPA。CPA 资源入口是 `/v0/resource/plugins/codex-agent-identity/open`，正常应返回 HTML wrapper；若仍为 404，通常是插件没有注册成功、CPA 使用不支持资源路由的旧版本，或 CPAMC/CPA 仍在使用旧插件进程。直接入口 `/agent-identity/` 仍可作为回退。
 
-### plugin-pages 菜单不显示或资源入口返回 404
-
-确认安装的是 v0.3.6，CPA 的 `plugins.enabled` 和该插件配置的 `enabled` 都为 `true`，然后重启 CPA。CPA 资源入口是 `/v0/resource/plugins/codex-agent-identity/open`，正常应返回 HTML wrapper；若仍为 404，通常是插件没有注册成功、CPA 使用了不支持资源路由的旧版本，或 CPAMC/CPA 仍在使用旧插件进程。直接入口 `/agent-identity/` 和可选 overlay 按钮不依赖该菜单。
 ### 401
 
 - dashboard API 401：management password 不一致；
@@ -232,7 +230,8 @@ overlay 与官方 Management Center commit 绑定。每次 CPA 前端升级都�
 - [ ] Linux amd64/arm64 c-shared build 通过。
 - [ ] sidecar build 与 integration tests 通过。
 - [ ] overlay pinned build、TypeScript、lint、locale 和安全 marker 通过。
-- [ ] registry schema、asset size、SHA-256 正确。
+- [ ] `make verify-release-state` 通过，且 registry 没有领先源码版本。
+- [ ] registry schema、asset size、SHA-256 正确。发布后再运行 `make verify-published-release`。
 - [ ] gitleaks 检查当前树与完整 Git 历史。
 - [ ] 搜索真实邮箱、IP、域名、token、Cookie、auth ID 和容器名。
 - [ ] canary 使用目标官方 CPA image digest。

@@ -1,7 +1,7 @@
 # CPA Codex Agent Identity 运行逻辑与安全边界
 
-本文按当前源码说明插件、sidecar、CPA auth 文件、批量导入、代理热加载和 reset-credit 的真实运行路径。当前源码目标版本是 v0.3.6（未发布），公开 registry 仍是 v0.3.5。
-Release-candidate baseline: CLIProxyAPI v7.2.145; v0.3.6 assets must be rebuilt and checksummed before registry publication.
+本文按当前源码说明插件、sidecar、CPA auth 文件、批量导入、代理热加载和 reset-credit 的真实运行路径。当前源码开发线是 v0.3.7，公开 registry 与可直接安装资产仍是 v0.3.6。
+Release baseline: CLIProxyAPI v7.2.145; v0.3.7 assets must be rebuilt, released, and checksummed before registry publication.
 
 ## 1. 三个可独立替换的平面
 
@@ -154,9 +154,9 @@ The default browser URL is `http://127.0.0.1:18787/agent-identity/`; blank, `/`,
 
 ### plugin-pages 如何加载
 
-CPA 当前的 `/v0/resource/plugins/...` 路由族不经过 Management key 认证，但 CPAMC 会把它作为插件页面 iframe 的资源入口。v0.3.6 注册 `/v0/resource/plugins/codex-agent-identity/open`，返回不包含 Management key、token 或宿主回调的 HTML wrapper；wrapper 只嵌入 `/agent-identity/` sidecar 页面。
+CPA 当前的 `/v0/resource/plugins/...` 路由族不经过 Management key 认证，但 CPAMC 会把它作为插件页面 iframe 的资源入口。当前插件注册 `/v0/resource/plugins/codex-agent-identity/open`，返回不包含 Management key、token 或宿主回调的 HTML wrapper；wrapper 只嵌入 `/agent-identity/` sidecar 页面。
 
-资源入口不等于身份操作免认证：sidecar 的列表、预检、导入、启用、停用、刷新和删除仍必须通过自己的 Bearer 管理密码。若 CPAMC 仍不显示菜单，先确认 CPA 与插件都启用并重启 CPA；旧版 CPAMC 可直接使用 `/agent-identity/` 或可选 overlay 按钮。
+资源入口不等于身份操作免认证：sidecar 的列表、预检、导入、启用、停用、刷新和删除仍必须通过自己的 Bearer 管理密码。若 CPAMC 仍不显示菜单，先确认 CPA 与插件都启用并重启 CPA；旧版 CPAMC 可直接使用 `/agent-identity/`。overlay 只提供 quota/reset-credit 兼容层，不负责创建插件入口。
 ## 8. Proxy 热加载
 
 sidecar 启动时先读取 CPA 当前 proxy-url，再开始 identity inspection。之后按 CPA_PROXY_CONFIG_POLL_INTERVAL 轮询：
