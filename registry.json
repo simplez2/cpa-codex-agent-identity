@@ -6,7 +6,7 @@
       "name": "Codex Agent Identity",
       "description": "Adds CPA-native Codex Agent Identity and Personal Access Token credential routing with encrypted storage and batch management through a hardened companion sidecar.",
       "author": "simplez2",
-      "version": "0.3.5",
+      "version": "0.3.6",
       "repository": "https://github.com/simplez2/cpa-codex-agent-identity",
       "install": {
         "type": "direct",
@@ -14,16 +14,16 @@
           {
             "goos": "linux",
             "goarch": "amd64",
-            "url": "https://github.com/simplez2/cpa-codex-agent-identity/releases/download/v0.3.5/codex-agent-identity_0.3.5_linux_amd64.zip",
-            "sha256": "18d51e5eca5049a4a95bddc36afb851e285258bbfe2f897f0bde17794eda711a",
-            "size": 2129782
+            "url": "https://github.com/simplez2/cpa-codex-agent-identity/releases/download/v0.3.6/codex-agent-identity_0.3.6_linux_amd64.zip",
+            "sha256": "cf1776cc1ea3d02433bdb56f133fd55580fcf25d57532161b566bb5a2a97fe39",
+            "size": 3072954
           },
           {
             "goos": "linux",
             "goarch": "arm64",
-            "url": "https://github.com/simplez2/cpa-codex-agent-identity/releases/download/v0.3.5/codex-agent-identity_0.3.5_linux_arm64.zip",
-            "sha256": "65c5e7871a9d06f27cea2f1944eed839597bf94e80a2793540c8ee779ce8253f",
-            "size": 1948367
+            "url": "https://github.com/simplez2/cpa-codex-agent-identity/releases/download/v0.3.6/codex-agent-identity_0.3.6_linux_arm64.zip",
+            "sha256": "fc51da214285392dff0f4e3b495c8c057dca4a8faaac38ae0d2aa7e9a838d626",
+            "size": 2793632
           }
         ]
       },
