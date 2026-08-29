@@ -182,3 +182,70 @@ func TestParseEncryptionKey(t *testing.T) {
 		t.Fatal("invalid encryption key was accepted")
 	}
 }
+
+func TestIdentityIDForAccountScopesSamePATByWorkspace(t *testing.T) {
+	t.Parallel()
+	const token = "at-same-personal-access-token"
+	first := IdentityIDForAccount(token, "team-one")
+	second := IdentityIDForAccount(token, "team-two")
+	if first == second {
+		t.Fatalf("different workspaces collided: %q", first)
+	}
+	if first != IdentityIDForAccount(token, " team-one ") {
+		t.Fatal("account ID whitespace was not normalized")
+	}
+	if IdentityIDForAccount(token, "") != IdentityID(token) {
+		t.Fatal("empty account ID did not preserve legacy identity ID")
+	}
+}
+
+func TestAccountScopedIdentityPersistsAndDetectsOnlySameWorkspaceAsDuplicate(t *testing.T) {
+	t.Parallel()
+	directory := t.TempDir()
+	store, err := Open(directory, WithEncryptionKey(bytes.Repeat([]byte{0x51}, encryptionKeySize)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const token = "at-multi-team"
+	first, firstKey, err := store.ImportWithMetadata(token, CredentialMetadata{
+		Kind:          "personal_access_token",
+		AccountID:     "team-one",
+		AccountScoped: true,
+	}, time.Unix(1_700_000_000, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, secondKey, err := store.ImportWithMetadata(token, CredentialMetadata{
+		Kind:          "personal_access_token",
+		AccountID:     "team-two",
+		AccountScoped: true,
+	}, time.Unix(1_700_000_001, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID == second.ID || firstKey == secondKey || len(store.List()) != 2 {
+		t.Fatalf("same PAT was not separated by workspace: first=%#v second=%#v", first, second)
+	}
+	if _, ok := store.LookupByTokenAndAccount(token, "team-one"); !ok {
+		t.Fatal("team-one identity was not found")
+	}
+	if _, ok := store.LookupByTokenAndAccount(token, "team-two"); !ok {
+		t.Fatal("team-two identity was not found")
+	}
+	if _, ok := store.LookupByTokenAndAccount(token, "team-three"); ok {
+		t.Fatal("unimported workspace was treated as duplicate")
+	}
+
+	reopened, err := Open(directory, WithEncryptionKey(bytes.Repeat([]byte{0x51}, encryptionKeySize)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstIdentity, ok := reopened.Lookup(firstKey)
+	if !ok || firstIdentity.AccountID != "team-one" || !firstIdentity.AccountScoped || firstIdentity.Token != token {
+		t.Fatalf("team-one identity did not persist: %#v", firstIdentity)
+	}
+	secondIdentity, ok := reopened.Lookup(secondKey)
+	if !ok || secondIdentity.AccountID != "team-two" || !secondIdentity.AccountScoped || secondIdentity.Token != token {
+		t.Fatalf("team-two identity did not persist: %#v", secondIdentity)
+	}
+}

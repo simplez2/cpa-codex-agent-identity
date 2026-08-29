@@ -41,6 +41,7 @@ services:
       TZ: ${TZ:-UTC}
       CODEX_AGENT_IDENTITY_SIDECAR_HOSTS: ${CODEX_AGENT_IDENTITY_SIDECAR_HOSTS:-codex-agent-identity-sidecar-canary}
       CODEX_AGENT_IDENTITY_SIDECAR_HTTP_PORTS: ${CODEX_AGENT_IDENTITY_SIDECAR_HTTP_PORTS:-}
+      CODEX_AGENT_IDENTITY_SIDECAR_API_URL: ${CODEX_AGENT_IDENTITY_SIDECAR_API_URL:-}
     volumes:
       - ./cpa-config.yaml:/CLIProxyAPI/config.yaml
       - ./cpa-auths:/root/.cli-proxy-api

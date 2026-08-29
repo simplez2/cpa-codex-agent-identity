@@ -57,12 +57,12 @@
       <div class="import-layout">
         <div>
           <label for="batch-input">粘贴 Token、JSON、JSONL 或 TXT</label>
-          <textarea id="batch-input" rows="10" spellcheck="false" autocomplete="off" placeholder="每行一个 token，或粘贴 JSON 数组：&#10;[&#10;  {&quot;token&quot;:&quot;...&quot;,&quot;label&quot;:&quot;account-a&quot;},&#10;  {&quot;codex_access_token&quot;:&quot;...&quot;}&#10;]"></textarea>
+          <textarea id="batch-input" rows="10" spellcheck="false" autocomplete="off" placeholder="For multiple Team workspaces, use JSON/JSONL with account_id:&#10;[&#10;  {&quot;token&quot;:&quot;...&quot;,&quot;account_id&quot;:&quot;team-one&quot;},&#10;  {&quot;token&quot;:&quot;...&quot;,&quot;account_id&quot;:&quot;team-two&quot;}&#10;]"></textarea>
         </div>
         <div class="file-panel">
           <label for="batch-file">从文件读取</label>
           <input id="batch-file" type="file" accept=".txt,.json,.jsonl,text/plain,application/json">
-          <p id="file-meta" class="hint">支持 JSON 数组、JSONL 与逐行 TXT；文件内容不会上传到其他服务。</p>
+          <p id="file-meta" class="hint">支持 JSON 数组、JSONL 与逐行 TXT；文件内容不会上传到其他服务。 For the same PAT in multiple Team workspaces, set account_id on every JSON/JSONL item.</p>
           <label class="check-row" for="atomic-mode">
             <input id="atomic-mode" type="checkbox" checked>
             <span><strong>原子导入</strong><small>任一条验证或同步失败时回滚本批次已新增凭证。</small></span>

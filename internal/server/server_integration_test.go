@@ -535,6 +535,128 @@ func TestSidecarPersonalAccessTokenImportAndProxyUsesBearerWithout401Retry(t *te
 	}
 }
 
+func TestSidecarPersonalAccessTokenMultipleAccountsImportSeparatesIdentities(t *testing.T) {
+	const token = "at-multi-team-integration-token"
+	var upstreamAccounts []string
+	var mu sync.Mutex
+	services := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/v1/user-auth-credential/whoami":
+			if request.Header.Get("Authorization") != "Bearer "+token {
+				http.Error(writer, "bad token", http.StatusUnauthorized)
+				return
+			}
+			accountID := request.Header.Get("ChatGPT-Account-ID")
+			if accountID == "" {
+				accountID = "default-team"
+			}
+			_ = json.NewEncoder(writer).Encode(map[string]any{
+				"email":                      "same-user@example.invalid",
+				"chatgpt_user_id":            "same-user",
+				"chatgpt_account_id":         accountID,
+				"chatgpt_plan_type":          "team",
+				"chatgpt_account_is_fedramp": false,
+			})
+		case "/backend-api/codex/responses":
+			if request.Header.Get("Authorization") != "Bearer "+token {
+				http.Error(writer, "bad token", http.StatusUnauthorized)
+				return
+			}
+			accountID := request.Header.Get("ChatGPT-Account-ID")
+			if accountID != "team-one" && accountID != "team-two" {
+				http.Error(writer, "missing account", http.StatusForbidden)
+				return
+			}
+			mu.Lock()
+			upstreamAccounts = append(upstreamAccounts, accountID)
+			mu.Unlock()
+			_ = json.NewEncoder(writer).Encode(map[string]any{"account_id": accountID})
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer services.Close()
+
+	credentialStore, err := identitystore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager := identity.NewManagerWithPersonalAccessTokenAPI("", "", services.URL, services.Client())
+	upstreamURL, _ := url.Parse(services.URL)
+	handler, err := server.New(server.Config{
+		UpstreamOrigin:     upstreamURL,
+		ManagementKey:      "management-key-at-least-24-characters",
+		MaxReplayBodyBytes: 1 << 20,
+		OutboundTransport:  services.Client().Transport,
+	}, credentialStore, manager)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sidecar := httptest.NewServer(handler)
+	defer sidecar.Close()
+
+	importForAccount := func(accountID string) (string, string) {
+		body, _ := json.Marshal(map[string]string{
+			"codex_access_token": token,
+			"account_id":         accountID,
+		})
+		request, _ := http.NewRequest(http.MethodPost, sidecar.URL+"/admin/v1/identities/import", bytes.NewReader(body))
+		request.Header.Set("Authorization", "Bearer management-key-at-least-24-characters")
+		request.Header.Set("Content-Type", "application/json")
+		response, requestErr := http.DefaultClient.Do(request)
+		if requestErr != nil {
+			t.Fatal(requestErr)
+		}
+		defer response.Body.Close()
+		raw, _ := io.ReadAll(response.Body)
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("account %s import status=%d body=%s", accountID, response.StatusCode, raw)
+		}
+		var decoded struct {
+			ClientKey string `json:"client_api_key"`
+			Identity  struct {
+				ID        string `json:"id"`
+				AccountID string `json:"account_id"`
+			} `json:"identity"`
+		}
+		if json.Unmarshal(raw, &decoded) != nil || decoded.ClientKey == "" || decoded.Identity.ID == "" || decoded.Identity.AccountID != accountID {
+			t.Fatalf("invalid account %s import response: %s", accountID, raw)
+		}
+		if bytes.Contains(raw, []byte(token)) {
+			t.Fatalf("account %s import response leaked the token", accountID)
+		}
+		return decoded.ClientKey, decoded.Identity.ID
+	}
+
+	firstKey, firstID := importForAccount("team-one")
+	secondKey, secondID := importForAccount("team-two")
+	if firstID == secondID || len(credentialStore.List()) != 2 {
+		t.Fatalf("same PAT was not separated by account: first=%s second=%s stored=%d", firstID, secondID, len(credentialStore.List()))
+	}
+
+	call := func(clientKey string) {
+		request, _ := http.NewRequest(http.MethodPost, sidecar.URL+"/backend-api/codex/responses", strings.NewReader(`{"model":"gpt-test","input":"hello"}`))
+		request.Header.Set("Authorization", "Bearer "+clientKey)
+		response, requestErr := http.DefaultClient.Do(request)
+		if requestErr != nil {
+			t.Fatal(requestErr)
+		}
+		defer response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			raw, _ := io.ReadAll(response.Body)
+			t.Fatalf("proxy status=%d body=%s", response.StatusCode, raw)
+		}
+	}
+	call(firstKey)
+	call(secondKey)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(upstreamAccounts) != 2 || upstreamAccounts[0] != "team-one" || upstreamAccounts[1] != "team-two" {
+		t.Fatalf("proxy did not route to selected accounts: %#v", upstreamAccounts)
+	}
+}
+
 func TestManagementAPICallUsesAgentAssertionForQuotaAndForwardsOAuth(t *testing.T) {
 	fixture := newAgentFixture(t)
 	const managementKey = "management-key-at-least-24-characters"

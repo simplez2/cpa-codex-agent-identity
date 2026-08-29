@@ -9,10 +9,11 @@ import (
 func TestParseBatchCandidatesSupportsJSONJSONLAndText(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name   string
-		body   string
-		labels []string
-		tokens []string
+		name       string
+		body       string
+		labels     []string
+		tokens     []string
+		accountIDs []string
 	}{
 		{
 			name:   "json array",
@@ -49,7 +50,11 @@ func TestParseBatchCandidatesSupportsJSONJSONLAndText(t *testing.T) {
 				t.Fatalf("items=%d want=%d", len(items), len(test.tokens))
 			}
 			for index := range items {
-				if items[index].Index != index+1 || items[index].Token != test.tokens[index] || items[index].Label != test.labels[index] {
+				wantAccountID := ""
+				if index < len(test.accountIDs) {
+					wantAccountID = test.accountIDs[index]
+				}
+				if items[index].Index != index+1 || items[index].Token != test.tokens[index] || items[index].Label != test.labels[index] || items[index].AccountID != wantAccountID {
 					t.Fatalf("item[%d]=%#v", index, items[index])
 				}
 			}
@@ -72,5 +77,39 @@ func TestParseBatchCandidatesRejectsMissingTokenField(t *testing.T) {
 	t.Parallel()
 	if _, err := parseBatchCandidates([]byte(`{"label":"missing"}`)); err == nil {
 		t.Fatal("JSON item without a token was accepted")
+	}
+}
+
+func TestParseBatchCandidatesScopesSamePATByAccountID(t *testing.T) {
+	t.Parallel()
+	body := []byte(`[
+		{"token":"at-same","account_id":"team-one"},
+		{"token":"at-same","chatgpt_account_id":"team-two"},
+		{"token":"at-same","team_id":"team-three"},
+		{"token":"at-same","workspace_id":"team-four"}
+	]`)
+	items, err := parseBatchCandidates(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"team-one", "team-two", "team-three", "team-four"}
+	if len(items) != len(want) {
+		t.Fatalf("items=%d want=%d", len(items), len(want))
+	}
+	for index, accountID := range want {
+		if items[index].Token != "at-same" || items[index].AccountID != accountID {
+			t.Fatalf("item[%d]=%#v", index, items[index])
+		}
+	}
+}
+
+func TestParseBatchCandidatesInheritsWrapperAccountID(t *testing.T) {
+	t.Parallel()
+	items, err := parseBatchCandidates([]byte(`{"account_id":"team-wrapper","tokens":["at-one","at-two"]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 || items[0].AccountID != "team-wrapper" || items[1].AccountID != "team-wrapper" {
+		t.Fatalf("wrapper account ID was not inherited: %#v", items)
 	}
 }

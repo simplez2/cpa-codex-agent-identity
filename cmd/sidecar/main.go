@@ -232,14 +232,20 @@ func reconcileStoredCredentials(logger *log.Logger, store *identitystore.Store, 
 			continue
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		credential, err := manager.Inspect(ctx, stored.Token)
+		accountID := ""
+		if identity.IsPersonalAccessToken(stored.Token) && stored.AccountScoped {
+			accountID = stored.AccountID
+		}
+		credential, err := manager.InspectForAccount(ctx, stored.Token, accountID)
 		if err == nil {
 			_ = store.UpdateMetadata(stored.ID, identitystore.CredentialMetadata{
-				Kind:      string(credential.Kind),
-				Email:     credential.Email,
-				PlanType:  credential.PlanType,
-				ExpiresAt: credential.ExpiresAt,
-				FedRAMP:   credential.FedRAMP,
+				Kind:          string(credential.Kind),
+				Email:         credential.Email,
+				PlanType:      credential.PlanType,
+				AccountID:     credential.AccountID,
+				AccountScoped: stored.AccountScoped,
+				ExpiresAt:     credential.ExpiresAt,
+				FedRAMP:       credential.FedRAMP,
 			})
 			err = channels.UpsertIdentity(ctx, cpa.Credential{
 				IdentityID: stored.ID,
