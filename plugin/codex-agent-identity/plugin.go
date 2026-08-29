@@ -28,6 +28,8 @@ const (
 	pluginLogo             = "https://raw.githubusercontent.com/simplez2/cpa-codex-agent-identity/main/assets/logo.svg"
 	managementOpenPath     = "/codex-agent-identity/open"
 	managementOpenFullPath = "/v0/management" + managementOpenPath
+	resourceOpenFullPath   = "/v0/resource/plugins/" + pluginID + "/open"
+	legacyResourceOpenPath = "/v0/resource/plugins/" + pluginID + managementOpenPath
 	configSidecarURL       = "sidecar_url"
 	defaultSidecarURL      = "http://127.0.0.1:18787/agent-identity/"
 	defaultSidecarOrigin   = "http://127.0.0.1:18787"
@@ -38,7 +40,7 @@ const (
 )
 
 var (
-	pluginVersion = "0.3.4"
+	pluginVersion = "0.3.5"
 	stateMu       sync.RWMutex
 	state         = runtimeState{
 		sidecarURL:  defaultSidecarURL,
@@ -86,12 +88,20 @@ type registrationCapability struct {
 }
 
 type managementRegistration struct {
-	Routes []managementRoute `json:"routes,omitempty"`
+	Routes    []managementRoute `json:"routes,omitempty"`
+	Resources []resourceRoute   `json:"resources,omitempty"`
 }
 
 type managementRoute struct {
 	Method      string `json:"Method"`
 	Path        string `json:"Path"`
+	Menu        string `json:"Menu,omitempty"`
+	Description string `json:"Description"`
+}
+
+type resourceRoute struct {
+	Path        string `json:"Path"`
+	Menu        string `json:"Menu"`
 	Description string `json:"Description"`
 }
 
@@ -115,7 +125,7 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 	case pluginabi.MethodPluginRegister, pluginabi.MethodPluginReconfigure:
 		applyConfig(request)
 		return okEnvelope(registration{
-			SchemaVersion: pluginabi.SchemaVersion,
+			SchemaVersion: negotiatedSchemaVersion(request),
 			Metadata: pluginapi.Metadata{
 				Name:             pluginName,
 				Version:          pluginVersion,
@@ -131,11 +141,18 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 			Capabilities: registrationCapability{AuthProvider: true, ManagementAPI: true},
 		})
 	case pluginabi.MethodManagementRegister:
-		return okEnvelope(managementRegistration{Routes: []managementRoute{{
-			Method:      http.MethodGet,
-			Path:        managementOpenPath,
-			Description: "Authenticated Codex Agent Identity management UI. Requires sidecar " + minimumSidecarVersion + " or later.",
-		}}})
+		return okEnvelope(managementRegistration{
+			Routes: []managementRoute{{
+				Method:      http.MethodGet,
+				Path:        managementOpenPath,
+				Description: "Authenticated Codex Agent Identity management UI. Requires sidecar " + minimumSidecarVersion + " or later.",
+			}},
+			Resources: []resourceRoute{{
+				Path:        "/open",
+				Menu:        "Codex Agent Identity",
+				Description: "Open the Codex Agent Identity management page.",
+			}},
+		})
 	case pluginabi.MethodManagementHandle:
 		return okEnvelope(handleManagementRequest(request))
 	case pluginabi.MethodAuthIdentifier:
@@ -177,6 +194,20 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 	default:
 		return errorEnvelope("unknown_method", "unknown method: "+method), nil
 	}
+}
+
+func negotiatedSchemaVersion(request []byte) uint32 {
+	// Returning the host's requested schema keeps the plugin loadable by older
+	// CPA releases while retaining the newest contract when the host supports it.
+	// This plugin only relies on the v1 auth and management contracts.
+	var req lifecycleRequest
+	if err := json.Unmarshal(request, &req); err != nil || req.SchemaVersion == 0 {
+		return 1
+	}
+	if req.SchemaVersion > pluginabi.SchemaVersion {
+		return pluginabi.SchemaVersion
+	}
+	return req.SchemaVersion
 }
 
 func applyConfig(request []byte) {
@@ -298,7 +329,7 @@ func handleManagementRequest(raw []byte) managementResponse {
 	if method == "" || path == "" {
 		return managementErrorResponse(http.StatusBadRequest, "management method and path are required")
 	}
-	if path != managementOpenFullPath {
+	if path != managementOpenFullPath && path != resourceOpenFullPath && path != legacyResourceOpenPath {
 		return managementErrorResponse(http.StatusNotFound, "management route not found")
 	}
 	if method != http.MethodGet {

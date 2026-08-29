@@ -10,8 +10,8 @@ integration is split into three independently replaceable parts:
    `AuthData.Provider=codex` so those records use CPA's first-class Codex executor.
    Native `type=codex` OAuth files keep CPA's built-in parser, login, refresh, and
    executor path; the plugin never claims the native `codex` AuthProvider. It never
-   receives an original Agent Identity JWT or Personal Access Token and registers no
-   unauthenticated ResourceRoute.
+   receives an original Agent Identity JWT or Personal Access Token. It exposes the
+   authenticated Management wrapper plus one safe resource wrapper for CPAMC plugin pages.
 2. **Sidecar management plane**: validates single or batch imports, stores
    credentials encrypted, and transactionally adds, disables, refreshes, or
    removes native Codex auth files through CPA's management API.
@@ -34,7 +34,7 @@ it. Tests exercise it only through a local httptest upstream.
 
 The plugin targets CPA dynamic plugin ABI v1 and is compiled with Go 1.26.6 or
 later against the current verified source baseline, CLIProxyAPI v7.2.145. The
-published v0.3.4 assets use CLIProxyAPI v7.2.145. The CPA image remains an
+published v0.3.5 assets use CLIProxyAPI v7.2.145. The CPA image remains an
 environment variable and is never rebuilt or forked here.
 
 A CPA upgrade should follow this sequence:
@@ -43,7 +43,7 @@ A CPA upgrade should follow this sequence:
 2. Start it on isolated canary ports with independent config, auth, log, data,
    and plugin paths.
 3. Load the released plugin for the candidate architecture.
-4. Verify registration, legacy public-resource rejection, Management-key
+4. Verify registration, plugin-page resource availability, Management-key
    enforcement, the direct sidecar dashboard, import preview, auth-file
    synchronization, HTTP, SSE, WebSocket, image, quota, reset-credit, and proxy
    hot reload behavior.
@@ -78,19 +78,27 @@ browser -> TLS reverse proxy -> sidecar dashboard -> authenticated identity API
 
 Management-key client -> CPA /v0/management/codex-agent-identity/open
                               |
-                              +-> optional HTML wrapper; no ResourceRoute
+                              +-> authenticated HTML wrapper
+
+CPAMC plugin page -> CPA /v0/resource/plugins/codex-agent-identity/open
+                              |
+                              +-> same wrapper; no secret in resource response
 
 client -> CPA stock executor -> sidecar data plane -> fixed OpenAI origins
                                      |
                                      +-> encrypted owner-only identity store
 ~~~
 
-CPA intentionally leaves `/v0/resource/plugins/...` unauthenticated. The plugin
-therefore returns no resource registrations. It also omits `Menu` from its
-ManagementRoute because current CPA compatibility behavior converts a GET
-ManagementRoute with `Menu` into an unauthenticated ResourceRoute. Current
-CPAMC releases consequently do not display this plugin as an iframe menu; the
-sidecar dashboard remains directly available at `/agent-identity/`.
+CPA intentionally leaves `/v0/resource/plugins/...` outside Management-key
+authentication because CPAMC loads these resources inside an iframe. The plugin
+therefore registers a resource wrapper that contains no Management key, original
+credential, or host callback. The resource route only embeds the sidecar dashboard;
+listing, previewing, importing, enabling, disabling, refreshing, and deleting
+identities still require the sidecar's own Bearer management password.
+
+During registration, the plugin echoes the CPA host's requested schema version,
+clamped to the SDK maximum. This keeps the dynamic library loadable by older CPA
+builds that negotiate schema v1 while retaining the current contract when available.
 
 CPA plugins are trusted in-process code. Anyone who can replace the .so can
 execute with CPA's privileges, so archives are checksummed and the plugin

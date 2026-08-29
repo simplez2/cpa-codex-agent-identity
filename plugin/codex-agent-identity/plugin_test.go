@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -180,7 +181,34 @@ func TestRegisterDeclaresAuthAndManagementCapabilities(t *testing.T) {
 	}
 }
 
-func TestManagementUIRegistersAuthenticatedRouteOnly(t *testing.T) {
+func TestRegisterNegotiatesSchemaVersion(t *testing.T) {
+	tests := []struct {
+		name  string
+		input []byte
+		want  uint32
+	}{
+		{name: "missing schema", input: []byte(`{}`), want: 1},
+		{name: "schema one", input: []byte(`{"schema_version":1}`), want: 1},
+		{name: "current schema", input: []byte(fmt.Sprintf(`{"schema_version":%d}`, pluginabi.SchemaVersion)), want: pluginabi.SchemaVersion},
+		{name: "future schema", input: []byte(fmt.Sprintf(`{"schema_version":%d}`, pluginabi.SchemaVersion+1)), want: pluginabi.SchemaVersion},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			raw, err := handleMethod(pluginabi.MethodPluginRegister, test.input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var result registration
+			decodePluginResult(t, raw, &result)
+			if result.SchemaVersion != test.want {
+				t.Fatalf("schema_version = %d, want %d", result.SchemaVersion, test.want)
+			}
+		})
+	}
+}
+
+func TestManagementUIRegistersAuthenticatedRouteAndResource(t *testing.T) {
 	configurePluginForTest(t, "sidecar_url: /agent-identity/")
 	raw, err := handleMethod(pluginabi.MethodManagementRegister, nil)
 	if err != nil {
@@ -195,49 +223,58 @@ func TestManagementUIRegistersAuthenticatedRouteOnly(t *testing.T) {
 	if route.Method != http.MethodGet || route.Path != managementOpenPath {
 		t.Fatalf("unexpected management route: %#v", route)
 	}
-	if strings.Contains(string(raw), `"resources"`) || strings.Contains(string(raw), `"Menu"`) || strings.Contains(string(raw), `/v0/resource/plugins/`) {
-		t.Fatalf("registration exposed an unauthenticated resource route: %s", raw)
+	if len(registered.Resources) != 1 {
+		t.Fatalf("unexpected resources: %#v", registered.Resources)
+	}
+	resource := registered.Resources[0]
+	if resource.Path != "/open" || resource.Menu != pluginName || resource.Description == "" {
+		t.Fatalf("unexpected resource route: %#v", resource)
+	}
+	if !strings.Contains(string(raw), `"resources"`) || !strings.Contains(string(raw), pluginName) {
+		t.Fatalf("registration did not advertise the CPAMC resource menu: %s", raw)
 	}
 
-	raw, err = handleMethod(pluginabi.MethodManagementHandle, managementPayload(t, http.MethodGet, managementOpenFullPath))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var response managementResponse
-	decodePluginResult(t, raw, &response)
-	body := string(response.Body)
-	if response.StatusCode != http.StatusOK || !strings.Contains(body, "/agent-identity/?embed=cpamc") || !strings.Contains(body, readyMessageType) {
-		t.Fatalf("unexpected management response: status=%d body=%s", response.StatusCode, body)
-	}
-	for _, expected := range []string{themeMessageType, "cli-proxy-theme", "--bg-primary", "--primary-color", "searchParams.set('theme'"} {
-		if !strings.Contains(body, expected) {
-			t.Fatalf("management response is missing CPA theme integration %q", expected)
+	for _, path := range []string{managementOpenFullPath, resourceOpenFullPath} {
+		raw, err = handleMethod(pluginabi.MethodManagementHandle, managementPayload(t, http.MethodGet, path))
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	for _, legacyColor := range []string{"#2563eb", "#3971f2", "#5b8cff", "#070b12", "#060910", "--blue"} {
-		if strings.Contains(strings.ToLower(body), legacyColor) {
-			t.Fatalf("management response still contains legacy color %q", legacyColor)
+		var response managementResponse
+		decodePluginResult(t, raw, &response)
+		body := string(response.Body)
+		if response.StatusCode != http.StatusOK || !strings.Contains(body, "/agent-identity/?embed=cpamc") || !strings.Contains(body, readyMessageType) {
+			t.Fatalf("unexpected management response for %s: status=%d body=%s", path, response.StatusCode, body)
 		}
-	}
-	if !strings.Contains(response.Headers.Get("Content-Security-Policy"), "frame-src 'self'") {
-		t.Fatalf("unexpected CSP: %s", response.Headers.Get("Content-Security-Policy"))
-	}
-	if !strings.Contains(response.Headers.Get("Content-Security-Policy"), "frame-ancestors 'self'") || response.Headers.Get("X-Frame-Options") != "SAMEORIGIN" {
-		t.Fatalf("management response can be framed cross-origin: headers=%v", response.Headers)
+		for _, expected := range []string{themeMessageType, "cli-proxy-theme", "--bg-primary", "--primary-color", "searchParams.set('theme'"} {
+			if !strings.Contains(body, expected) {
+				t.Fatalf("management response is missing CPA theme integration %q", expected)
+			}
+		}
+		for _, legacyColor := range []string{"#2563eb", "#3971f2", "#5b8cff", "#070b12", "#060910", "--blue"} {
+			if strings.Contains(strings.ToLower(body), legacyColor) {
+				t.Fatalf("management response still contains legacy color %q", legacyColor)
+			}
+		}
+		if !strings.Contains(response.Headers.Get("Content-Security-Policy"), "frame-src 'self'") {
+			t.Fatalf("unexpected CSP: %s", response.Headers.Get("Content-Security-Policy"))
+		}
+		if !strings.Contains(response.Headers.Get("Content-Security-Policy"), "frame-ancestors 'self'") || response.Headers.Get("X-Frame-Options") != "SAMEORIGIN" {
+			t.Fatalf("management response can be framed cross-origin: headers=%v", response.Headers)
+		}
 	}
 }
 
-func TestManagementHandlerRejectsPublicResourceAndWrongMethod(t *testing.T) {
+func TestManagementHandlerRejectsUnknownResourceAndWrongMethod(t *testing.T) {
 	configurePluginForTest(t, "sidecar_url: /agent-identity/")
 
-	raw, err := handleMethod(pluginabi.MethodManagementHandle, managementPayload(t, http.MethodGet, "/v0/resource/plugins/codex-agent-identity/open"))
+	raw, err := handleMethod(pluginabi.MethodManagementHandle, managementPayload(t, http.MethodGet, "/v0/resource/plugins/codex-agent-identity/unknown"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var response managementResponse
 	decodePluginResult(t, raw, &response)
 	if response.StatusCode != http.StatusNotFound || strings.Contains(string(response.Body), "/agent-identity/") {
-		t.Fatalf("public resource path was not rejected: status=%d body=%s", response.StatusCode, response.Body)
+		t.Fatalf("unknown resource path was not rejected: status=%d body=%s", response.StatusCode, response.Body)
 	}
 
 	raw, err = handleMethod(pluginabi.MethodManagementHandle, managementPayload(t, http.MethodPost, managementOpenFullPath))

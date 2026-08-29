@@ -1,7 +1,7 @@
 # CPA Codex Agent Identity 运行逻辑与安全边界
 
-本文按当前源码说明插件、sidecar、CPA auth 文件、批量导入、代理热加载和 reset-credit 的真实运行路径。当前正式 Release 是 v0.3.4，本文所述行为与该版本一致。
-Current release baseline: CLIProxyAPI v7.2.145; v0.3.4 plugin assets are built against the same verified SDK baseline.
+本文按当前源码说明插件、sidecar、CPA auth 文件、批量导入、代理热加载和 reset-credit 的真实运行路径。当前正式 Release 是 v0.3.5，本文所述行为与该版本一致。
+Current release baseline: CLIProxyAPI v7.2.145; v0.3.5 plugin assets are built against the same verified SDK baseline.
 
 ## 1. 三个可独立替换的平面
 
@@ -22,7 +22,7 @@ flowchart LR
 - 只识别 `type: codex-agent-identity` 且带有 `auth_mode: agent_identity_sidecar` 的 sidecar auth 文件；
 - 把随机 cais_ key 和内部 base URL 放入 CPA auth 的 OAuth 兼容字段，并返回 `Provider: codex`，从而进入 CPA 原生 Codex executor；
 - 注册受 CPA Management key 保护的 GET /v0/management/codex-agent-identity/open；
-- 不注册任何 /v0/resource/plugins/... 动态路由。
+- 注册 `/v0/resource/plugins/codex-agent-identity/open` 作为 CPAMC plugin-pages 的安全 wrapper；不在其中放入 secret 或特权 API。
 
 ### Sidecar management plane
 
@@ -152,10 +152,11 @@ The default browser URL is `http://127.0.0.1:18787/agent-identity/`; blank, `/`,
 
 管理密码只保存在当前标签页 sessionStorage。页面用 DOM text node 渲染不可信内容，不把 token 或 opaque credit ID插入 DOM。
 
-### 为什么没有侧边栏插件页
+### plugin-pages 如何加载
 
-CPA 当前的 /v0/resource/plugins/... 路由族不受 Management key 保护，只适合被动静态资源。因此项目明确要求旧 /v0/resource/plugins/codex-agent-identity/open 返回 404。可选 overlay 只在已安装插件卡片增加按钮，打开独立认证的 /agent-identity/，不恢复 resource route，不传 Management key。
+CPA 当前的 `/v0/resource/plugins/...` 路由族不经过 Management key 认证，但 CPAMC 会把它作为插件页面 iframe 的资源入口。v0.3.5 注册 `/v0/resource/plugins/codex-agent-identity/open`，返回不包含 Management key、token 或宿主回调的 HTML wrapper；wrapper 只嵌入 `/agent-identity/` sidecar 页面。
 
+资源入口不等于身份操作免认证：sidecar 的列表、预检、导入、启用、停用、刷新和删除仍必须通过自己的 Bearer 管理密码。若 CPAMC 仍不显示菜单，先确认 CPA 与插件都启用并重启 CPA；旧版 CPAMC 可直接使用 `/agent-identity/` 或可选 overlay 按钮。
 ## 8. Proxy 热加载
 
 sidecar 启动时先读取 CPA 当前 proxy-url，再开始 identity inspection。之后按 CPA_PROXY_CONFIG_POLL_INTERVAL 轮询：
@@ -204,5 +205,5 @@ quota compatibility policy 只允许明确的方法和固定路径。reset-credi
 - Agent Identity 401 最多重建 task 并重试一次。
 - 导入报告和 UI 不回显 secret。
 - proxy 变化对新请求热生效，不需要重启 CPA 或 sidecar。
-- resource route 保持无动态状态、无特权 UI、无宿主回调。
+- resource wrapper 保持无 secret、无宿主回调；敏感操作仍在 sidecar Bearer 认证之后执行。
 - reset-credit consume 不得被任何自动探针触发。
