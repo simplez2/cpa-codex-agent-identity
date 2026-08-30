@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -524,14 +525,38 @@ func TestApplyConfigKeepsCustomSidecarOriginForDerivedAPI(t *testing.T) {
 }
 
 func TestLegacyLocalWrapperPrefersSameOriginCandidate(t *testing.T) {
-	body := managementHTML(legacyLocalSidecarURL, legacyLocalSidecarURL+"?embed=cpamc")
-	if !strings.Contains(body, "const legacyLocalURL=") {
-		t.Fatalf("legacy local URL constant is missing from wrapper: %s", body)
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is required to execute the generated browser candidate logic")
 	}
-	sameOrigin := strings.Index(body, "addCandidate(sameOrigin.href)")
-	configured := strings.Index(body, "addCandidate(frame.dataset.src)")
-	if sameOrigin < 0 || configured < 0 || sameOrigin > configured {
-		t.Fatalf("legacy local wrapper does not prefer same-origin candidate: sameOrigin=%d configured=%d", sameOrigin, configured)
+	body := managementHTML(legacyLocalSidecarURL, legacyLocalSidecarURL+"?embed=cpamc")
+	start := strings.Index(body, "const candidateURLs=[];")
+	end := strings.Index(body, "function currentCandidate()")
+	if start < 0 || end <= start {
+		t.Fatalf("generated wrapper candidate logic is missing")
+	}
+	snippet := body[start:end]
+	harness := fmt.Sprintf(`
+const window = {location: {href: "https://cpa.example.test/v0/management/codex-agent-identity/open"}};
+const frame = {dataset: {src: %q}};
+const localDefaultURL = %q;
+const legacyLocalURL = %q;
+const sameOriginPath = %q;
+%s
+process.stdout.write(JSON.stringify(candidateURLs));
+`, legacyLocalSidecarURL+"?embed=cpamc", defaultSidecarURL, legacyLocalSidecarURL, "/agent-identity/", snippet)
+	output, err := exec.Command(node, "-e", harness).CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated browser candidate logic failed: %v\n%s", err, output)
+	}
+	var candidates []string
+	if err := json.Unmarshal(output, &candidates); err != nil {
+		t.Fatalf("decode generated candidate list: %v\n%s", err, output)
+	}
+	wantFirst := "https://cpa.example.test/agent-identity/?embed=cpamc"
+	wantSecond := legacyLocalSidecarURL + "?embed=cpamc"
+	if len(candidates) != 2 || candidates[0] != wantFirst || candidates[1] != wantSecond {
+		t.Fatalf("legacy URL candidate order = %#v, want [%q %q]", candidates, wantFirst, wantSecond)
 	}
 }
 
@@ -608,6 +633,37 @@ func TestManagementAPICallBridgeStripsTransportHeaders(t *testing.T) {
 		if response.Headers.Get(name) != "" {
 			t.Fatalf("response header %s crossed management boundary: %v", name, response.Headers)
 		}
+	}
+}
+
+func TestSidecarHTTPClientRejectsRedirects(t *testing.T) {
+	targetHit := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/target" {
+			targetHit = true
+			if got := r.Header.Get("Authorization"); got != "" {
+				t.Errorf("redirect target received Authorization: %q", got)
+			}
+			return
+		}
+		http.Redirect(w, r, "/target", http.StatusFound)
+	}))
+	defer server.Close()
+
+	request, err := http.NewRequest(http.MethodGet, server.URL+"/start", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer unit-test-sentinel")
+	response, err := newSidecarHTTPClient().Do(request)
+	if response != nil {
+		response.Body.Close()
+	}
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "redirect") {
+		t.Fatalf("redirect was not rejected: response=%v err=%v", response, err)
+	}
+	if targetHit {
+		t.Fatal("redirect target was contacted")
 	}
 }
 
