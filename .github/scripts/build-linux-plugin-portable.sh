@@ -65,7 +65,7 @@ docker run --rm \
   -v "${repo_root}:/src" \
   -w /src \
   "${image}" \
-  /bin/bash -lc '
+  -lc '
     set -euo pipefail
     export PATH="/opt/python/cp311-cp311/bin:${PATH}"
     command -v gcc >/dev/null
