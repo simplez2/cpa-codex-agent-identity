@@ -56,7 +56,7 @@ esac
 # manylinux images install a wrapper entrypoint; override it so the build command runs.
 docker run --rm \
   --platform="${platform}" \
-  --entrypoint=/bin/bash \
+  --entrypoint /bin/bash \
   -e "PLUGIN_VERSION=${version}" \
   -e "PLUGIN_GOARCH=${goarch}" \
   -e "GO_VERSION=${go_version}" \
@@ -65,7 +65,7 @@ docker run --rm \
   -v "${repo_root}:/src" \
   -w /src \
   "${image}" \
-  -lc '
+  -c '
     set -euo pipefail
     export PATH="/opt/python/cp311-cp311/bin:${PATH}"
     command -v gcc >/dev/null
