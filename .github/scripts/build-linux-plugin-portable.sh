@@ -53,8 +53,10 @@ case "${go_version}:${goarch}" in
     ;;
 esac
 
+# manylinux images install a wrapper entrypoint; override it so the build command runs.
 docker run --rm \
   --platform="${platform}" \
+  --entrypoint=/bin/bash \
   -e "PLUGIN_VERSION=${version}" \
   -e "PLUGIN_GOARCH=${goarch}" \
   -e "GO_VERSION=${go_version}" \
