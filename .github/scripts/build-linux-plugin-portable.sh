@@ -53,10 +53,10 @@ case "${go_version}:${goarch}" in
     ;;
 esac
 
-# manylinux images install a wrapper entrypoint; override it so the build command runs.
+# Clear the manylinux wrapper entrypoint and invoke Bash explicitly.
 docker run --rm \
   --platform="${platform}" \
-  --entrypoint /bin/bash \
+  --entrypoint="" \
   -e "PLUGIN_VERSION=${version}" \
   -e "PLUGIN_GOARCH=${goarch}" \
   -e "GO_VERSION=${go_version}" \
@@ -65,7 +65,7 @@ docker run --rm \
   -v "${repo_root}:/src" \
   -w /src \
   "${image}" \
-  -c '
+  /bin/bash -c '
     set -euo pipefail
     export PATH="/opt/python/cp311-cp311/bin:${PATH}"
     command -v gcc >/dev/null
