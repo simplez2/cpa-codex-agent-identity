@@ -117,7 +117,7 @@ func TestManagerUpsertStatusAndRemoveUsesNativeAuthFiles(t *testing.T) {
 	if err != nil || states[credential.IdentityID].Disabled {
 		t.Fatalf("disable state did not update: %#v err=%v", states, err)
 	}
-	resolvedID, managed, err := manager.IdentityIDForAuthIndex(context.Background(), "index-codex-d86f70b3-user@example.invalid-k12.json")
+	resolvedID, managed, err := manager.IdentityIDForAuthIndex(context.Background(), "index-codex-d86f70b3-user@example.invalid-k12-agent-identity.json")
 	if err != nil || !managed || resolvedID != credential.IdentityID {
 		t.Fatalf("resolved_id=%q managed=%v err=%v", resolvedID, managed, err)
 	}
@@ -126,7 +126,7 @@ func TestManagerUpsertStatusAndRemoveUsesNativeAuthFiles(t *testing.T) {
 	}
 
 	mu.Lock()
-	raw := append([]byte(nil), files["codex-d86f70b3-user@example.invalid-k12.json"]...)
+	raw := append([]byte(nil), files["codex-d86f70b3-user@example.invalid-k12-agent-identity.json"]...)
 	if _, legacyExists := files["codex-agent-identity-aabbccddeeff.json"]; legacyExists {
 		t.Fatal("legacy hash-named auth file was not migrated")
 	}
@@ -150,7 +150,7 @@ func TestManagerUpsertStatusAndRemoveUsesNativeAuthFiles(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if _, exists := files["codex-d86f70b3-user@example.invalid-k12.json"]; exists {
+	if _, exists := files["codex-d86f70b3-user@example.invalid-k12-agent-identity.json"]; exists {
 		t.Fatal("managed auth file still exists")
 	}
 	if _, exists := files["existing-codex.json"]; !exists {
@@ -264,7 +264,7 @@ func TestManagerRefusesUnmanagedCollision(t *testing.T) {
 	service := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/v0/management/auth-files":
-			_ = json.NewEncoder(writer).Encode(map[string]any{"files": []map[string]any{{"name": "codex-user@example.invalid-k12.json"}}})
+			_ = json.NewEncoder(writer).Encode(map[string]any{"files": []map[string]any{{"name": "codex-user@example.invalid-k12-agent-identity.json"}}})
 		case "/v0/management/auth-files/download":
 			_, _ = writer.Write([]byte(`{"type":"codex","access_token":"user-owned"}`))
 		default:
@@ -279,6 +279,109 @@ func TestManagerRefusesUnmanagedCollision(t *testing.T) {
 	}
 }
 
+func TestManagerAllowsNativeOAuthWithSameTeamAndEmail(t *testing.T) {
+	t.Parallel()
+	const nativeName = "codex-58732bd9-user@example.invalid-team.json"
+	files := map[string][]byte{
+		nativeName: []byte(`{"type":"codex","access_token":"native-oauth"}`),
+	}
+	var mu sync.Mutex
+	service := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		name := request.URL.Query().Get("name")
+		switch request.URL.Path {
+		case "/v0/management/auth-files":
+			switch request.Method {
+			case http.MethodGet:
+				items := make([]map[string]any, 0, len(files))
+				for fileName := range files {
+					items = append(items, map[string]any{"name": fileName, "auth_index": "index-" + fileName})
+				}
+				_ = json.NewEncoder(writer).Encode(map[string]any{"files": items})
+			case http.MethodPost:
+				files[name], _ = io.ReadAll(request.Body)
+				_ = json.NewEncoder(writer).Encode(map[string]string{"status": "ok"})
+			case http.MethodDelete:
+				delete(files, name)
+				_ = json.NewEncoder(writer).Encode(map[string]string{"status": "ok"})
+			default:
+				http.Error(writer, "method", http.StatusMethodNotAllowed)
+			}
+		case "/v0/management/auth-files/download":
+			data, ok := files[name]
+			if !ok {
+				http.NotFound(writer, request)
+				return
+			}
+			_, _ = writer.Write(data)
+		case "/v0/management/auth-files/fields":
+			var patch map[string]any
+			if request.Method != http.MethodPatch || json.NewDecoder(request.Body).Decode(&patch) != nil {
+				http.Error(writer, "bad patch", http.StatusBadRequest)
+				return
+			}
+			if patchedName, ok := patch["name"].(string); ok {
+				name = patchedName
+			}
+			data, ok := files[name]
+			if !ok {
+				http.NotFound(writer, request)
+				return
+			}
+			var payload map[string]any
+			if json.Unmarshal(data, &payload) != nil {
+				http.Error(writer, "bad json", http.StatusBadRequest)
+				return
+			}
+			for key, value := range patch {
+				if key != "name" {
+					payload[key] = value
+				}
+			}
+			files[name], _ = json.Marshal(payload)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer service.Close()
+
+	manager, err := NewManager(service.URL+"/v0/management", "management-key", "http://sidecar:8787/backend-api/codex", service.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	credential := Credential{
+		IdentityID: "agent-aabb0011",
+		ClientKey:  "cais_secret",
+		AccountID:  "workspace-one",
+		Email:      "user@example.invalid",
+		PlanType:   "team",
+	}
+	managedName, err := authFileName(credential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if managedName == nativeName {
+		t.Fatalf("managed filename still collides with native OAuth filename: %q", managedName)
+	}
+	if err = manager.UpsertIdentity(context.Background(), credential); err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if string(files[nativeName]) != `{"type":"codex","access_token":"native-oauth"}` {
+		t.Fatal("native OAuth credential was changed")
+	}
+	managedRaw, ok := files[managedName]
+	if !ok {
+		t.Fatalf("sidecar-managed file %q was not created", managedName)
+	}
+	if !isManagedCredential(managedRaw, credential.IdentityID) {
+		t.Fatalf("created file is not sidecar-managed: %s", managedRaw)
+	}
+}
+
 func TestAuthFileNameRejectsUnsafeIdentity(t *testing.T) {
 	t.Parallel()
 	for _, value := range []string{"", "agent-", "agent-../../x", "other-aabb"} {
@@ -287,7 +390,7 @@ func TestAuthFileNameRejectsUnsafeIdentity(t *testing.T) {
 		}
 	}
 	name, err := authFileName(Credential{IdentityID: "agent-aabb0011", Email: "User+Test@example.invalid", PlanType: "K12"})
-	if err != nil || name != "codex-User+Test@example.invalid-k12.json" {
+	if err != nil || name != "codex-User+Test@example.invalid-k12-agent-identity.json" {
 		t.Fatalf("name=%q err=%v", name, err)
 	}
 	legacy, err := authFileName(Credential{IdentityID: "agent-aabb0011"})
@@ -319,10 +422,10 @@ func TestAuthFileNameSeparatesSameEmailTeamWorkspaces(t *testing.T) {
 	if first == second {
 		t.Fatalf("same-email Team workspaces collided: %q", first)
 	}
-	if first != "codex-df52114f-user@example.invalid-team.json" {
+	if first != "codex-df52114f-user@example.invalid-team-agent-identity.json" {
 		t.Fatalf("unexpected first workspace name: %q", first)
 	}
-	if second != "codex-831ad5d8-user@example.invalid-team.json" {
+	if second != "codex-831ad5d8-user@example.invalid-team-agent-identity.json" {
 		t.Fatalf("unexpected second workspace name: %q", second)
 	}
 }

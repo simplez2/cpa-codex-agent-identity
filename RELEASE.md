@@ -34,7 +34,9 @@ make verify-published-release
    `pluginVersion`, and the `Unreleased` section in `CHANGELOG.md`. Keep
    `registry.json` and `SIDECAR_IMAGE` at the latest published version.
 2. **Validate locally.** Run `make verify-release-state`, then `make test`,
-   `make race`, `make vet`, and the Linux plugin builds for amd64 and arm64.
+   `make race`, `make vet`, and the portable Linux plugin builds for amd64 and
+   arm64. Portable builds require Docker and use the manylinux2014 GLIBC 2.17
+   baseline; never publish a Linux `.so` built on a modern Ubuntu host directly.
 3. **Create the tag.** Commit the source changes and create exactly one tag
    named `v<VERSION>`. Do not update `registry.json` before this tag's assets
    exist.
@@ -72,6 +74,8 @@ make verify-published-release
   be positive.
 - The registry and sidecar image may not be ahead of the source line.
 - Published metadata is not silently replaced by a development build.
+- Linux plugin artifacts must remain compatible with GLIBC 2.17 and export the
+  complete CPA dynamic-plugin ABI entrypoint set.
 
 ## Do not
 

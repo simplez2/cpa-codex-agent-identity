@@ -40,9 +40,9 @@ const (
 	legacyResourceOpenPath    = "/v0/resource/plugins/" + pluginID + managementOpenPath
 	configSidecarURL          = "sidecar_url"
 	configSidecarAPIURL       = "sidecar_api_url"
-	defaultSidecarURL         = "http://127.0.0.1:18787/agent-identity/"
-	defaultSidecarOrigin      = "http://127.0.0.1:18787"
-	defaultSidecarAPIURL      = defaultSidecarOrigin + sidecarAPICallPath
+	defaultSidecarURL         = "/agent-identity/"
+	defaultSidecarOrigin      = "'self'"
+	defaultSidecarAPIURL      = ""
 	defaultSidecarHTTPPort    = 8787
 	defaultSidecarEmbedURL    = defaultSidecarURL + "?embed=cpamc"
 	maxForwardBodyBytes       = 1 << 20
@@ -151,7 +151,7 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 				GitHubRepository: pluginRepository,
 				Logo:             pluginLogo,
 				// Sidecar endpoints are deliberately not exposed as plugin-store fields.
-				// A fresh installation uses the local/reverse-proxy defaults; the legacy
+				// A fresh installation uses the same-origin reverse-proxy default; the legacy
 				// sidecar_url and sidecar_api_url YAML keys remain accepted for upgrades.
 				ConfigFields: nil,
 			},
@@ -581,6 +581,19 @@ func managementErrorResponse(status int, message string) managementResponse {
 	}
 }
 
+func managementFrameSources(source string) string {
+	source = strings.TrimSpace(source)
+	if source == "" || source == "'self'" {
+		return "'self'"
+	}
+	if strings.Contains(source, "'self'") {
+		return source
+	}
+	// Keep the local sidecar origin as a compatibility fallback while also
+	// allowing the same-origin reverse-proxy path used by remote CPA hosts.
+	return "'self' " + source
+}
+
 func currentManagementResponse() managementResponse {
 	current := currentRuntimeState()
 	if current.configError != "" {
@@ -597,7 +610,7 @@ func currentManagementResponse() managementResponse {
 			Body: []byte(configFallbackHTML(current.configError)),
 		}
 	}
-	csp := "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-src " + current.frameSource + "; base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
+	csp := "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-src " + managementFrameSources(current.frameSource) + "; base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
 	return managementResponse{
 		StatusCode: http.StatusOK,
 		Headers: http.Header{
@@ -615,6 +628,8 @@ func currentManagementResponse() managementResponse {
 func managementHTML(sidecarURL, embedURL string) string {
 	escapedURL := html.EscapeString(embedURL)
 	jsURL, _ := json.Marshal(sidecarURL)
+	localDefaultURL, _ := json.Marshal(defaultSidecarURL)
+	sameOriginPath, _ := json.Marshal("/agent-identity/")
 	template := `<!doctype html>
 <html lang="zh-CN" data-theme="white">
 <head>
@@ -654,6 +669,8 @@ func managementHTML(sidecarURL, embedURL string) string {
     const themeType='__THEME_TYPE__';
     const readyType='__READY_TYPE__';
     const rootURL=__ROOT_URL__;
+    const localDefaultURL=__LOCAL_DEFAULT_URL__;
+    const sameOriginPath=__SAME_ORIGIN_PATH__;
     const root=document.documentElement;
     const frame=document.getElementById('identityFrame');
     const retry=document.getElementById('retry');
@@ -661,6 +678,7 @@ func managementHTML(sidecarURL, embedURL string) string {
     const media=window.matchMedia('(prefers-color-scheme: dark)');
     const variableNames=['--bg-primary','--bg-secondary','--bg-tertiary','--bg-hover','--bg-quinary','--floating-surface','--floating-shadow','--text-primary','--text-secondary','--text-tertiary','--text-quaternary','--text-muted','--border-color','--border-secondary','--border-primary','--border-hover','--primary-color','--primary-hover','--primary-active','--primary-contrast','--success-color','--quota-medium-color','--warning-color','--error-color','--danger-color','--info-color','--warning-bg','--warning-border','--warning-text','--success-badge-bg','--success-badge-text','--success-badge-border','--failure-badge-bg','--failure-badge-text','--failure-badge-border','--count-badge-bg','--count-badge-text','--shadow','--shadow-lg','--primary-8','--primary-10','--primary-30','--amber-color','--amber-text','--amber-10','--amber-30','--destructive-color','--destructive-10','--destructive-30','--muted-bg','--muted-foreground','--accent-bg','--glass-bg','--glass-bg-secondary','--glass-border'];
     let timer=0;
+    let candidateIndex=0;
     let childOrigin='*';
     let currentTheme='white';
     let parentRoot=null;
@@ -749,15 +767,43 @@ func managementHTML(sidecarURL, embedURL string) string {
       value.searchParams.set('theme',normalizeTheme(theme));
       return value;
     }
+    const candidateURLs=[];
+    function addCandidate(raw){
+      try{
+        const value=new URL(raw,window.location.href);
+        if(!candidateURLs.includes(value.href))candidateURLs.push(value.href);
+      }catch(_){}
+    }
+    try{
+      const configured=new URL(frame.dataset.src,window.location.href);
+      const localDefault=new URL(localDefaultURL,window.location.href);
+      if(configured.origin===localDefault.origin&&configured.pathname===localDefault.pathname){
+        const sameOrigin=new URL(sameOriginPath,window.location.href);
+        sameOrigin.searchParams.set('embed','cpamc');
+        addCandidate(sameOrigin.href);
+      }
+    }catch(_){}
+    addCandidate(frame.dataset.src);
+    function currentCandidate(){return candidateURLs[candidateIndex]||frame.dataset.src}
     function setFrameSource(){
-      const value=themedURL(frame.dataset.src,currentTheme);
+      const value=themedURL(currentCandidate(),currentTheme);
       childOrigin=value.origin&&value.origin!=='null'?value.origin:'*';
       frame.src=value.href;
     }
     function connecting(){root.removeAttribute('data-ready');root.removeAttribute('data-failed')}
     function ready(){clearTimeout(timer);root.removeAttribute('data-failed');root.setAttribute('data-ready','true');postTheme()}
     function failed(){root.removeAttribute('data-ready');root.setAttribute('data-failed','true')}
-    function start(){clearTimeout(timer);timer=setTimeout(failed,10000)}
+    function tryNextCandidate(){
+      if(candidateIndex+1<candidateURLs.length){
+        candidateIndex+=1;
+        connecting();
+        setFrameSource();
+        start();
+        return;
+      }
+      failed();
+    }
+    function start(){clearTimeout(timer);timer=setTimeout(tryNextCandidate,5000)}
 
     parentRoot=accessibleParentRoot();
     if(parentRoot&&typeof MutationObserver==='function'){
@@ -776,8 +822,8 @@ func managementHTML(sidecarURL, embedURL string) string {
     const mediaChanged=function(){if(!inheritedTheme)syncTheme()};
     if(typeof media.addEventListener==='function')media.addEventListener('change',mediaChanged);else if(typeof media.addListener==='function')media.addListener(mediaChanged);
     frame.addEventListener('load',postTheme);
-    retry.addEventListener('click',function(){connecting();applyShellTheme(resolveTheme(),resolveVariables());setFrameSource();start()});
-    open.addEventListener('click',function(){const value=themedURL(rootURL,currentTheme);window.open(value.href,'_blank','noopener')});
+    retry.addEventListener('click',function(){candidateIndex=0;connecting();applyShellTheme(resolveTheme(),resolveVariables());setFrameSource();start()});
+    open.addEventListener('click',function(){const value=themedURL(currentCandidate(),currentTheme);window.open(value.href,'_blank','noopener')});
     applyShellTheme(resolveTheme(),resolveVariables());
     setFrameSource();
     start();
@@ -789,6 +835,8 @@ func managementHTML(sidecarURL, embedURL string) string {
 		"__EMBED_URL__", escapedURL,
 		"__MIN_VERSION__", minimumSidecarVersion,
 		"__ROOT_URL__", string(jsURL),
+		"__LOCAL_DEFAULT_URL__", string(localDefaultURL),
+		"__SAME_ORIGIN_PATH__", string(sameOriginPath),
 		"__READY_TYPE__", readyMessageType,
 		"__THEME_TYPE__", themeMessageType,
 	).Replace(template)

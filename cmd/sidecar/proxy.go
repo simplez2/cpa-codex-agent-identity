@@ -23,6 +23,17 @@ const (
 	maxCPAConfigResponseBytes      = 1 << 20
 )
 
+type proxyConfigHTTPError struct {
+	statusCode int
+}
+
+func (e *proxyConfigHTTPError) Error() string {
+	if e == nil {
+		return "CPA proxy config request failed"
+	}
+	return fmt.Sprintf("CPA proxy config returned HTTP %d", e.statusCode)
+}
+
 // proxyConfigSource reads the current outbound proxy from CPA's management
 // config. The file/environment value remains the durable fallback so an
 // already-working deployment stays reachable while CPA is starting and when
@@ -36,10 +47,11 @@ type proxyConfigSource struct {
 	cpaClient        *http.Client
 	pollInterval     time.Duration
 
-	mu        sync.Mutex
-	refreshMu sync.Mutex
-	nextCheck time.Time
-	effective string
+	mu           sync.Mutex
+	refreshMu    sync.Mutex
+	nextCheck    time.Time
+	failureDelay time.Duration
+	effective    string
 }
 
 func newProxyConfigSource(initial, valueEnvironment, fileEnvironment, cpaConfigURL, cpaManagementKey string, cpaClient *http.Client, pollInterval time.Duration) (*proxyConfigSource, error) {
@@ -99,11 +111,13 @@ func (s *proxyConfigSource) current(ctx context.Context) (string, error) {
 	if s.cpaConfigURL == "" {
 		raw, configured, err := readOptionalSecret(s.valueEnvironment, s.fileEnvironment)
 		if err != nil {
+			s.rescheduleFailure(err)
 			return effective, err
 		}
 		if !configured {
 			raw = s.fallback
 		}
+		s.markSuccess()
 		return s.updateEffective(raw), nil
 	}
 
@@ -112,12 +126,14 @@ func (s *proxyConfigSource) current(ctx context.Context) (string, error) {
 		// A control-plane outage must not move live traffic to a different
 		// route. The constructor seeds effective with the bootstrap fallback,
 		// so this is safe both during startup and after a CPA override.
+		s.rescheduleFailure(err)
 		return effective, err
 	}
 
 	if raw == "" {
 		fallback, configured, fallbackErr := readOptionalSecret(s.valueEnvironment, s.fileEnvironment)
 		if fallbackErr != nil {
+			s.rescheduleFailure(fallbackErr)
 			return effective, fallbackErr
 		}
 		if !configured {
@@ -125,7 +141,43 @@ func (s *proxyConfigSource) current(ctx context.Context) (string, error) {
 		}
 		raw = fallback
 	}
+	s.markSuccess()
 	return s.updateEffective(raw), nil
+
+}
+
+func (s *proxyConfigSource) markSuccess() {
+	s.mu.Lock()
+	s.failureDelay = 0
+	s.nextCheck = time.Now().Add(s.pollInterval)
+	s.mu.Unlock()
+}
+
+func (s *proxyConfigSource) rescheduleFailure(err error) {
+	base := s.pollInterval
+	var httpErr *proxyConfigHTTPError
+	if errors.As(err, &httpErr) && (httpErr.statusCode == http.StatusUnauthorized || httpErr.statusCode == http.StatusForbidden) {
+		// Do not hammer CPA's management endpoint with a bad/stale key. CPA
+		// protects this endpoint with an IP-level failure ban, so authentication
+		// failures need a deliberately longer cooldown than ordinary outages.
+		if base < time.Minute {
+			base = time.Minute
+		}
+	}
+	s.mu.Lock()
+	delay := base
+	if s.failureDelay > 0 {
+		delay = s.failureDelay * 2
+		if delay < base {
+			delay = base
+		}
+	}
+	if delay > maxProxyConfigPollInterval {
+		delay = maxProxyConfigPollInterval
+	}
+	s.failureDelay = delay
+	s.nextCheck = time.Now().Add(delay)
+	s.mu.Unlock()
 }
 
 func (s *proxyConfigSource) updateEffective(raw string) string {
@@ -149,7 +201,7 @@ func (s *proxyConfigSource) fetchCPAProxy(ctx context.Context) (string, error) {
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("CPA proxy config returned HTTP %d", response.StatusCode)
+		return "", &proxyConfigHTTPError{statusCode: response.StatusCode}
 	}
 	var payload map[string]json.RawMessage
 	if err := json.NewDecoder(io.LimitReader(response.Body, maxCPAConfigResponseBytes)).Decode(&payload); err != nil {

@@ -523,7 +523,8 @@ func (s *Server) handleIdentity(writer http.ResponseWriter, request *http.Reques
 			return
 		}
 		if err = s.channels.UpsertIdentity(request.Context(), cpaCredential(id, previous.ClientKey, credential)); err != nil {
-			writeJSON(writer, http.StatusBadGateway, map[string]any{"error": "failed to synchronize CPA Codex credential"})
+			importErr := cpaSynchronizationImportError(err)
+			writeJSON(writer, importErr.StatusCode, map[string]any{"error": importErr.Message})
 			return
 		}
 	default:

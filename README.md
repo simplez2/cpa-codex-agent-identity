@@ -48,6 +48,7 @@ The first public release keeps the mature sidecar data plane instead of rewritin
 - Preserves disabled state during credential refresh and sidecar reconciliation.
 - Encrypts original tokens with AES-256-GCM.
 - Stores only random cais_ proxy keys in CPA auth files.
+- Uses a reserved `-agent-identity` filename suffix so sidecar PAT/Agent Identity files can coexist with CPA native OAuth files for the same email and Team workspace.
 - Hot-reloads CPA global HTTP, HTTPS, and SOCKS proxy changes for new requests.
 - Keeps the official CPA image lifecycle separate from plugin, sidecar, data, and overlay mounts.
 
@@ -118,7 +119,7 @@ make race
 make vet
 make build
 make verify-release-state
-make package-plugin GOOS=linux GOARCH=amd64
+make package-plugin-portable GOOS=linux GOARCH=amd64
 ~~~
 
 Equivalent direct commands are:
@@ -155,14 +156,15 @@ modify the installed plugin card.
 
 ### CPAMC Plugin Store
 
-The public `router-for-me/CLIProxyAPI-Plugins-Store` registry currently serves
-`codex-agent-identity` version `0.3.7`, backed by the checksummed Linux archives
-in the v0.3.7 GitHub Release. The next store update must be `0.3.8` and may be
-committed only after the tagged release assets and checksums exist. When installing into a stock CPA build, leave
-`sidecar_url` blank to use the local default, or set `/agent-identity/` in a legacy
-configuration when CPA and sidecar are published behind the same origin. If an older CPA build or a stale store
-cache does not show it yet, this repository's registry remains a direct fallback
-that can be added to the host-mounted CPA configuration:
+The public `router-for-me/CLIProxyAPI-Plugins-Store` registry currently contains
+this plugin with `0.3.3` as its fallback metadata version. Newer CPA builds normally
+resolve the latest GitHub Release before showing or installing it, but when that
+metadata lookup is unavailable or cached they can still display `0.3.3`. The
+checked-in `registry.json` in this repository is a separate CPA schema v2 direct
+source with pinned, checksummed artifacts; it tracks the latest **published** direct
+version (`0.3.7`) and deliberately stays behind the v0.3.8 development line until
+its tagged Release exists. Adding it to the host-mounted CPA configuration avoids
+GitHub release-metadata lookup and stale public-store fallback versions:
 
 ~~~yaml
 plugins:
@@ -185,12 +187,22 @@ host plugin mount during the install or update. Restore read-only mode after
 the operation.
 The store installs the `.so` only; it cannot safely create the sidecar container,
 Docker network, encryption key, management key, or persistent data directory.
-For Docker, the plugin automatically uses the internal sidecar service from
-`CODEX_AGENT_IDENTITY_SIDECAR_HOSTS` (port `8787` by default) when
-`sidecar_api_url` is blank; for a host install, the local default remains
-`http://127.0.0.1:18787/v0/management/api-call`.
+For a fresh Plugin Store installation, the management page uses the same-origin
+`/agent-identity/` route by default, so remote CPA deployments do not point a
+browser at its own `127.0.0.1`. The quota/reset bridge uses the internal sidecar
+service from `CODEX_AGENT_IDENTITY_SIDECAR_HOSTS` (port `8787` by default) when
+`sidecar_api_url` is blank. Direct host installs may keep an explicit local
+`sidecar_url` such as `http://127.0.0.1:18787/agent-identity/`.
 For a fresh deployment, `deploy/bootstrap-runtime.sh --start` prepares those
 prerequisites so the Plugin Store step is the only manual installation action.
+
+If the Plugin Store card says **configured** but **not registered**, remove stale
+copies of `codex-agent-identity.so` and `codex-agent-identity-auth.so`, make sure
+CPA is using its dynamic-plugin Linux build, and restart CPA after installation.
+The Linux archives produced by this repository are now built and checked in CI
+against CPA's GLIBC 2.17 compatibility baseline; a log containing `GLIBC_2.32`,
+`GLIBC_2.34`, `dlopen`, or a missing `cliproxy_plugin_init` indicates an old or
+locally rebuilt artifact and should not be used.
 
 The registry uses CPA schema v2 direct artifacts with pinned sizes and SHA-256
 digests. Installation therefore does not consume the server's anonymous GitHub
@@ -230,9 +242,11 @@ plugins:
       priority: 1000
 ~~~
 
-Fresh installations should omit `sidecar_url`: the plugin derives the local or
-Docker sidecar endpoint automatically. The legacy `sidecar_url` value remains
-accepted for an existing same-origin reverse-proxy deployment. It may be a
+Fresh installations should omit `sidecar_url`: the plugin uses the same-origin
+`/agent-identity/` management route and derives the internal quota/reset bridge
+from the Docker environment when available. The legacy `sidecar_url` value
+remains accepted for existing deployments, including direct local installs and
+custom reverse-proxy paths. It may be a
 root-relative URL or a full HTTP/HTTPS URL, and must not contain credentials,
 query parameters, or a fragment. The wrapper contains no secret; the sidecar UI
 must still authenticate before listing, previewing, or importing.
@@ -247,7 +261,9 @@ For a new checkout, the bootstrap helper creates the runtime directories, two in
 sudo sh deploy/bootstrap-runtime.sh --start
 ~~~
 
-The default local setup uses <code>http://127.0.0.1:18787/agent-identity/</code> as the browser-facing sidecar URL. The plugin also defaults to this value when `sidecar_url` is omitted. If CPA is published behind a reverse proxy, use the same-origin path instead:
+The management page uses the same-origin <code>/agent-identity/</code> path by
+default. For a direct host install without a reverse proxy, pass the local URL
+explicitly; if CPA is published behind a reverse proxy, keep the same-origin path:
 
 ~~~bash
 sudo sh deploy/bootstrap-runtime.sh --sidecar-url /agent-identity/ --start
@@ -435,11 +451,13 @@ cpa-codex-agent-identity-sidecar_<version>_linux_arm64.tar.gz
 checksums.txt
 ~~~
 
-`registry.json` is a directly usable CPA Plugin Store source. The built-in official `router-for-me/CLIProxyAPI-Plugins-Store` registry
-currently exposes `codex-agent-identity` version `0.3.7`. This repository
-`registry.json` is the explicit fallback and is kept at the latest verified
-release; the next update to `0.3.8` belongs in the post-release publication
-commit described in [Release process](RELEASE.md).
+`registry.json` is a directly usable CPA Plugin Store source. The built-in official
+`router-for-me/CLIProxyAPI-Plugins-Store` registry currently keeps `0.3.3` as this
+plugin's fallback metadata version; CPA may resolve the latest GitHub Release
+separately, which is why the displayed version can depend on network/cache state.
+This repository `registry.json` is the explicit pinned-artifact fallback and is kept
+at the latest verified release; the next update to `0.3.8` belongs in the post-release
+publication commit described in [Release process](RELEASE.md).
 
 ## Optional Management Center overlay
 

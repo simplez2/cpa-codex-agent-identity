@@ -6,7 +6,22 @@ workflow has produced and checksummed the artifacts.
 
 ## [Unreleased] - 0.3.8
 
-The next development line is intentionally empty until new changes are staged.
+### Fixed
+
+- Reserve a distinct `-agent-identity` suffix for sidecar-managed Codex auth
+  files so a PAT can coexist with CPA native OAuth for the same email and Team
+  workspace instead of failing on an unmanaged filename collision.
+- Build Linux `.so` release artifacts inside manylinux2014 (GLIBC 2.17) images,
+  matching the baseline used by CPA's dynamic-plugin Linux releases.
+- Fail the release before publishing when a plugin requests a newer GLIBC symbol
+  or is missing any required CPA plugin ABI export.
+- Document the distinction between the project registry and the public CPA
+  Plugin Store registry, plus the exact "configured but not registered" recovery
+  path.
+- Use the same-origin `/agent-identity/` route by default in the Plugin Store
+  management wrapper, while retaining explicit localhost and custom sidecar URLs
+  for legacy deployments. This fixes remote CPA pages that previously stayed on
+  `Connecting to Codex Agent Identity...`.
 
 ## [0.3.7] - 2026-08-29
 
