@@ -32,6 +32,7 @@ fi
 symbols="$(readelf --dyn-syms --wide "${library}")"
 for symbol in cliproxy_plugin_init cliproxyPluginCall cliproxyPluginFree cliproxyPluginShutdown; do
   if ! awk -v symbol="${symbol}" '
+    $4 == "FUNC" &&
     $5 ~ /^(GLOBAL|WEAK)$/ &&
     $6 ~ /^(DEFAULT|PROTECTED)$/ &&
     $7 != "UND" {

@@ -446,9 +446,13 @@ func newSidecarHTTPClient() *http.Client {
 	if base, ok := http.DefaultTransport.(*http.Transport); ok {
 		transport := base.Clone()
 		transport.Proxy = nil
-		return &http.Client{Transport: transport, Timeout: 60 * time.Second}
+		return &http.Client{Transport: transport, Timeout: 60 * time.Second, CheckRedirect: rejectSidecarRedirect}
 	}
-	return &http.Client{Transport: &http.Transport{}, Timeout: 60 * time.Second}
+	return &http.Client{Transport: &http.Transport{}, Timeout: 60 * time.Second, CheckRedirect: rejectSidecarRedirect}
+}
+
+func rejectSidecarRedirect(_ *http.Request, _ []*http.Request) error {
+	return errors.New("sidecar management API redirects are disabled")
 }
 
 func sidecarManagementAPIURL(current runtimeState) (string, error) {
@@ -808,7 +812,7 @@ func managementHTML(sidecarURL, embedURL string) string {
       const localDefault=new URL(localDefaultURL,window.location.href);
       const legacyLocal=new URL(legacyLocalURL,window.location.href);
       const isSameOriginDefault=configured.origin===localDefault.origin&&configured.pathname===localDefault.pathname;
-      const isLegacyLocal=configured.href===legacyLocal.href;
+      const isLegacyLocal=configured.origin===legacyLocal.origin&&configured.pathname===legacyLocal.pathname;
       if(isSameOriginDefault||isLegacyLocal){
         const sameOrigin=new URL(sameOriginPath,window.location.href);
         sameOrigin.searchParams.set('embed','cpamc');
