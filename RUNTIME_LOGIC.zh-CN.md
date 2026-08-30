@@ -105,7 +105,7 @@ The plugin parser only claims `type=codex-agent-identity` files carrying `auth_m
 只用 email 和 plan type 会让同一登录邮箱的多个 Team workspace 文件名冲突。当前 PR 在存在 account_id 时计算 SHA-256，并取前 8 个十六进制字符作为不直接暴露完整 account ID 的稳定短摘要：
 
 ~~~text
-codex-<workspace-hash>-<sanitized-email>-<plan>.json
+codex-<workspace-hash>-<sanitized-email>-<plan>-agent-identity.json
 ~~~
 
 这既保持同 workspace 文件名稳定，又避免公开完整 account ID。缺少 account_id 的旧 identity 保持兼容命名。
@@ -142,7 +142,7 @@ GET /v0/management/codex-agent-identity/open 由 CPA Management key 保护，返
 ### 独立 sidecar UI
 
 /agent-identity/ 静态页面本身可以通过反代访问，但以下 API 都要求 Bearer management key：
-The default browser URL is `http://127.0.0.1:18787/agent-identity/`; blank, `/`, and the historical local root URL are normalized to `/agent-identity/`.
+The default browser URL is the same-origin `/agent-identity/`; blank and `/` are normalized to that path. Historical absolute local URLs such as `http://127.0.0.1:18787/agent-identity/` remain accepted when explicitly configured.
 
 - identities list；
 - single import；

@@ -12,7 +12,7 @@
   <p>简体中文 · <a href="README.md">English</a></p>
 </div>
 
-> **版本边界：** 当前源码开发线为 **v0.3.8**，编译基线为 CLIProxyAPI **v7.2.145**。截至目前（2026 年 8 月 29 日），公开 registry 与可直接安装的发布资产仍为 **v0.3.7**。只有在 v0.3.8 完成测试、打包、Release、校验值和 registry 更新后，插件商店才会切换到 v0.3.8。
+> **版本边界：** 当前源码开发线为 **v0.3.8**，编译基线为 CLIProxyAPI **v7.2.145**。本仓库已发布的 registry 和直接安装资产仍为 **v0.3.7**；公开 CPA Plugin Store 当前仍使用旧版回退展示元数据，在其切换前可使用本仓库的 direct registry。只有在 v0.3.8 完成测试、打包、Release、校验值和 registry 更新后，插件商店才会切换到 v0.3.8。
 
 这是一个面向 CLIProxyAPI（CPA）的 Codex Agent Identity / Personal Access
 Token 集成项目。首个公开版本由两个部分组成：
@@ -68,7 +68,9 @@ CPA 的 /v0/resource/plugins/... 资源路由不经过 Management key 认证，�
 
 ## 从 CPAMC Plugin Store 安装
 
-官方 CPA Plugin Store 在 registry 更新后会收录已发布版本。若目标 CPA 版本或商店缓存尚未显示，可把本仓库的 registry.json 加入宿主机挂载的 CPA 配置作为明确回退：
+公开 `router-for-me/CLIProxyAPI-Plugins-Store` 已包含本插件，但 registry 中的回退展示版本仍是 `0.3.3`。新版 CPA 通常会先查询最新 GitHub Release 再展示和安装；当该元数据查询失败或命中旧缓存时，页面就可能继续显示 `0.3.3`。
+
+本项目的 `registry.json` 是单独的 CPA schema v2 直接资产清单，固定了已发布 `0.3.7` 资产的大小和 SHA-256，不依赖 GitHub Release 元数据查询。可将它作为明确回退源加入 CPA 配置：
 
 ~~~yaml
 plugins:
@@ -81,31 +83,25 @@ plugins:
       priority: 1000
 ~~~
 
-全新安装通常不需要填写 sidecar_url 或 sidecar_api_url。插件默认使用本机 sidecar 地址；Docker 部署通过 CODEX_AGENT_IDENTITY_SIDECAR_HOSTS 和端口环境变量自动发现。旧版本配置仍会被兼容解析，但这些内部地址不再作为普通 Plugin Store 配置项展示。
+全新安装通常不需要填写 `sidecar_url` 或 `sidecar_api_url`。插件管理页默认使用与 CPA 同源的 `/agent-identity/`，远程部署不会再把浏览器请求错误地指向浏览器自己的 `127.0.0.1`。Docker 部署的 quota/reset bridge 会通过 `CODEX_AGENT_IDENTITY_SIDECAR_HOSTS` 和端口环境变量自动发现。旧版本配置仍会被兼容解析，但这些内部地址不再作为普通 Plugin Store 配置项展示。
+如果 CPA 与 sidecar 通过反向代理发布，可在旧配置中保留 `sidecar_url: "/agent-identity/"`；它只能是无凭据、无查询参数和无片段的 HTTP(S) 地址或同源路径。
 
-如果 CPA 与 sidecar 通过反向代理发布，可在旧配置中保留 sidecar_url: "/agent-identity/"；它只能是无凭据、无查询参数和无片段的 HTTP(S) 地址或同源路径。
-
-容器内 CPA 若要通过 Plugin Store 安装或升级，插件目录需要在该操作期间可写。
-完成后建议恢复只读挂载。正常运行时推荐：
+容器内 CPA 若要通过 Plugin Store 安装或升级，插件目录需要在该操作期间可写，完成后建议恢复只读挂载。
 
 ~~~yaml
 volumes:
   - ./runtime/cpa-plugins:/CLIProxyAPI/plugins:ro
 ~~~
 
-也可以从 GitHub Release 下载与架构对应的 zip。每个 zip 根目录都包含
-codex-agent-identity.so，并由 checksums.txt 提供 SHA-256 校验。
+也可以从 GitHub Release 下载与架构对应的 zip。每个 zip 根目录都包含 `codex-agent-identity.so`，并由 `checksums.txt` 提供 SHA-256 校验。
 
-注册表使用 CPA schema v2 的 direct 资产模式，并固定文件大小和 SHA-256。
-因此安装不依赖服务器的 GitHub REST API 匿名额度。
+注册表使用 CPA schema v2 的 direct 资产模式，并固定文件大小和 SHA-256。因此安装不依赖服务器的 GitHub REST API 匿名额度。
 
-不要同时加载旧的 codex-agent-identity-auth.so 和新的
-codex-agent-identity.so，两者都会声明 Codex 凭证解析能力。
+不要同时加载旧的 `codex-agent-identity-auth.so` 和新的 `codex-agent-identity.so`，两者都会声明 Codex 凭证解析能力。
 
 插件商店只会安装 `.so`，无法安全地自动创建 sidecar 容器、Docker network、加密密钥、management key 和持久化目录。全新部署建议先运行 `sh deploy/bootstrap-runtime.sh --start`，之后在 CPA 插件商店点击安装即可。
 
-Docker 部署中，`sidecar_api_url` 留空时插件会自动读取 `CODEX_AGENT_IDENTITY_SIDECAR_HOSTS`，并默认使用 sidecar 容器的 `8787` 端口；宿主机安装仍使用 `http://127.0.0.1:18787/v0/management/api-call`。这是旧配置兼容项，新安装不需要填写。
-
+Docker 部署中，`sidecar_api_url` 留空时插件会自动读取 `CODEX_AGENT_IDENTITY_SIDECAR_HOSTS`，并默认使用 sidecar 容器的 `8787` 端口。直接宿主机安装可以在旧配置中显式保留 `http://127.0.0.1:18787/agent-identity/`；这是兼容项，新安装不需要填写。
 ## 部署 sidecar
 
 全新 checkout 推荐使用 bootstrap helper。它会创建 runtime 目录和两份独立密钥，生成已启用插件的 CPA 配置、随机 CPA API key 和外部 Docker network，并可直接启动官方 CPA 与 sidecar：
@@ -114,7 +110,7 @@ Docker 部署中，`sidecar_api_url` 留空时插件会自动读取 `CODEX_AGENT
 sudo sh deploy/bootstrap-runtime.sh --start
 ~~~
 
-默认本机浏览器使用 <code>http://127.0.0.1:18787/agent-identity/</code> 访问 sidecar。若 CPA 通过反向代理发布，推荐使用同源路径：
+管理页默认使用与 CPA 同源的 <code>/agent-identity/</code> 访问 sidecar。若是没有反向代理的直接宿主机安装，请显式传入本机地址；若 CPA 通过反向代理发布，推荐使用同源路径：
 
 ~~~bash
 sudo sh deploy/bootstrap-runtime.sh --sidecar-url /agent-identity/ --start
@@ -204,7 +200,7 @@ make test
 make race
 make vet
 make build
-make package-plugin GOOS=linux GOARCH=amd64
+make package-plugin-portable GOOS=linux GOARCH=amd64
 ~~~
 
 vX.Y.Z 标签会生成 Linux amd64/arm64 插件 zip、sidecar tar.gz、

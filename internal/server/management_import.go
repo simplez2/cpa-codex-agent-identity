@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -60,7 +61,7 @@ func (s *Server) commitInspectedTokenLocked(ctx context.Context, token, accountI
 			} else {
 				_ = s.store.Delete(publicIdentity.ID)
 			}
-			return nil, &managementImportError{StatusCode: http.StatusBadGateway, Code: "sync_failed", Message: "failed to synchronize CPA Codex credential"}
+			return nil, cpaSynchronizationImportError(err)
 		}
 	}
 	return &credentialImportResult{PublicIdentity: publicIdentity, Credential: credential, ClientKey: clientKey}, nil
@@ -131,4 +132,19 @@ func maskedEmail(value string) string {
 		return string(local[:1]) + "***@" + parts[1]
 	}
 	return string(local[:1]) + "***" + string(local[len(local)-1:]) + "@" + parts[1]
+}
+
+func cpaSynchronizationImportError(err error) *managementImportError {
+	if errors.Is(err, cpa.ErrUnmanagedAuthFile) {
+		return &managementImportError{
+			StatusCode: http.StatusConflict,
+			Code:       "cpa_auth_file_conflict",
+			Message:    "CPA native OAuth already uses this auth-file name; upgrade Codex Agent Identity and re-import the credential",
+		}
+	}
+	return &managementImportError{
+		StatusCode: http.StatusBadGateway,
+		Code:       "sync_failed",
+		Message:    "failed to synchronize CPA Codex credential",
+	}
 }

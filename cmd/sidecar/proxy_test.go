@@ -84,6 +84,43 @@ func TestProxyConfigSourceFollowsCPAAndClearsToFallback(t *testing.T) {
 	}
 }
 
+func TestProxyConfigSourceBacksOffManagementAuthFailures(t *testing.T) {
+	var calls int
+	cpa := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		calls++
+		http.Error(writer, "forbidden", http.StatusForbidden)
+	}))
+	defer cpa.Close()
+
+	source, err := newProxyConfigSource(
+		"direct",
+		"TEST_PROXY_VALUE",
+		"TEST_PROXY_FILE",
+		cpa.URL+"/config",
+		"management-key",
+		cpa.Client(),
+		minProxyConfigPollInterval,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = source.current(t.Context()); err == nil {
+		t.Fatal("expected management authentication error")
+	}
+	if _, err = source.current(t.Context()); err != nil {
+		t.Fatalf("backoff check should use cached state, got %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("management endpoint was hammered during auth backoff: calls=%d", calls)
+	}
+	source.mu.Lock()
+	delay := source.failureDelay
+	source.mu.Unlock()
+	if delay < time.Minute {
+		t.Fatalf("authentication failure backoff=%s, want at least 1m", delay)
+	}
+}
+
 func TestHotReloadTransportSwapsProxyAndDirectModes(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "proxy")
 	if err := os.WriteFile(path, []byte("socks5://one.example:1080\n"), 0o600); err != nil {

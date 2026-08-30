@@ -443,6 +443,25 @@ func TestInvalidSidecarURLRendersConfigurationFallback(t *testing.T) {
 	}
 }
 
+func TestManagementFrameSourcesAlwaysAllowsSameOriginFallback(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		source string
+		want   string
+	}{
+		{name: "empty", source: "", want: "'self'"},
+		{name: "same origin", source: "'self'", want: "'self'"},
+		{name: "legacy local fallback", source: "http://127.0.0.1:18787", want: "'self' http://127.0.0.1:18787"},
+		{name: "external", source: "https://sidecar.example.test", want: "'self' https://sidecar.example.test"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := managementFrameSources(test.source); got != test.want {
+				t.Fatalf("managementFrameSources(%q) = %q, want %q", test.source, got, test.want)
+			}
+		})
+	}
+}
+
 func TestDefaultSidecarURLIsUsedWhenConfigIsOmitted(t *testing.T) {
 	configurePluginForTest(t, "")
 	raw, err := handleMethod(pluginabi.MethodManagementHandle, managementPayload(t, http.MethodGet, managementOpenFullPath))
@@ -455,8 +474,13 @@ func TestDefaultSidecarURLIsUsedWhenConfigIsOmitted(t *testing.T) {
 	if response.StatusCode != http.StatusOK || !strings.Contains(body, defaultSidecarURL+"?embed=cpamc") {
 		t.Fatalf("default sidecar URL was not applied: status=%d body=%s", response.StatusCode, body)
 	}
-	if !strings.Contains(response.Headers.Get("Content-Security-Policy"), defaultSidecarOrigin) {
-		t.Fatalf("default sidecar origin is missing from CSP: %s", response.Headers.Get("Content-Security-Policy"))
+	if !strings.Contains(response.Headers.Get("Content-Security-Policy"), "frame-src 'self'") {
+		t.Fatalf("default sidecar origins are missing from CSP: %s", response.Headers.Get("Content-Security-Policy"))
+	}
+	for _, expected := range []string{"candidateURLs", "sameOriginPath", "tryNextCandidate"} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("default wrapper is missing browser fallback %q: %s", expected, body)
+		}
 	}
 }
 
@@ -480,6 +504,15 @@ func TestApplyConfigKeepsCustomSidecarOriginForDerivedAPI(t *testing.T) {
 	}
 	if want := "https://sidecar.example.test/v0/management/api-call"; got != want {
 		t.Fatalf("derived custom sidecar API URL = %q, want %q", got, want)
+	}
+}
+
+func TestDefaultRuntimeSidecarAPIURLUsesSameOriginWithoutRuntimeConfig(t *testing.T) {
+	t.Setenv("CODEX_AGENT_IDENTITY_SIDECAR_API_URL", "")
+	t.Setenv("CODEX_AGENT_IDENTITY_SIDECAR_HOSTS", "")
+	t.Setenv("CODEX_AGENT_IDENTITY_SIDECAR_HTTP_PORTS", "")
+	if got := defaultRuntimeSidecarAPIURL(); got != "" {
+		t.Fatalf("same-origin default sidecar API URL = %q, want empty for browser-origin derivation", got)
 	}
 }
 
@@ -564,7 +597,7 @@ func TestNormalizeSidecarURLRejectsCredentialsAndQuery(t *testing.T) {
 	}{
 		{input: "", want: defaultSidecarURL, source: defaultSidecarOrigin},
 		{input: "/", want: "/agent-identity/", source: "'self'"},
-		{input: "http://127.0.0.1:18787/", want: defaultSidecarURL, source: defaultSidecarOrigin},
+		{input: "http://127.0.0.1:18787/", want: "http://127.0.0.1:18787/agent-identity/", source: "http://127.0.0.1:18787"},
 		{input: "https://cpa.example.com/agent-identity", want: "https://cpa.example.com/agent-identity/", source: "https://cpa.example.com"},
 	} {
 		got, source, err := normalizeSidecarURL(test.input)

@@ -74,8 +74,16 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           [[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]
           echo "VERSION=${VERSION}" >> "${GITHUB_ENV}"
-      - name: Build plugin archive
-        run: make package-plugin VERSION="${VERSION}" GOOS=linux GOARCH="${{ matrix.goarch }}"
+      - name: Build portable Linux plugin archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          make package-plugin-portable VERSION="${VERSION}" GOOS=linux GOARCH="${{ matrix.goarch }}"
+      - name: Verify portable plugin ABI and GLIBC baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash .github/scripts/verify-linux-plugin.sh "dist/codex-agent-identity.so" "${{ matrix.goarch }}"
       - name: Build sidecar archive
         shell: bash
         run: |

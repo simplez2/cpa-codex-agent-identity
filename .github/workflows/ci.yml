@@ -132,7 +132,13 @@ jobs:
       - run: go test -race ./... -count=1
       - run: go vet ./...
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
-      - run: CGO_ENABLED=1 go build -trimpath -buildvcs=false -buildmode=c-shared -o /tmp/codex-agent-identity.so .
+      - name: Build CPA-compatible Linux plugin smoke artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d "[:space:]" < ../../VERSION)"
+          bash ../../.github/scripts/build-linux-plugin-portable.sh "${version}" amd64 ../../dist/ci/codex-agent-identity.so
+          bash ../../.github/scripts/verify-linux-plugin.sh ../../dist/ci/codex-agent-identity.so amd64
 
   container:
     runs-on: ubuntu-24.04

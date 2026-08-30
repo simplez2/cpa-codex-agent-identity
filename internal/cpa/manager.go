@@ -25,11 +25,16 @@ const (
 	runtimeProviderID = "codex"
 	legacyProviderID  = "codex" // legacy sidecar auth files emitted before provider separation
 	authFilePrefix    = "codex-agent-identity-"
+	managedAuthSuffix = "-agent-identity"
 	pluginSettle      = 750 * time.Millisecond
 )
 
 // Credential is the non-secret CPA-facing representation of an Agent Identity.
 // ClientKey is an opaque sidecar key; the original Agent Identity JWT never enters CPA.
+// ErrUnmanagedAuthFile indicates that CPA already owns the target filename
+// with a credential that was not created by this sidecar.
+var ErrUnmanagedAuthFile = errors.New("unmanaged CPA auth file")
+
 type Credential struct {
 	IdentityID string
 	ClientKey  string
@@ -157,7 +162,7 @@ func (m *Manager) UpsertIdentity(ctx context.Context, credential Credential) err
 		return err
 	}
 	if existed && !isManagedCredential(previous, credential.IdentityID) {
-		return errors.New("refusing to overwrite an unmanaged CPA auth file")
+		return fmt.Errorf("%w: refusing to overwrite an unmanaged CPA auth file", ErrUnmanagedAuthFile)
 	}
 	disabled := managedCredentialDisabled(previous, existed)
 	if !existed {
@@ -549,6 +554,12 @@ func authFileName(credential Credential) (string, error) {
 	if planType != "" {
 		name += "-" + planType
 	}
+	// Keep sidecar-managed files visibly Codex-native while reserving a
+	// distinct filename namespace from CPA's OAuth importer. A user can
+	// legitimately have both a native OAuth credential and a PAT for the
+	// same email/Team workspace; reusing the native filename would make the
+	// sidecar refuse to overwrite the user's credential as unmanaged.
+	name += managedAuthSuffix
 	return name + ".json", nil
 }
 
