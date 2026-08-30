@@ -132,13 +132,18 @@ jobs:
       - run: go test -race ./... -count=1
       - run: go vet ./...
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+
       - name: Build CPA-compatible Linux plugin smoke artifact
         shell: bash
         run: |
           set -euo pipefail
-          version="$(tr -d "[:space:]" < ../../VERSION)"
-          bash ../../.github/scripts/build-linux-plugin-portable.sh "${version}" amd64 ../../dist/ci/codex-agent-identity.so
-          bash ../../.github/scripts/verify-linux-plugin.sh ../../dist/ci/codex-agent-identity.so amd64
+          repo_root="${GITHUB_WORKSPACE}"
+          version="$(tr -d "[:space:]" < "${repo_root}/VERSION")"
+          artifact="${repo_root}/dist/ci/codex-agent-identity.so"
+          mkdir -p "$(dirname "${artifact}")"
+          bash "${repo_root}/.github/scripts/build-linux-plugin-portable.sh" "${version}" amd64 "${artifact}"
+          bash "${repo_root}/.github/scripts/verify-linux-plugin.sh" "${artifact}" amd64
+          test -s "${artifact}"
 
   container:
     runs-on: ubuntu-24.04
