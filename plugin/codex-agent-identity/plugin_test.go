@@ -484,12 +484,28 @@ func TestDefaultSidecarURLIsUsedWhenConfigIsOmitted(t *testing.T) {
 	}
 }
 
-func TestRelativeSidecarURLDerivesSameOriginAuthenticatedBridge(t *testing.T) {
-	target, err := sidecarManagementAPIURL(runtimeState{sidecarURL: "/agent-identity/"}, http.Header{
-		"Origin": []string{"https://cpa.example.com"},
-	})
-	if err != nil || target != "https://cpa.example.com/agent-identity/api/cpa-api-call" {
-		t.Fatalf("derived sidecar API URL = %q, %v", target, err)
+func TestRelativeSidecarURLDoesNotUseBrowserHeaders(t *testing.T) {
+	t.Setenv("CODEX_AGENT_IDENTITY_SIDECAR_API_URL", "")
+	t.Setenv("CODEX_AGENT_IDENTITY_SIDECAR_HOSTS", "")
+	t.Setenv("CODEX_AGENT_IDENTITY_SIDECAR_HTTP_PORTS", "")
+	if _, err := sidecarManagementAPIURL(runtimeState{sidecarURL: "/agent-identity/"}); err == nil || !strings.Contains(err.Error(), "CODEX_AGENT_IDENTITY_SIDECAR_HOSTS") {
+		t.Fatalf("relative sidecar URL was accepted without trusted runtime routing: %v", err)
+	}
+}
+
+func TestRelativeSidecarURLUsesTrustedRuntimeRouting(t *testing.T) {
+	t.Setenv("CODEX_AGENT_IDENTITY_SIDECAR_API_URL", "")
+	t.Setenv("CODEX_AGENT_IDENTITY_SIDECAR_HOSTS", "codex-agent-identity-sidecar")
+	t.Setenv("CODEX_AGENT_IDENTITY_SIDECAR_HTTP_PORTS", "")
+	target, err := sidecarManagementAPIURL(runtimeState{sidecarURL: "/agent-identity/"})
+	if err != nil || target != "http://codex-agent-identity-sidecar:8787/v0/management/api-call" {
+		t.Fatalf("trusted runtime sidecar API URL = %q, %v", target, err)
+	}
+}
+
+func TestNonLoopbackHTTPSidecarURLIsRejected(t *testing.T) {
+	if _, err := sidecarManagementAPIURL(runtimeState{sidecarURL: "http://sidecar.example.test/agent-identity/"}); err == nil || !strings.Contains(err.Error(), "HTTPS") {
+		t.Fatalf("non-loopback HTTP sidecar URL was accepted: %v", err)
 	}
 }
 
@@ -498,12 +514,24 @@ func TestApplyConfigKeepsCustomSidecarOriginForDerivedAPI(t *testing.T) {
 	t.Setenv("CODEX_AGENT_IDENTITY_SIDECAR_HOSTS", "")
 	t.Setenv("CODEX_AGENT_IDENTITY_SIDECAR_HTTP_PORTS", "")
 	configurePluginForTest(t, "sidecar_url: https://sidecar.example.test/agent-identity/")
-	got, err := sidecarManagementAPIURL(currentRuntimeState(), nil)
+	got, err := sidecarManagementAPIURL(currentRuntimeState())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := "https://sidecar.example.test/v0/management/api-call"; got != want {
 		t.Fatalf("derived custom sidecar API URL = %q, want %q", got, want)
+	}
+}
+
+func TestLegacyLocalWrapperPrefersSameOriginCandidate(t *testing.T) {
+	body := managementHTML(legacyLocalSidecarURL, legacyLocalSidecarURL+"?embed=cpamc")
+	if !strings.Contains(body, "const legacyLocalURL=") {
+		t.Fatalf("legacy local URL constant is missing from wrapper: %s", body)
+	}
+	sameOrigin := strings.Index(body, "addCandidate(sameOrigin.href)")
+	configured := strings.Index(body, "addCandidate(frame.dataset.src)")
+	if sameOrigin < 0 || configured < 0 || sameOrigin > configured {
+		t.Fatalf("legacy local wrapper does not prefer same-origin candidate: sameOrigin=%d configured=%d", sameOrigin, configured)
 	}
 }
 
@@ -540,6 +568,9 @@ func TestManagementAPICallBridgeStripsTransportHeaders(t *testing.T) {
 		if r.Header.Get("Accept-Encoding") != "identity" {
 			t.Fatalf("sidecar Accept-Encoding = %q, want identity", r.Header.Get("Accept-Encoding"))
 		}
+		if r.Header.Get("Origin") != "" || r.Header.Get("Referer") != "" {
+			t.Fatalf("browser routing headers crossed the trusted sidecar boundary: origin=%q referer=%q", r.Header.Get("Origin"), r.Header.Get("Referer"))
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Content-Encoding", "identity")
 		w.Header().Set("Connection", "keep-alive")
@@ -555,6 +586,8 @@ func TestManagementAPICallBridgeStripsTransportHeaders(t *testing.T) {
 		Path:   managementAPICallFullPath,
 		Headers: http.Header{
 			"Accept-Encoding": []string{"gzip"},
+			"Origin":          []string{"https://attacker.example"},
+			"Referer":         []string{"https://attacker.example/"},
 			"TE":              []string{"trailers"},
 		},
 		Body: []byte(`{"auth_index":"auth-1"}`),

@@ -29,9 +29,18 @@ if [[ -n "${expected_arch}" ]]; then
   fi
 fi
 
-symbols="$(readelf -Ws "${library}")"
+symbols="$(readelf --dyn-syms --wide "${library}")"
 for symbol in cliproxy_plugin_init cliproxyPluginCall cliproxyPluginFree cliproxyPluginShutdown; do
-  if ! grep -Eq "[[:space:]]${symbol}$" <<<"${symbols}"; then
+  if ! awk -v symbol="${symbol}" '
+    $5 ~ /^(GLOBAL|WEAK)$/ &&
+    $6 ~ /^(DEFAULT|PROTECTED)$/ &&
+    $7 != "UND" {
+      name=$8
+      sub(/@+.*/, "", name)
+      if (name == symbol) found=1
+    }
+    END { exit !found }
+  ' <<<"${symbols}"; then
     echo "plugin is missing required exported symbol ${symbol}: ${library}" >&2
     exit 1
   fi

@@ -35,12 +35,12 @@ const (
 	managementAPICallPath     = "/codex-agent-identity/api-call"
 	managementAPICallFullPath = "/v0/management" + managementAPICallPath
 	sidecarAPICallPath        = "/v0/management/api-call"
-	sidecarRelativeAPICall    = "/api/cpa-api-call"
 	resourceOpenFullPath      = "/v0/resource/plugins/" + pluginID + "/open"
 	legacyResourceOpenPath    = "/v0/resource/plugins/" + pluginID + managementOpenPath
 	configSidecarURL          = "sidecar_url"
 	configSidecarAPIURL       = "sidecar_api_url"
 	defaultSidecarURL         = "/agent-identity/"
+	legacyLocalSidecarURL     = "http://127.0.0.1:18787/agent-identity/"
 	defaultSidecarOrigin      = "'self'"
 	defaultSidecarAPIURL      = ""
 	defaultSidecarHTTPPort    = 8787
@@ -84,11 +84,12 @@ type pluginConfig struct {
 }
 
 type runtimeState struct {
-	sidecarURL    string
-	sidecarAPIURL string
-	embedURL      string
-	frameSource   string
-	configError   string
+	sidecarURL          string
+	sidecarAPIURL       string
+	sidecarAPIURLSource string
+	embedURL            string
+	frameSource         string
+	configError         string
 }
 
 type registration struct {
@@ -270,14 +271,18 @@ func applyConfig(request []byte) {
 		setRuntimeState(next)
 		return
 	}
-	if apiURL == "" {
-		// An explicit sidecar_url should still derive its API endpoint from the
-		// same origin. Only override that derivation when the container runtime
-		// supplied an internal sidecar endpoint.
-		apiURL = configuredRuntimeSidecarAPIURL()
+	apiURLSource := ""
+	if apiURL != "" {
+		apiURLSource = "config"
+	} else if runtimeAPIURL := configuredRuntimeSidecarAPIURL(); runtimeAPIURL != "" {
+		// Runtime routing is trusted process configuration and is preferred over
+		// deriving a backend destination from browser request headers.
+		apiURL = runtimeAPIURL
+		apiURLSource = "runtime"
 	}
 	next.sidecarURL = normalized
 	next.sidecarAPIURL = apiURL
+	next.sidecarAPIURLSource = apiURLSource
 	next.embedURL = embedURL
 	next.frameSource = frameSource
 	setRuntimeState(next)
@@ -327,6 +332,9 @@ func applyDefaultRuntimeState(next *runtimeState) {
 	}
 	next.sidecarURL = defaultSidecarURL
 	next.sidecarAPIURL = defaultRuntimeSidecarAPIURL()
+	if next.sidecarAPIURL != "" {
+		next.sidecarAPIURLSource = "runtime"
+	}
 	next.embedURL = defaultSidecarEmbedURL
 	next.frameSource = defaultSidecarOrigin
 }
@@ -388,7 +396,7 @@ func forwardSidecarAPICall(request managementRequest) managementResponse {
 		return managementErrorResponse(http.StatusRequestEntityTooLarge, "management request body is too large")
 	}
 	current := currentRuntimeState()
-	target, err := sidecarManagementAPIURL(current, request.Headers)
+	target, err := sidecarManagementAPIURL(current)
 	if err != nil {
 		return managementErrorResponse(http.StatusServiceUnavailable, err.Error())
 	}
@@ -443,9 +451,9 @@ func newSidecarHTTPClient() *http.Client {
 	return &http.Client{Transport: &http.Transport{}, Timeout: 60 * time.Second}
 }
 
-func sidecarManagementAPIURL(current runtimeState, headers http.Header) (string, error) {
+func sidecarManagementAPIURL(current runtimeState) (string, error) {
 	if configured := strings.TrimSpace(current.sidecarAPIURL); configured != "" {
-		return configured, nil
+		return validateTrustedSidecarAPIURL(configured, current.sidecarAPIURLSource)
 	}
 	uiURL, err := url.Parse(strings.TrimSpace(current.sidecarURL))
 	if err != nil {
@@ -456,21 +464,40 @@ func sidecarManagementAPIURL(current runtimeState, headers http.Header) (string,
 		uiURL.RawPath = ""
 		uiURL.RawQuery = ""
 		uiURL.Fragment = ""
-		return uiURL.String(), nil
+		return validateTrustedSidecarAPIURL(uiURL.String(), "sidecar_url")
 	}
-	origin := strings.TrimSpace(headers.Get("Origin"))
-	if origin == "" {
-		origin = strings.TrimSpace(headers.Get("Referer"))
+	if runtimeAPIURL := configuredRuntimeSidecarAPIURL(); runtimeAPIURL != "" {
+		return validateTrustedSidecarAPIURL(runtimeAPIURL, "runtime")
 	}
-	base, err := url.Parse(origin)
-	if err != nil || !base.IsAbs() || base.Host == "" || (base.Scheme != "http" && base.Scheme != "https") {
-		return "", errors.New("sidecar_api_url is required when sidecar_url is relative and no browser origin is available")
+	return "", errors.New("sidecar_api_url or CODEX_AGENT_IDENTITY_SIDECAR_HOSTS is required when sidecar_url is relative")
+}
+
+func validateTrustedSidecarAPIURL(raw, source string) (string, error) {
+	normalized, err := normalizeSidecarAPIURL(raw)
+	if err != nil {
+		return "", err
 	}
-	base.Path = strings.TrimRight(uiURL.Path, "/") + sidecarRelativeAPICall
-	base.RawPath = ""
-	base.RawQuery = ""
-	base.Fragment = ""
-	return base.String(), nil
+	u, err := url.Parse(normalized)
+	if err != nil || !u.IsAbs() || u.Host == "" {
+		return "", errors.New("sidecar API target must be an absolute URL")
+	}
+	// HTTPS is required for configured remote targets. Plain HTTP remains
+	// available only for loopback legacy installs and trusted container routing
+	// supplied by the process environment. Browser Origin/Referer values never
+	// participate in target selection.
+	if u.Scheme == "http" && source != "runtime" && !isLoopbackHost(u.Hostname()) {
+		return "", errors.New("sidecar API target must use HTTPS unless it targets loopback or trusted runtime routing")
+	}
+	return normalized, nil
+}
+
+func isLoopbackHost(host string) bool {
+	host = strings.Trim(strings.TrimSpace(host), "[]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func normalizeSidecarAPIURL(raw string) (string, error) {
@@ -494,7 +521,7 @@ func normalizeSidecarAPIURL(raw string) (string, error) {
 
 func blockedForwardHeader(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "host", "content-length", "content-encoding", "accept-encoding", "connection", "cookie", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto":
+	case "host", "content-length", "content-encoding", "accept-encoding", "connection", "cookie", "keep-alive", "origin", "referer", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto":
 		return true
 	default:
 		return false
@@ -629,6 +656,7 @@ func managementHTML(sidecarURL, embedURL string) string {
 	escapedURL := html.EscapeString(embedURL)
 	jsURL, _ := json.Marshal(sidecarURL)
 	localDefaultURL, _ := json.Marshal(defaultSidecarURL)
+	legacyLocalURL, _ := json.Marshal(legacyLocalSidecarURL)
 	sameOriginPath, _ := json.Marshal("/agent-identity/")
 	template := `<!doctype html>
 <html lang="zh-CN" data-theme="white">
@@ -670,6 +698,7 @@ func managementHTML(sidecarURL, embedURL string) string {
     const readyType='__READY_TYPE__';
     const rootURL=__ROOT_URL__;
     const localDefaultURL=__LOCAL_DEFAULT_URL__;
+    const legacyLocalURL=__LEGACY_LOCAL_URL__;
     const sameOriginPath=__SAME_ORIGIN_PATH__;
     const root=document.documentElement;
     const frame=document.getElementById('identityFrame');
@@ -777,7 +806,10 @@ func managementHTML(sidecarURL, embedURL string) string {
     try{
       const configured=new URL(frame.dataset.src,window.location.href);
       const localDefault=new URL(localDefaultURL,window.location.href);
-      if(configured.origin===localDefault.origin&&configured.pathname===localDefault.pathname){
+      const legacyLocal=new URL(legacyLocalURL,window.location.href);
+      const isSameOriginDefault=configured.origin===localDefault.origin&&configured.pathname===localDefault.pathname;
+      const isLegacyLocal=configured.href===legacyLocal.href;
+      if(isSameOriginDefault||isLegacyLocal){
         const sameOrigin=new URL(sameOriginPath,window.location.href);
         sameOrigin.searchParams.set('embed','cpamc');
         addCandidate(sameOrigin.href);
@@ -836,6 +868,7 @@ func managementHTML(sidecarURL, embedURL string) string {
 		"__MIN_VERSION__", minimumSidecarVersion,
 		"__ROOT_URL__", string(jsURL),
 		"__LOCAL_DEFAULT_URL__", string(localDefaultURL),
+		"__LEGACY_LOCAL_URL__", string(legacyLocalURL),
 		"__SAME_ORIGIN_PATH__", string(sameOriginPath),
 		"__READY_TYPE__", readyMessageType,
 		"__THEME_TYPE__", themeMessageType,
