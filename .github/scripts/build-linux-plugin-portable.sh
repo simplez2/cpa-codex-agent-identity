@@ -44,12 +44,21 @@ if [[ -z "${go_version}" ]]; then
   echo "could not resolve Go version from go.mod" >&2
   exit 1
 fi
+case "${go_version}:${goarch}" in
+  1.26.6:amd64) go_checksum="708effb774be8237570d0add163225abbdfaf4fca28b2611df167beba4feef89" ;;
+  1.26.6:arm64) go_checksum="d0507e9e9d7fe012aae570108cbd76c15de879e17130ab8cb90d4d7445cb1f2e" ;;
+  *)
+    echo "Go ${go_version} ${goarch} is not pinned in build-linux-plugin-portable.sh" >&2
+    exit 1
+    ;;
+esac
 
 docker run --rm \
   --platform="${platform}" \
   -e "PLUGIN_VERSION=${version}" \
   -e "PLUGIN_GOARCH=${goarch}" \
   -e "GO_VERSION=${go_version}" \
+  -e "GO_CHECKSUM=${go_checksum}" \
   -e "OUTPUT=/src/$(realpath --relative-to="${repo_root}" "${output_abs}")" \
   -v "${repo_root}:/src" \
   -w /src \
@@ -61,10 +70,13 @@ docker run --rm \
     command -v curl >/dev/null
     command -v tar >/dev/null
     command -v awk >/dev/null
-    rm -rf /tmp/go
+    command -v sha256sum >/dev/null
+    rm -rf /tmp/go /tmp/go.tar.gz
     curl --fail --silent --show-error --location \
-      "https://go.dev/dl/go${GO_VERSION}.linux-${PLUGIN_GOARCH}.tar.gz" \
-      | tar -xz -C /tmp
+      --output /tmp/go.tar.gz \
+      "https://go.dev/dl/go${GO_VERSION}.linux-${PLUGIN_GOARCH}.tar.gz"
+    printf '%s  %s\n' "${GO_CHECKSUM}" /tmp/go.tar.gz | sha256sum --check --status -
+    tar -xzf /tmp/go.tar.gz -C /tmp
     export PATH="/tmp/go/bin:${PATH}"
     export GOTOOLCHAIN=local
     export CGO_ENABLED=1

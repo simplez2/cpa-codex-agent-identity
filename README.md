@@ -132,7 +132,9 @@ go build -trimpath -buildvcs=false -o bin/codex-agent-identity-sidecar ./cmd/sid
 
 cd plugin/codex-agent-identity
 go test ./... -count=1
-CGO_ENABLED=1 go build -trimpath -buildvcs=false -buildmode=c-shared -o ../../bin/codex-agent-identity.so .
+cd ../..
+make package-plugin-portable GOOS=linux GOARCH=amd64
+make verify-plugin-compatibility GOOS=linux GOARCH=amd64
 ~~~
 
 The integration suite covers JWT and PAT validation, HTTP, SSE, WebSocket, images, quota/reset-credit routing, task rebuild after 401, concurrent task reuse, proxy hot reload, batch preview, duplicate detection, non-atomic import, atomic abort, rollback helpers, authenticated ManagementRoute and ResourceRoute registration, and schema-version negotiation.
@@ -266,7 +268,7 @@ default. For a direct host install without a reverse proxy, pass the local URL
 explicitly; if CPA is published behind a reverse proxy, keep the same-origin path:
 
 ~~~bash
-sudo sh deploy/bootstrap-runtime.sh --sidecar-url /agent-identity/ --start
+sudo sh deploy/bootstrap-runtime.sh --sidecar-url http://127.0.0.1:18787/agent-identity/ --start
 ~~~
 
 For an existing deployment, keep its config and env files and apply the equivalent settings manually. The durable example is deploy/docker-compose.production.yml; use an explicit project directory so the root-level config, auth, logs, and runtime paths resolve correctly:

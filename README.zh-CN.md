@@ -90,6 +90,14 @@ plugins:
 
 ~~~yaml
 volumes:
+  # Plugin Store 安装或升级期间需要可写挂载。
+  - ./runtime/cpa-plugins:/CLIProxyAPI/plugins:rw
+~~~
+
+安装或升级完成后，重新创建 CPA 并恢复只读挂载：
+
+~~~yaml
+volumes:
   - ./runtime/cpa-plugins:/CLIProxyAPI/plugins:ro
 ~~~
 
@@ -113,7 +121,7 @@ sudo sh deploy/bootstrap-runtime.sh --start
 管理页默认使用与 CPA 同源的 <code>/agent-identity/</code> 访问 sidecar。若是没有反向代理的直接宿主机安装，请显式传入本机地址；若 CPA 通过反向代理发布，推荐使用同源路径：
 
 ~~~bash
-sudo sh deploy/bootstrap-runtime.sh --sidecar-url /agent-identity/ --start
+sudo sh deploy/bootstrap-runtime.sh --sidecar-url http://127.0.0.1:18787/agent-identity/ --start
 ~~~
 
 已有部署不要覆盖原 config 和 .env；请手动合并同样的设置。参考 deploy/docker-compose.production.yml 时，要显式指定 project directory，确保根目录的 config、auth、logs 和 runtime 路径解析正确：

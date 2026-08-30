@@ -142,7 +142,7 @@ GET /v0/management/codex-agent-identity/open 由 CPA Management key 保护，返
 ### 独立 sidecar UI
 
 /agent-identity/ 静态页面本身可以通过反代访问，但以下 API 都要求 Bearer management key：
-The default browser URL is the same-origin `/agent-identity/`; blank and `/` are normalized to that path. Historical absolute local URLs such as `http://127.0.0.1:18787/agent-identity/` remain accepted when explicitly configured.
+默认浏览器 URL 是与 CPA 同源的 `/agent-identity/`；空值和 `/` 会规范化为该路径。像 `http://127.0.0.1:18787/agent-identity/` 这样的历史绝对本地 URL，在显式配置时仍会被接受。
 
 - identities list；
 - single import；
