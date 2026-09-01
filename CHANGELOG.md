@@ -4,7 +4,38 @@ All notable changes to `cpa-codex-agent-identity` are documented here.
 Published registry and release assets are updated only after the tagged release
 workflow has produced and checksummed the artifacts.
 
-## [Unreleased] - 0.3.8
+## [Unreleased] - 0.3.9
+
+### Added
+
+- Add an authenticated diagnostics endpoint and CPA synchronization status so
+  deployments can distinguish sidecar reachability, key delivery, and auth-file
+  persistence failures without exposing credentials.
+- Add a CPA-compatible quota and reset-credit bridge that resolves runtime-only
+  sidecar auth files back to the original Agent Identity or PAT.
+
+### Changed
+
+- Keep `codex-agent-identity` as the private auth-file parser while returning
+  `Provider: codex`, so Agent Identity and PAT traffic uses CPA's native Codex
+  executor without intercepting ordinary CPA OAuth files.
+- Treat the same account imported into different Team workspaces as distinct by
+  including `account_id` in identity IDs and CPA auth-file names.
+
+### Fixed
+
+- Read the current CPAMC Management key from its scoped encrypted storage
+  (`selection -> scope -> state.managementKey`) and pass it only through a
+  nonce-bound same-origin `postMessage`; retain legacy storage fallback without
+  putting the key in an iframe URL or persistent sidecar storage.
+- Make CPA auth-file create, update, delete, migration, rollback, and final
+  persistence checks tolerate the host's eventual consistency while failing
+  closed when a sidecar auth index cannot be resolved.
+- Prevent `cais_` runtime client keys from reaching CPA's ChatGPT JWT parser,
+  which previously caused quota requests to fail with `Could not parse your
+  authentication token`.
+
+## [0.3.8] - 2026-08-30
 
 ### Fixed
 

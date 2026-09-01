@@ -24,3 +24,4 @@ Dockerfile* text eol=lf
 .env.example text eol=lf
 LICENSE text eol=lf
 *.ps1 text eol=crlf
+VERSION text eol=lf

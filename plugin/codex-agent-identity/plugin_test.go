@@ -72,7 +72,7 @@ func TestAuthParseMapsManagedCredentialToNativeCodexOAuthShape(t *testing.T) {
 	if !response.Handled || auth.Provider != "codex" || !auth.Disabled || auth.ProxyURL != "socks5://127.0.0.1:1080" {
 		t.Fatalf("managed auth state was not mapped: %#v", response)
 	}
-	if auth.Attributes["auth_kind"] != "oauth" || auth.Attributes["plan_type"] != "free" || auth.Attributes["account_id"] != "account-a" || auth.Attributes["chatgpt_user_id"] != "user-a" {
+	if auth.Attributes["auth_kind"] != "oauth" || auth.Attributes["runtime_only"] != "true" || auth.Attributes["plan_type"] != "free" || auth.Attributes["account_id"] != "account-a" || auth.Attributes["chatgpt_user_id"] != "user-a" {
 		t.Fatalf("native Codex routing attributes are incomplete: %#v", auth.Attributes)
 	}
 	if strings.TrimSpace(auth.Attributes["api_key"]) != "" || auth.Metadata["access_token"] != "cais_test_0000000000000000000000000000" {
@@ -80,6 +80,35 @@ func TestAuthParseMapsManagedCredentialToNativeCodexOAuthShape(t *testing.T) {
 	}
 	if string(auth.StorageJSON) != string(storage) || auth.NextRefreshAfter.Before(time.Now().UTC()) {
 		t.Fatalf("provider storage or refresh schedule was lost: %#v", auth)
+	}
+}
+
+func TestAuthParseRecognizesHostPersistedManagedCredential(t *testing.T) {
+	storage := []byte(`{
+		"type":"codex",
+		"auth_mode":"agent_identity_sidecar",
+		"auth_kind":"oauth",
+		"email":"agent@example.invalid",
+		"access_token":"cais_test_0000000000000000000000000000",
+		"base_url":"http://codex-agent-identity-sidecar:8787/backend-api/codex",
+		"agent_identity_id":"agent-aabbccddeeff",
+		"websockets":true
+	}`)
+	request, err := json.Marshal(pluginapi.AuthParseRequest{Provider: runtimeProviderID, FileName: "managed.json", RawJSON: storage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := handleMethod(pluginabi.MethodAuthParse, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response pluginapi.AuthParseResponse
+	decodePluginResult(t, raw, &response)
+	if !response.Handled || response.Auth.Provider != runtimeProviderID {
+		t.Fatalf("host-persisted managed credential was not recognized: %#v", response)
+	}
+	if response.Auth.Attributes["base_url"] != "http://codex-agent-identity-sidecar:8787/backend-api/codex" || response.Auth.Attributes["runtime_only"] != "true" {
+		t.Fatalf("sidecar runtime attributes were not restored after host persistence: %#v", response.Auth.Attributes)
 	}
 }
 
@@ -286,6 +315,16 @@ func TestManagementUIRegistersAuthenticatedRouteAndResource(t *testing.T) {
 				t.Fatalf("management response is missing CPA theme integration %q", expected)
 			}
 		}
+		for _, expected := range []string{managementKeyMessageType, managementBridgeQueryKey, secureStoragePrefix, secureStorageSalt, authSelectionPrefix, authScopePrefix, "encodeURIComponent(normalizedScope)", "state.managementKey", "window.parent.location.href"} {
+			if !strings.Contains(body, expected) {
+				t.Fatalf("management response is missing scoped CPAMC auth bridge %q", expected)
+			}
+		}
+		for _, forbidden := range []string{"searchParams.set('managementKey'", `searchParams.set("managementKey"`, "managementKey="} {
+			if strings.Contains(body, forbidden) {
+				t.Fatalf("management response leaks the management key through the iframe URL: %q", forbidden)
+			}
+		}
 		for _, legacyColor := range []string{"#2563eb", "#3971f2", "#5b8cff", "#070b12", "#060910", "--blue"} {
 			if strings.Contains(strings.ToLower(body), legacyColor) {
 				t.Fatalf("management response still contains legacy color %q", legacyColor)
@@ -297,6 +336,82 @@ func TestManagementUIRegistersAuthenticatedRouteAndResource(t *testing.T) {
 		if !strings.Contains(response.Headers.Get("Content-Security-Policy"), "frame-ancestors 'self'") || response.Headers.Get("X-Frame-Options") != "SAMEORIGIN" {
 			t.Fatalf("management response can be framed cross-origin: headers=%v", response.Headers)
 		}
+	}
+}
+
+func TestManagementUIReadsScopedCPAMCAuthStorage(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is required to execute the generated scoped auth bridge")
+	}
+	body := managementHTML(defaultSidecarURL, defaultSidecarEmbedURL)
+	start := strings.Index(body, "function localStorageValue(key)")
+	end := strings.Index(body, "function postManagementKey()")
+	if start < 0 || end <= start {
+		t.Fatalf("generated wrapper scoped auth logic is missing")
+	}
+	snippet := body[start:end]
+	harness := fmt.Sprintf(`
+const userAgent = 'Codex Agent Identity test browser';
+Object.defineProperty(globalThis, 'navigator', {value: {userAgent}, configurable: true});
+if (typeof globalThis.atob !== 'function') globalThis.atob = value => Buffer.from(value, 'base64').toString('binary');
+if (typeof globalThis.btoa !== 'function') globalThis.btoa = value => Buffer.from(value, 'binary').toString('base64');
+const values = new Map();
+const localStorage = {
+  get length(){ return values.size; },
+  key(index){ return Array.from(values.keys())[index] ?? null; },
+  getItem(key){ return values.has(key) ? values.get(key) : null; },
+  setItem(key,value){ values.set(String(key),String(value)); },
+  clear(){ values.clear(); }
+};
+const wrapperURL = new URL('https://cpa.example.test/CLIProxyAPI/static/v0/resource/plugins/codex-agent-identity/open');
+const window = {
+  location: {href: wrapperURL.href, origin: wrapperURL.origin, host: wrapperURL.host},
+  parent: {location: {href: 'https://cpa.example.test/CLIProxyAPI/static/management.html'}},
+  localStorage
+};
+const secureStoragePrefix = %q;
+const secureStorageSalt = %q;
+const authStorageKey = %q;
+const authScopePrefix = %q;
+const authSelectionPrefix = %q;
+const managementOpenURLPath = %q;
+const legacyManagementKeyStorageKey = %q;
+function encodeStoredValue(value){
+  const plaintext = JSON.stringify(value);
+  const bytes = new TextEncoder().encode(plaintext);
+  const keyBytes = new TextEncoder().encode(secureStorageSalt+'|'+window.location.host+'|'+navigator.userAgent);
+  const encoded = new Uint8Array(bytes.length);
+  for(let index=0;index<bytes.length;index++)encoded[index]=bytes[index]^keyBytes[index%%keyBytes.length];
+  let binary='';
+  for(let index=0;index<encoded.length;index++)binary+=String.fromCharCode(encoded[index]);
+  return secureStoragePrefix+btoa(binary);
+}
+%s
+const scope = 'https://cpa.example.test/CLIProxyAPI/static';
+const selectedAPIBase = 'https://cpa.example.test/CLIProxyAPI/static';
+localStorage.setItem(authSelectionPrefix+encodeURIComponent(scope), encodeStoredValue(selectedAPIBase));
+localStorage.setItem(authScopePrefix+encodeURIComponent(scope)+':'+encodeURIComponent(selectedAPIBase), encodeStoredValue({state:{apiBase:selectedAPIBase,managementKey:'scoped-test-key'}}));
+localStorage.setItem(authStorageKey, encodeStoredValue({state:{managementKey:'wrong-legacy-key'}}));
+const scoped = readStoredManagementKey();
+localStorage.clear();
+localStorage.setItem(authStorageKey, encodeStoredValue({state:{managementKey:'legacy-test-key'}}));
+const legacy = readStoredManagementKey();
+process.stdout.write(JSON.stringify({scoped,legacy}));
+`, secureStoragePrefix, secureStorageSalt, authStorageKey, authScopePrefix, authSelectionPrefix, managementOpenFullPath, legacyManagementKeyStorageKey, snippet)
+	output, err := exec.Command(node, "-e", harness).CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated scoped auth bridge failed: %v\n%s", err, output)
+	}
+	var got struct {
+		Scoped string `json:"scoped"`
+		Legacy string `json:"legacy"`
+	}
+	if err := json.Unmarshal(output, &got); err != nil {
+		t.Fatalf("decode generated scoped auth result: %v\n%s", err, output)
+	}
+	if got.Scoped != "scoped-test-key" || got.Legacy != "legacy-test-key" {
+		t.Fatalf("generated scoped auth result = %#v", got)
 	}
 }
 
@@ -463,6 +578,45 @@ func TestManagementFrameSourcesAlwaysAllowsSameOriginFallback(t *testing.T) {
 	}
 }
 
+func TestManagementFrameSourcesMatchWrapperFallbacks(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		current    runtimeState
+		wantSource []string
+		noSource   []string
+	}{
+		{
+			name:       "default",
+			current:    runtimeState{sidecarURL: defaultSidecarURL, frameSource: defaultSidecarOrigin},
+			wantSource: []string{legacyLocalSidecarOrigin, legacyLocalhostOrigin, legacyIPv6Origin},
+		},
+		{
+			name:       "explicit legacy localhost",
+			current:    runtimeState{sidecarURL: legacyLocalhostSidecarURL, frameSource: legacyLocalhostOrigin},
+			wantSource: []string{legacyLocalSidecarOrigin, legacyLocalhostOrigin, legacyIPv6Origin},
+		},
+		{
+			name:     "remote custom",
+			current:  runtimeState{sidecarURL: "https://sidecar.example.test/agent-identity/", frameSource: "https://sidecar.example.test"},
+			noSource: []string{legacyLocalSidecarOrigin, legacyLocalhostOrigin, legacyIPv6Origin},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			sources := managementFrameSourcesForState(test.current)
+			for _, expected := range test.wantSource {
+				if !containsCSPSource(sources, expected) {
+					t.Fatalf("CSP sources %q omit wrapper candidate origin %q", sources, expected)
+				}
+			}
+			for _, forbidden := range test.noSource {
+				if containsCSPSource(sources, forbidden) {
+					t.Fatalf("CSP sources %q unexpectedly allow %q", sources, forbidden)
+				}
+			}
+		})
+	}
+}
+
 func TestDefaultSidecarURLIsUsedWhenConfigIsOmitted(t *testing.T) {
 	configurePluginForTest(t, "")
 	raw, err := handleMethod(pluginabi.MethodManagementHandle, managementPayload(t, http.MethodGet, managementOpenFullPath))
@@ -485,12 +639,13 @@ func TestDefaultSidecarURLIsUsedWhenConfigIsOmitted(t *testing.T) {
 	}
 }
 
-func TestRelativeSidecarURLDoesNotUseBrowserHeaders(t *testing.T) {
+func TestRelativeSidecarURLUsesFixedLoopbackFallbackWithoutBrowserHeaders(t *testing.T) {
 	t.Setenv("CODEX_AGENT_IDENTITY_SIDECAR_API_URL", "")
 	t.Setenv("CODEX_AGENT_IDENTITY_SIDECAR_HOSTS", "")
 	t.Setenv("CODEX_AGENT_IDENTITY_SIDECAR_HTTP_PORTS", "")
-	if _, err := sidecarManagementAPIURL(runtimeState{sidecarURL: "/agent-identity/"}); err == nil || !strings.Contains(err.Error(), "CODEX_AGENT_IDENTITY_SIDECAR_HOSTS") {
-		t.Fatalf("relative sidecar URL was accepted without trusted runtime routing: %v", err)
+	target, err := sidecarManagementAPIURL(runtimeState{sidecarURL: "/agent-identity/"})
+	if err != nil || target != legacyLocalSidecarAPIURL {
+		t.Fatalf("relative sidecar URL fallback = %q, %v; want %q", target, err, legacyLocalSidecarAPIURL)
 	}
 }
 
@@ -525,11 +680,45 @@ func TestApplyConfigKeepsCustomSidecarOriginForDerivedAPI(t *testing.T) {
 }
 
 func TestLegacyLocalWrapperPrefersSameOriginCandidate(t *testing.T) {
+	candidates := generatedWrapperCandidates(t, "https://cpa.example.test/v0/management/codex-agent-identity/open", legacyLocalSidecarURL+"?embed=cpamc")
+	want := []string{
+		"https://cpa.example.test/agent-identity/?embed=cpamc",
+		legacyLocalSidecarURL + "?embed=cpamc",
+	}
+	if !equalStrings(candidates, want) {
+		t.Fatalf("legacy URL candidate order = %#v, want %#v", candidates, want)
+	}
+}
+
+func TestLocalDefaultWrapperIncludesAllLoopbackCandidates(t *testing.T) {
+	candidates := generatedWrapperCandidates(t, "http://127.0.0.1:8317/v0/management/codex-agent-identity/open", defaultSidecarEmbedURL)
+	want := []string{
+		"http://127.0.0.1:8317/agent-identity/?embed=cpamc",
+		legacyLocalSidecarURL + "?embed=cpamc",
+		legacyLocalhostSidecarURL + "?embed=cpamc",
+		legacyIPv6SidecarURL + "?embed=cpamc",
+	}
+	if !equalStrings(candidates, want) {
+		t.Fatalf("local default candidate order = %#v, want %#v", candidates, want)
+	}
+}
+
+func TestRemoteCustomWrapperDoesNotProbeBrowserLoopback(t *testing.T) {
+	configured := "https://sidecar.example.test/agent-identity/?embed=cpamc"
+	candidates := generatedWrapperCandidates(t, "http://127.0.0.1:8317/v0/management/codex-agent-identity/open", configured)
+	want := []string{configured}
+	if !equalStrings(candidates, want) {
+		t.Fatalf("remote custom candidate list = %#v, want %#v", candidates, want)
+	}
+}
+
+func generatedWrapperCandidates(t *testing.T, pageURL, frameURL string) []string {
+	t.Helper()
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node is required to execute the generated browser candidate logic")
 	}
-	body := managementHTML(legacyLocalSidecarURL, legacyLocalSidecarURL+"?embed=cpamc")
+	body := managementHTML(frameURL, frameURL)
 	start := strings.Index(body, "const candidateURLs=[];")
 	end := strings.Index(body, "function currentCandidate()")
 	if start < 0 || end <= start {
@@ -537,14 +726,14 @@ func TestLegacyLocalWrapperPrefersSameOriginCandidate(t *testing.T) {
 	}
 	snippet := body[start:end]
 	harness := fmt.Sprintf(`
-const window = {location: {href: "https://cpa.example.test/v0/management/codex-agent-identity/open"}};
+const window = {location: {href: %q}};
 const frame = {dataset: {src: %q}};
 const localDefaultURL = %q;
 const legacyLocalURL = %q;
 const sameOriginPath = %q;
 %s
 process.stdout.write(JSON.stringify(candidateURLs));
-`, legacyLocalSidecarURL+"?embed=cpamc", defaultSidecarURL, legacyLocalSidecarURL, "/agent-identity/", snippet)
+`, pageURL, frameURL, defaultSidecarURL, legacyLocalSidecarURL, "/agent-identity/", snippet)
 	output, err := exec.Command(node, "-e", harness).CombinedOutput()
 	if err != nil {
 		t.Fatalf("generated browser candidate logic failed: %v\n%s", err, output)
@@ -553,11 +742,19 @@ process.stdout.write(JSON.stringify(candidateURLs));
 	if err := json.Unmarshal(output, &candidates); err != nil {
 		t.Fatalf("decode generated candidate list: %v\n%s", err, output)
 	}
-	wantFirst := "https://cpa.example.test/agent-identity/?embed=cpamc"
-	wantSecond := legacyLocalSidecarURL + "?embed=cpamc"
-	if len(candidates) != 2 || candidates[0] != wantFirst || candidates[1] != wantSecond {
-		t.Fatalf("legacy URL candidate order = %#v, want [%q %q]", candidates, wantFirst, wantSecond)
+	return candidates
+}
+
+func equalStrings(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
 	}
+	for index := range want {
+		if got[index] != want[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestDefaultRuntimeSidecarAPIURLUsesSameOriginWithoutRuntimeConfig(t *testing.T) {

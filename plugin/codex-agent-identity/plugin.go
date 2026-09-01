@@ -23,36 +23,50 @@ import (
 )
 
 const (
-	pluginID                  = "codex-agent-identity"
-	pluginProviderID          = credential.PluginProvider
-	runtimeProviderID         = credential.RuntimeProvider
-	pluginName                = "Codex Agent Identity"
-	pluginAuthor              = "simplez2"
-	pluginRepository          = "https://github.com/simplez2/cpa-codex-agent-identity"
-	pluginLogo                = "https://raw.githubusercontent.com/simplez2/cpa-codex-agent-identity/main/assets/logo.svg"
-	managementOpenPath        = "/codex-agent-identity/open"
-	managementOpenFullPath    = "/v0/management" + managementOpenPath
-	managementAPICallPath     = "/codex-agent-identity/api-call"
-	managementAPICallFullPath = "/v0/management" + managementAPICallPath
-	sidecarAPICallPath        = "/v0/management/api-call"
-	resourceOpenFullPath      = "/v0/resource/plugins/" + pluginID + "/open"
-	legacyResourceOpenPath    = "/v0/resource/plugins/" + pluginID + managementOpenPath
-	configSidecarURL          = "sidecar_url"
-	configSidecarAPIURL       = "sidecar_api_url"
-	defaultSidecarURL         = "/agent-identity/"
-	legacyLocalSidecarURL     = "http://127.0.0.1:18787/agent-identity/"
-	defaultSidecarOrigin      = "'self'"
-	defaultSidecarAPIURL      = ""
-	defaultSidecarHTTPPort    = 8787
-	defaultSidecarEmbedURL    = defaultSidecarURL + "?embed=cpamc"
-	maxForwardBodyBytes       = 1 << 20
-	minimumSidecarVersion     = "0.3.2"
-	readyMessageType          = "cpa-codex-agent-identity:ready"
-	themeMessageType          = "cpa-codex-agent-identity:theme"
+	pluginID                      = "codex-agent-identity"
+	pluginProviderID              = credential.PluginProvider
+	runtimeProviderID             = credential.RuntimeProvider
+	pluginName                    = "Codex Agent Identity"
+	pluginAuthor                  = "simplez2"
+	pluginRepository              = "https://github.com/simplez2/cpa-codex-agent-identity"
+	pluginLogo                    = "https://raw.githubusercontent.com/simplez2/cpa-codex-agent-identity/main/assets/logo.svg"
+	managementOpenPath            = "/codex-agent-identity/open"
+	managementOpenFullPath        = "/v0/management" + managementOpenPath
+	managementAPICallPath         = "/codex-agent-identity/api-call"
+	managementAPICallFullPath     = "/v0/management" + managementAPICallPath
+	sidecarAPICallPath            = "/v0/management/api-call"
+	resourceOpenFullPath          = "/v0/resource/plugins/" + pluginID + "/open"
+	legacyResourceOpenPath        = "/v0/resource/plugins/" + pluginID + managementOpenPath
+	configSidecarURL              = "sidecar_url"
+	configSidecarAPIURL           = "sidecar_api_url"
+	defaultSidecarURL             = "/agent-identity/"
+	legacyLocalSidecarURL         = "http://127.0.0.1:18787/agent-identity/"
+	legacyLocalhostSidecarURL     = "http://localhost:18787/agent-identity/"
+	legacyIPv6SidecarURL          = "http://[::1]:18787/agent-identity/"
+	legacyLocalSidecarAPIURL      = "http://127.0.0.1:18787/v0/management/api-call"
+	legacyLocalSidecarOrigin      = "http://127.0.0.1:18787"
+	legacyLocalhostOrigin         = "http://localhost:18787"
+	legacyIPv6Origin              = "http://[::1]:18787"
+	defaultSidecarOrigin          = "'self'"
+	defaultSidecarAPIURL          = ""
+	defaultSidecarHTTPPort        = 8787
+	defaultSidecarEmbedURL        = defaultSidecarURL + "?embed=cpamc"
+	maxForwardBodyBytes           = 1 << 20
+	minimumSidecarVersion         = "0.3.9"
+	readyMessageType              = "cpa-codex-agent-identity:ready"
+	themeMessageType              = "cpa-codex-agent-identity:theme"
+	managementKeyMessageType      = "cpa-codex-agent-identity:management-key"
+	managementBridgeQueryKey      = "cpa_bridge"
+	secureStoragePrefix           = "enc::v1::"
+	secureStorageSalt             = "cli-proxy-api-webui::secure-storage"
+	authStorageKey                = "cli-proxy-auth"
+	authScopePrefix               = authStorageKey + ":scope:"
+	authSelectionPrefix           = authStorageKey + ":selection:"
+	legacyManagementKeyStorageKey = "managementKey"
 )
 
 var (
-	pluginVersion = "0.3.8"
+	pluginVersion = "0.3.9"
 	stateMu       sync.RWMutex
 	state         = runtimeState{
 		sidecarURL:    defaultSidecarURL,
@@ -473,6 +487,12 @@ func sidecarManagementAPIURL(current runtimeState) (string, error) {
 	if runtimeAPIURL := configuredRuntimeSidecarAPIURL(); runtimeAPIURL != "" {
 		return validateTrustedSidecarAPIURL(runtimeAPIURL, "runtime")
 	}
+	// A fresh Plugin Store installation has no visible sidecar URL field.
+	// Keep the historical host-install contract working without trusting
+	// browser Origin/Referer headers: only the fixed loopback listener is used.
+	if localSidecarFallbackEnabled(current.sidecarURL) {
+		return validateTrustedSidecarAPIURL(legacyLocalSidecarAPIURL, "default-loopback")
+	}
 	return "", errors.New("sidecar_api_url or CODEX_AGENT_IDENTITY_SIDECAR_HOSTS is required when sidecar_url is relative")
 }
 
@@ -625,6 +645,47 @@ func managementFrameSources(source string) string {
 	return "'self' " + source
 }
 
+func managementFrameSourcesForState(current runtimeState) string {
+	sources := managementFrameSources(current.frameSource)
+	if !localSidecarFallbackEnabled(current.sidecarURL) {
+		return sources
+	}
+	for _, candidate := range []string{legacyLocalSidecarOrigin, legacyLocalhostOrigin, legacyIPv6Origin} {
+		if !containsCSPSource(sources, candidate) {
+			sources += " " + candidate
+		}
+	}
+	return sources
+}
+
+func containsCSPSource(sources, candidate string) bool {
+	for _, value := range strings.Fields(sources) {
+		if value == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func localSidecarFallbackEnabled(raw string) bool {
+	raw = strings.TrimRight(strings.TrimSpace(raw), "/")
+	defaultPath := strings.TrimRight(defaultSidecarURL, "/")
+	if raw == "" || raw == defaultPath {
+		return true
+	}
+	u, err := url.Parse(raw)
+	if err != nil || !u.IsAbs() || !isLoopbackHost(u.Hostname()) {
+		return false
+	}
+	for _, candidate := range []string{legacyLocalSidecarURL, legacyLocalhostSidecarURL, legacyIPv6SidecarURL} {
+		legacy, parseErr := url.Parse(candidate)
+		if parseErr == nil && u.Scheme == legacy.Scheme && u.Host == legacy.Host && u.Path == strings.TrimRight(legacy.Path, "/") {
+			return true
+		}
+	}
+	return false
+}
+
 func currentManagementResponse() managementResponse {
 	current := currentRuntimeState()
 	if current.configError != "" {
@@ -641,7 +702,7 @@ func currentManagementResponse() managementResponse {
 			Body: []byte(configFallbackHTML(current.configError)),
 		}
 	}
-	csp := "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-src " + managementFrameSources(current.frameSource) + "; base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
+	csp := "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-src " + managementFrameSourcesForState(current) + "; base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
 	return managementResponse{
 		StatusCode: http.StatusOK,
 		Headers: http.Header{
@@ -661,7 +722,17 @@ func managementHTML(sidecarURL, embedURL string) string {
 	jsURL, _ := json.Marshal(sidecarURL)
 	localDefaultURL, _ := json.Marshal(defaultSidecarURL)
 	legacyLocalURL, _ := json.Marshal(legacyLocalSidecarURL)
+	localLoopbackURLs, _ := json.Marshal([]string{legacyLocalSidecarURL, legacyLocalhostSidecarURL, legacyIPv6SidecarURL})
 	sameOriginPath, _ := json.Marshal("/agent-identity/")
+	authType, _ := json.Marshal(managementKeyMessageType)
+	bridgeQueryKey, _ := json.Marshal(managementBridgeQueryKey)
+	securePrefix, _ := json.Marshal(secureStoragePrefix)
+	secureSalt, _ := json.Marshal(secureStorageSalt)
+	authStorage, _ := json.Marshal(authStorageKey)
+	authScope, _ := json.Marshal(authScopePrefix)
+	authSelection, _ := json.Marshal(authSelectionPrefix)
+	managementOpenURLPath, _ := json.Marshal(managementOpenFullPath)
+	legacyManagementKeyStorage, _ := json.Marshal(legacyManagementKeyStorageKey)
 	template := `<!doctype html>
 <html lang="zh-CN" data-theme="white">
 <head>
@@ -700,6 +771,15 @@ func managementHTML(sidecarURL, embedURL string) string {
     const storageKey='cli-proxy-theme';
     const themeType='__THEME_TYPE__';
     const readyType='__READY_TYPE__';
+    const authType=__AUTH_TYPE__;
+    const bridgeQueryKey=__BRIDGE_QUERY_KEY__;
+    const secureStoragePrefix=__SECURE_STORAGE_PREFIX__;
+    const secureStorageSalt=__SECURE_STORAGE_SALT__;
+    const authStorageKey=__AUTH_STORAGE_KEY__;
+    const authScopePrefix=__AUTH_SCOPE_PREFIX__;
+    const authSelectionPrefix=__AUTH_SELECTION_PREFIX__;
+    const managementOpenURLPath=__MANAGEMENT_OPEN_URL_PATH__;
+    const legacyManagementKeyStorageKey=__LEGACY_MANAGEMENT_KEY_STORAGE_KEY__;
     const rootURL=__ROOT_URL__;
     const localDefaultURL=__LOCAL_DEFAULT_URL__;
     const legacyLocalURL=__LEGACY_LOCAL_URL__;
@@ -791,6 +871,168 @@ func managementHTML(sidecarURL, embedURL string) string {
       if(!frame||!frame.contentWindow)return;
       frame.contentWindow.postMessage({type:themeType,theme:currentTheme,variables:messageVariables()},childOrigin);
     }
+    function createBridgeNonce(){
+      try{
+        if(window.crypto&&typeof window.crypto.randomUUID==='function')return window.crypto.randomUUID();
+        if(window.crypto&&typeof window.crypto.getRandomValues==='function'){
+          const bytes=new Uint8Array(16);
+          window.crypto.getRandomValues(bytes);
+          return Array.from(bytes).map(function(value){return value.toString(16).padStart(2,'0')}).join('');
+        }
+      }catch(_){}
+      return String(Date.now())+'-'+Math.random().toString(36).slice(2);
+    }
+    const bridgeNonce=createBridgeNonce();
+    function localStorageValue(key){
+      try{return window.localStorage.getItem(key)||''}catch(_){return ''}
+    }
+    function decodeUTF8(bytes){
+      try{return new TextDecoder().decode(bytes)}catch(_){}
+      let binary='';
+      for(let index=0;index<bytes.length;index++)binary+=String.fromCharCode(bytes[index]);
+      try{return decodeURIComponent(escape(binary))}catch(_){return binary}
+    }
+    function decodeStoredValue(raw){
+      if(!raw||raw.indexOf(secureStoragePrefix)!==0)return raw;
+      try{
+        const binary=atob(raw.slice(secureStoragePrefix.length));
+        const keyBytes=new TextEncoder().encode(secureStorageSalt+'|'+window.location.host+'|'+navigator.userAgent);
+        const bytes=new Uint8Array(binary.length);
+        for(let index=0;index<binary.length;index++)bytes[index]=binary.charCodeAt(index)^keyBytes[index%keyBytes.length];
+        return decodeUTF8(bytes);
+      }catch(_){return ''}
+    }
+    function normalizedManagementKey(value){
+      if(typeof value!=='string')return '';
+      const candidate=value.trim();
+      return candidate&&candidate.length<=4096&&!/[\r\n]/.test(candidate)?candidate:'';
+    }
+    function parsedStoredValue(raw){
+      const decoded=decodeStoredValue(raw);
+      if(!decoded)return null;
+      try{return JSON.parse(decoded)}catch(_){return decoded}
+    }
+    function authStateFromStoredValue(raw){
+      const parsed=parsedStoredValue(raw);
+      if(!parsed||typeof parsed!=='object')return null;
+      return parsed.state&&typeof parsed.state==='object'?parsed.state:parsed;
+    }
+    function managementKeyFromStoredValue(raw){
+      const parsed=parsedStoredValue(raw);
+      if(typeof parsed==='string')return normalizedManagementKey(parsed);
+      const state=parsed&&typeof parsed==='object'&&parsed.state&&typeof parsed.state==='object'?parsed.state:parsed;
+      return normalizedManagementKey(state&&state.managementKey);
+    }
+    function normalizedAPIBase(raw){
+      let value=String(raw||'').trim();
+      if(!value)return '';
+      value=value.replace(/\/?v0\/management\/?$/i,'').replace(/\/+$/,'');
+      if(!/^https?:\/\//i.test(value))value='http://'+value;
+      try{
+        const parsed=new URL(value);
+        parsed.hash='';
+        parsed.search='';
+        return parsed.href.replace(/\/+$/,'');
+      }catch(_){return ''}
+    }
+    function apiBasePathFromPage(pathname){
+      const value=String(pathname||'/');
+      const path=value.startsWith('/')?value:'/'+value;
+      const hadTrailingSlash=/\/$/.test(path);
+      const trimmed=path.replace(/\/+$/,'');
+      if(!trimmed)return '';
+      if(hadTrailingSlash)return trimmed;
+      const separator=trimmed.lastIndexOf('/');
+      const filename=trimmed.slice(separator+1);
+      const directory=trimmed.slice(0,separator);
+      const managementPage=/^(?:management|index)\.html?$/i.test(filename);
+      const staticAsset=/(?:^|\/)(?:assets|static)$/.test(directory)&&/\.(?:css|[cm]?js|json|map|svg|png|jpe?g|gif|webp|avif|ico|wasm|txt|xml|woff2?|ttf|eot)$/i.test(filename);
+      return managementPage||staticAsset?directory.replace(/\/+$/,''):trimmed;
+    }
+    function apiScopeFromPageURL(raw){
+      try{
+        const value=new URL(raw,window.location.href);
+        if(value.origin!==window.location.origin)return '';
+        return normalizedAPIBase(value.origin+apiBasePathFromPage(value.pathname));
+      }catch(_){return ''}
+    }
+    function apiScopeFromWrapperURL(raw){
+      try{
+        const value=new URL(raw,window.location.href);
+        const lowerPath=value.pathname.toLowerCase();
+        const resourceMarker='/v0/resource/plugins/';
+        const resourceIndex=lowerPath.lastIndexOf(resourceMarker);
+        if(resourceIndex>=0){
+          value.pathname=value.pathname.slice(0,resourceIndex)||'/';
+        }else if(lowerPath.endsWith(managementOpenURLPath.toLowerCase())){
+          value.pathname=value.pathname.slice(0,value.pathname.length-managementOpenURLPath.length)||'/';
+        }
+        value.hash='';
+        value.search='';
+        return normalizedAPIBase(value.href);
+      }catch(_){return ''}
+    }
+    function storageSelectionScopes(){
+      const scopes=[];
+      try{
+        const pagePaths=[];
+        pagePaths.push(new URL(window.location.href).pathname);
+        if(window.parent!==window)pagePaths.push(new URL(window.parent.location.href).pathname);
+        for(let index=0;index<window.localStorage.length;index++){
+          const key=window.localStorage.key(index)||'';
+          if(key.indexOf(authSelectionPrefix)!==0)continue;
+          let scope='';
+          try{scope=normalizedAPIBase(decodeURIComponent(key.slice(authSelectionPrefix.length)))}catch(_){continue}
+          if(!scope)continue;
+          const scopeURL=new URL(scope);
+          if(scopeURL.origin!==window.location.origin)continue;
+          const basePath=scopeURL.pathname.replace(/\/+$/,'');
+          const related=pagePaths.some(function(path){return !basePath||basePath==='/'||path===basePath||path.indexOf(basePath+'/')===0});
+          if(related&&!scopes.includes(scope))scopes.push(scope);
+        }
+      }catch(_){}
+      return scopes.sort(function(left,right){
+        try{return new URL(right).pathname.length-new URL(left).pathname.length}catch(_){return 0}
+      });
+    }
+    function candidateCPAScopes(){
+      const scopes=[];
+      function add(scope){if(scope&&!scopes.includes(scope))scopes.push(scope)}
+      try{if(window.parent!==window)add(apiScopeFromPageURL(window.parent.location.href))}catch(_){}
+      add(apiScopeFromWrapperURL(window.location.href));
+      storageSelectionScopes().forEach(add);
+      return scopes;
+    }
+    function scopedManagementKey(scope){
+      const normalizedScope=normalizedAPIBase(scope);
+      if(!normalizedScope)return '';
+      const selectionKey=authSelectionPrefix+encodeURIComponent(normalizedScope);
+      const selectedValue=parsedStoredValue(localStorageValue(selectionKey));
+      const selectedAPIBase=typeof selectedValue==='string'?normalizedAPIBase(selectedValue):'';
+      if(!selectedAPIBase)return '';
+      const scopedKey=authScopePrefix+encodeURIComponent(normalizedScope)+':'+encodeURIComponent(selectedAPIBase);
+      const raw=localStorageValue(scopedKey);
+      const state=authStateFromStoredValue(raw);
+      if(!state)return '';
+      const storedAPIBase=normalizedAPIBase(state.apiBase);
+      if(storedAPIBase&&storedAPIBase!==selectedAPIBase)return '';
+      return normalizedManagementKey(state.managementKey);
+    }
+    function readStoredManagementKey(){
+      const scopes=candidateCPAScopes();
+      for(let index=0;index<scopes.length;index++){
+        const key=scopedManagementKey(scopes[index]);
+        if(key)return key;
+      }
+      return managementKeyFromStoredValue(localStorageValue(authStorageKey)) ||
+        managementKeyFromStoredValue(localStorageValue(legacyManagementKeyStorageKey));
+    }
+    function postManagementKey(){
+      if(!frame||!frame.contentWindow||!bridgeNonce||childOrigin==='*')return;
+      const key=readStoredManagementKey();
+      if(!key||key.length>4096||/[\r\n]/.test(key))return;
+      frame.contentWindow.postMessage({type:authType,nonce:bridgeNonce,managementKey:key},childOrigin);
+    }
     function syncTheme(){
       applyShellTheme(resolveTheme(),resolveVariables());
       postTheme();
@@ -801,10 +1043,25 @@ func managementHTML(sidecarURL, embedURL string) string {
       return value;
     }
     const candidateURLs=[];
+    const localLoopbackURLs=__LOCAL_LOOPBACK_URLS__;
     function addCandidate(raw){
       try{
         const value=new URL(raw,window.location.href);
         if(!candidateURLs.includes(value.href))candidateURLs.push(value.href);
+      }catch(_){}
+    }
+    function isLoopbackHost(raw){
+      const host=String(raw||'').toLowerCase().replace(/^\[|\]$/g,'');
+      return host==='localhost'||host==='127.0.0.1'||host==='::1';
+    }
+    function isLocalCPAPage(){
+      try{return isLoopbackHost(new URL(window.location.href).hostname)}catch(_){return false}
+    }
+    function addEmbeddedCandidate(raw){
+      try{
+        const value=new URL(raw,window.location.href);
+        value.searchParams.set('embed','cpamc');
+        addCandidate(value.href);
       }catch(_){}
     }
     try{
@@ -812,22 +1069,41 @@ func managementHTML(sidecarURL, embedURL string) string {
       const localDefault=new URL(localDefaultURL,window.location.href);
       const legacyLocal=new URL(legacyLocalURL,window.location.href);
       const isSameOriginDefault=configured.origin===localDefault.origin&&configured.pathname===localDefault.pathname;
-      const isLegacyLocal=configured.origin===legacyLocal.origin&&configured.pathname===legacyLocal.pathname;
-      if(isSameOriginDefault||isLegacyLocal){
+      const isLegacyLocal=
+        (configured.origin===legacyLocal.origin&&configured.pathname===legacyLocal.pathname) ||
+        localLoopbackURLs.some(function(raw){
+          try{
+            const value=new URL(raw,window.location.href);
+            return configured.origin===value.origin&&configured.pathname===value.pathname;
+          }catch(_){return false}
+        });
+      const canUseLocalFallback=isSameOriginDefault||isLegacyLocal;
+      if(canUseLocalFallback){
         const sameOrigin=new URL(sameOriginPath,window.location.href);
         sameOrigin.searchParams.set('embed','cpamc');
         addCandidate(sameOrigin.href);
       }
+      // CPA Plugin Store artifacts do not start the sidecar. On a local CPA
+      // page, retain the native same-origin route first, then try the legacy
+      // loopback sidecar before the explicitly configured URL. Never make a
+      // remote CPA page reach into a user's browser localhost, and never add
+      // loopback fallbacks for an explicitly configured remote sidecar.
+      if(canUseLocalFallback&&isLocalCPAPage())localLoopbackURLs.forEach(addEmbeddedCandidate);
     }catch(_){}
     addCandidate(frame.dataset.src);
     function currentCandidate(){return candidateURLs[candidateIndex]||frame.dataset.src}
+    function embeddedURL(raw,theme){
+      const value=themedURL(raw,theme);
+      value.searchParams.set(bridgeQueryKey,bridgeNonce);
+      return value;
+    }
     function setFrameSource(){
-      const value=themedURL(currentCandidate(),currentTheme);
+      const value=embeddedURL(currentCandidate(),currentTheme);
       childOrigin=value.origin&&value.origin!=='null'?value.origin:'*';
       frame.src=value.href;
     }
     function connecting(){root.removeAttribute('data-ready');root.removeAttribute('data-failed')}
-    function ready(){clearTimeout(timer);root.removeAttribute('data-failed');root.setAttribute('data-ready','true');postTheme()}
+    function ready(){clearTimeout(timer);root.removeAttribute('data-failed');root.setAttribute('data-ready','true');postTheme();postManagementKey()}
     function failed(){root.removeAttribute('data-ready');root.setAttribute('data-failed','true')}
     function tryNextCandidate(){
       if(candidateIndex+1<candidateURLs.length){
@@ -847,17 +1123,25 @@ func managementHTML(sidecarURL, embedURL string) string {
     }
     window.addEventListener('message',function(event){
       const data=event.data||{};
-      if(frame&&event.source===frame.contentWindow&&data.type===readyType){ready();return}
+      if(frame&&event.source===frame.contentWindow&&data.type===readyType){
+        if(childOrigin!=='*'&&event.origin!==childOrigin)return;
+        if(data.nonce!==bridgeNonce)return;
+        ready();
+        return;
+      }
       if(window.parent!==window&&event.source===window.parent&&data.type===themeType){
         inheritedTheme=data.theme;
         inheritedVariables=data.variables&&typeof data.variables==='object'?data.variables:null;
         syncTheme();
       }
     });
-    window.addEventListener('storage',function(event){if(event.key===storageKey&&!inheritedTheme)syncTheme()});
+    window.addEventListener('storage',function(event){
+      if(event.key===storageKey&&!inheritedTheme)syncTheme();
+      if(event.key===authStorageKey||event.key===legacyManagementKeyStorageKey||String(event.key||'').indexOf(authScopePrefix)===0||String(event.key||'').indexOf(authSelectionPrefix)===0)postManagementKey();
+    });
     const mediaChanged=function(){if(!inheritedTheme)syncTheme()};
     if(typeof media.addEventListener==='function')media.addEventListener('change',mediaChanged);else if(typeof media.addListener==='function')media.addListener(mediaChanged);
-    frame.addEventListener('load',postTheme);
+    frame.addEventListener('load',function(){postTheme();postManagementKey()});
     retry.addEventListener('click',function(){candidateIndex=0;connecting();applyShellTheme(resolveTheme(),resolveVariables());setFrameSource();start()});
     open.addEventListener('click',function(){const value=themedURL(currentCandidate(),currentTheme);window.open(value.href,'_blank','noopener')});
     applyShellTheme(resolveTheme(),resolveVariables());
@@ -873,7 +1157,17 @@ func managementHTML(sidecarURL, embedURL string) string {
 		"__ROOT_URL__", string(jsURL),
 		"__LOCAL_DEFAULT_URL__", string(localDefaultURL),
 		"__LEGACY_LOCAL_URL__", string(legacyLocalURL),
+		"__LOCAL_LOOPBACK_URLS__", string(localLoopbackURLs),
 		"__SAME_ORIGIN_PATH__", string(sameOriginPath),
+		"__AUTH_TYPE__", string(authType),
+		"__BRIDGE_QUERY_KEY__", string(bridgeQueryKey),
+		"__SECURE_STORAGE_PREFIX__", string(securePrefix),
+		"__SECURE_STORAGE_SALT__", string(secureSalt),
+		"__AUTH_STORAGE_KEY__", string(authStorage),
+		"__AUTH_SCOPE_PREFIX__", string(authScope),
+		"__AUTH_SELECTION_PREFIX__", string(authSelection),
+		"__MANAGEMENT_OPEN_URL_PATH__", string(managementOpenURLPath),
+		"__LEGACY_MANAGEMENT_KEY_STORAGE_KEY__", string(legacyManagementKeyStorage),
 		"__READY_TYPE__", readyMessageType,
 		"__THEME_TYPE__", themeMessageType,
 	).Replace(template)

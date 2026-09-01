@@ -56,7 +56,7 @@ func (s *Server) createIdentityDeleteBackup(ctx context.Context, identity *ident
 	}
 	var authSnapshots []cpa.AuthFileSnapshot
 	if s.channels != nil {
-		authSnapshots, err = s.channels.SnapshotIdentity(ctx, identity.ID)
+		authSnapshots, err = s.channels.SnapshotCredential(ctx, cpaCredentialFromStored(identity))
 		if err != nil {
 			return nil, "", fmt.Errorf("snapshot CPA auth files: %w", err)
 		}

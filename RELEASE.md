@@ -59,9 +59,9 @@ make verify-published-release
    updates only `registry.json` and `.env.example`. Then run `jq -e -f
    .github/scripts/validate-registry.jq registry.json` and
    `make verify-published-release` before committing.
-7. **Begin the next development line.** For example, after publishing `0.3.7`,
-   bump `VERSION` and the `Unreleased` heading to `0.3.8`, while leaving
-   `registry.json` and `.env.example` at `0.3.7` until the next release.
+7. **Begin the next development line.** For example, after publishing `0.3.8`,
+   bump `VERSION` and the `Unreleased` heading to `0.3.9`, while leaving
+   `registry.json` and `.env.example` at `0.3.8` until the next release.
 
 ## Invariants enforced by CI
 

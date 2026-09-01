@@ -1,7 +1,7 @@
 # CPA Codex Agent Identity 运行逻辑与安全边界
 
-本文按当前源码说明插件、sidecar、CPA auth 文件、批量导入、代理热加载和 reset-credit 的真实运行路径。当前源码开发线是 v0.3.8，公开 registry 与可直接安装资产仍是 v0.3.7。
-Release baseline: CLIProxyAPI v7.2.145; v0.3.8 assets must be rebuilt, released, and checksummed before registry publication.
+本文按当前源码说明插件、sidecar、CPA auth 文件、批量导入、代理热加载和 reset-credit 的真实运行路径。当前源码开发线是 v0.3.9，公开 registry 与可直接安装资产仍是 v0.3.8。
+Release baseline: CLIProxyAPI v7.2.145; v0.3.9 assets must be rebuilt, released, and checksummed before registry publication.
 
 ## 1. 三个可独立替换的平面
 
@@ -22,7 +22,7 @@ flowchart LR
 - 只识别 `type: codex-agent-identity` 且带有 `auth_mode: agent_identity_sidecar` 的 sidecar auth 文件；
 - 把随机 cais_ key 和内部 base URL 放入 CPA auth 的 OAuth 兼容字段，并返回 `Provider: codex`，从而进入 CPA 原生 Codex executor；
 - 注册受 CPA Management key 保护的 GET /v0/management/codex-agent-identity/open；
-- 注册 `/v0/resource/plugins/codex-agent-identity/open` 作为 CPAMC plugin-pages 的安全 wrapper；不在其中放入 secret 或特权 API。
+- 注册 `/v0/resource/plugins/codex-agent-identity/open` 作为 CPAMC plugin-pages 的安全 wrapper；不内置 secret，仅通过 source、origin 与 nonce 校验的 `postMessage` 复用 CPAMC 当前 scoped 登录状态。
 
 ### Sidecar management plane
 
@@ -150,11 +150,11 @@ GET /v0/management/codex-agent-identity/open 由 CPA Management key 保护，返
 - enable/disable/refresh；
 - delete。
 
-管理密码只保存在当前标签页 sessionStorage。页面用 DOM text node 渲染不可信内容，不把 token 或 opaque credit ID插入 DOM。
+sidecar 管理页只把管理密码保存在当前标签页的 `sessionStorage`。CPAMC 自己可能使用 scoped 混淆 `localStorage` 保存登录状态；wrapper 只读取当前选中的 scope，并通过带随机 nonce 的同源 `postMessage` 转交，不写入 iframe URL、Cookie、导出文件或 sidecar `localStorage`。页面用 DOM text node 渲染不可信内容，不把 token 或 opaque credit ID 插入 DOM。
 
 ### plugin-pages 如何加载
 
-CPA 当前的 `/v0/resource/plugins/...` 路由族不经过 Management key 认证，但 CPAMC 会把它作为插件页面 iframe 的资源入口。当前插件注册 `/v0/resource/plugins/codex-agent-identity/open`，返回不包含 Management key、token 或宿主回调的 HTML wrapper；wrapper 只嵌入 `/agent-identity/` sidecar 页面。
+CPA 当前的 `/v0/resource/plugins/...` 路由族不经过 Management key 认证，但 CPAMC 会把它作为插件页面 iframe 的资源入口。当前插件注册 `/v0/resource/plugins/codex-agent-identity/open`，wrapper 不内置 secret，而是按 CPAMC 当前 `selection -> scope -> state.managementKey` scoped storage 结构读取登录状态，再通过校验 source、origin 与 nonce 的 `postMessage` 交给同源 `/agent-identity/` iframe；Management key 不进入 URL。
 
 资源入口不等于身份操作免认证：sidecar 的列表、预检、导入、启用、停用、刷新和删除仍必须通过自己的 Bearer 管理密码。若 CPAMC 仍不显示菜单，先确认 CPA 与插件都启用并重启 CPA；旧版 CPAMC 可直接使用 `/agent-identity/`。overlay 只提供 quota/reset-credit 兼容层，不负责创建插件入口。
 ## 8. Proxy 热加载

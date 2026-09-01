@@ -1,4 +1,9 @@
-const embeddedInCPAMC = new URLSearchParams(window.location.search).get('embed') === 'cpamc';
+const pageParams = new URLSearchParams(window.location.search);
+const embeddedInCPAMC = pageParams.get('embed') === 'cpamc';
+const bridgeNonce = (pageParams.get('cpa_bridge') || '').trim();
+const managementKeyMessageType = 'cpa-codex-agent-identity:management-key';
+const readyMessageType = 'cpa-codex-agent-identity:ready';
+const managementBridgeEnabled = embeddedInCPAMC && window.parent !== window && isValidBridgeNonce(bridgeNonce);
 if (embeddedInCPAMC) document.documentElement.dataset.embed = 'cpamc';
 
 const keyInput = document.querySelector('#management-key');
@@ -8,6 +13,11 @@ const forgetButton = document.querySelector('#forget');
 const refreshButton = document.querySelector('#refresh');
 const connectionPill = document.querySelector('#connection-pill');
 const statusBox = document.querySelector('#status');
+const manualConnection = document.querySelector('#manual-connection');
+const manualConnectButton = document.querySelector('#manual-connect');
+const cpaSyncStatus = document.querySelector('#cpa-sync-status');
+const cpaSyncLabel = document.querySelector('#cpa-sync-label');
+const cpaSyncDetail = document.querySelector('#cpa-sync-detail');
 const identitiesBox = document.querySelector('#identities');
 const batchInput = document.querySelector('#batch-input');
 const batchFile = document.querySelector('#batch-file');
@@ -35,8 +45,20 @@ let busy = false;
 let lastReport = null;
 let lastPreviewSource = '';
 let lastPreviewAtomic = true;
+let bridgeFallbackTimer = 0;
+let bridgeAttemptedKey = '';
 
 keyInput.value = sessionStorage.getItem('cpaManagementKey') || '';
+if (embeddedInCPAMC && managementKey()) {
+  hideManualConnection();
+} else if (managementBridgeEnabled) {
+  hideManualConnection();
+  setConnection('neutral', '正在连接');
+  setStatus('正在复用 CPA 当前登录会话…');
+  bridgeFallbackTimer = window.setTimeout(function () {
+    offerManualConnection('未从 CPA 当前会话读取到管理密码，可改用手动连接。');
+  }, 3000);
+}
 
 function managementKey() {
   return keyInput.value.trim();
@@ -52,6 +74,74 @@ function setConnection(state, label) {
   connectionPill.textContent = label;
 }
 
+function isValidBridgeNonce(value) {
+  return typeof value === 'string' && value.length >= 16 && value.length <= 160 && /^[A-Za-z0-9._:-]+$/.test(value);
+}
+
+function isHTTPOrigin(value) {
+  try {
+    const parsed = new URL(value);
+    return (parsed.protocol === 'http:' || parsed.protocol === 'https:') && Boolean(parsed.host);
+  } catch (_) {
+    return false;
+  }
+}
+
+function isValidManagementKey(value) {
+  return typeof value === 'string' && value.length > 0 && value.length <= 4096 && !/[\r\n]/.test(value);
+}
+
+function clearBridgeFallbackTimer() {
+  if (!bridgeFallbackTimer) return;
+  window.clearTimeout(bridgeFallbackTimer);
+  bridgeFallbackTimer = 0;
+}
+
+function hideManualConnection() {
+  if (!embeddedInCPAMC) return;
+  manualConnection.hidden = true;
+  manualConnectButton.hidden = true;
+}
+
+function offerManualConnection(message) {
+  if (!embeddedInCPAMC) return;
+  manualConnectButton.hidden = false;
+  if (message) setStatus(message);
+}
+
+function showManualConnection(message, kind) {
+  clearBridgeFallbackTimer();
+  manualConnection.hidden = false;
+  manualConnectButton.hidden = true;
+  if (kind === 'error') setConnection('error', '需要重新认证');
+  else setConnection('neutral', '等待连接');
+  if (message) setStatus(message, kind);
+  keyInput.focus();
+}
+
+function setCPASyncStatus(state, label, detail) {
+  cpaSyncStatus.className = 'integration-status ' + (state || 'neutral');
+  cpaSyncLabel.textContent = label || 'CPA 同步状态未知';
+  cpaSyncDetail.textContent = detail || '';
+}
+
+function renderDiagnostics(payload) {
+  const sync = payload && payload.cpa_sync;
+  if (!sync || !sync.state) {
+    setCPASyncStatus('neutral', 'CPA 同步状态未知', '当前 sidecar 未提供同步诊断；可继续管理本地凭证。');
+    return;
+  }
+  const states = {
+    ready: { kind: 'ok', label: 'CPA 已连接', detail: '原生 Codex 凭证同步与额度桥接可用。' },
+    not_configured: { kind: 'warn', label: '未配置 CPA 同步', detail: 'sidecar 尚未连接 CPA；导入仍可保存，但不会同步到 CPA 原生凭证列表。' },
+    unauthorized: { kind: 'error', label: 'CPA 管理密码不匹配', detail: '请让 sidecar 与 CPA 使用同一个管理密码，然后重新刷新。' },
+    unreachable: { kind: 'error', label: 'CPA 管理 API 不可达', detail: '请检查 CPA 地址、容器网络或服务是否正在运行。' },
+    error: { kind: 'error', label: 'CPA 同步检查失败', detail: 'CPA 返回了无法识别的响应；请查看 sidecar/CPA 日志。' }
+  };
+  const result = states[sync.state] || states.error;
+  setCPASyncStatus(result.kind, result.label, result.detail);
+}
+
 function updateImportAvailability() {
   const summary = lastReport && lastReport.preview ? lastReport.summary || {} : {};
   const blocking = Boolean(atomicMode.checked && ((summary.invalid || 0) + (summary.upstream_unavailable || 0) > 0));
@@ -60,7 +150,7 @@ function updateImportAvailability() {
 
 function setBusy(value) {
   busy = value;
-  [connectButton, forgetButton, refreshButton, previewButton, clearButton, exportJSONButton, exportCSVButton].forEach(function (button) {
+  [connectButton, forgetButton, refreshButton, previewButton, clearButton, exportJSONButton, exportCSVButton, manualConnectButton].forEach(function (button) {
     button.disabled = value;
   });
   updateImportAvailability();
@@ -177,21 +267,35 @@ function renderIdentities(items) {
   });
 }
 
-async function refresh() {
+async function refresh(options) {
+  const refreshOptions = options || {};
   setBusy(true);
   try {
-    const payload = await api('identities');
+    const results = await Promise.all([
+      api('identities'),
+      api('diagnostics').catch(function () { return null; })
+    ]);
+    const payload = results[0];
+    renderDiagnostics(results[1]);
     sessionStorage.setItem('cpaManagementKey', managementKey());
     renderSummary(payload.summary);
     renderIdentities(payload.identities || []);
     setConnection('ok', '已连接');
+    if (embeddedInCPAMC) hideManualConnection();
+    clearBridgeFallbackTimer();
     if (payload.channel_sync_error) setStatus(payload.channel_sync_error, 'error');
     else setStatus('已连接，共 ' + ((payload.summary && payload.summary.total) || 0) + ' 个 Codex 凭证。', 'ok');
+    return true;
   } catch (error) {
     setConnection('error', '连接失败');
     setStatus(error.message, 'error');
+    setCPASyncStatus('neutral', '尚未检查 CPA 同步', '请输入正确的管理密码后自动检查。');
     renderSummary({});
     identitiesBox.replaceChildren();
+    if (refreshOptions.fromBridge) {
+      showManualConnection('无法复用 CPA 当前登录信息：' + error.message + '。请手动输入管理密码。', 'error');
+    }
+    return false;
   } finally {
     setBusy(false);
   }
@@ -400,6 +504,9 @@ connectionForm.addEventListener('submit', function (event) {
   event.preventDefault();
   refresh();
 });
+manualConnectButton.addEventListener('click', function () {
+  showManualConnection('请输入与 CPA 管理中心相同的管理密码。');
+});
 refreshButton.addEventListener('click', refresh);
 previewButton.addEventListener('click', function () { runBatch('preview'); });
 importButton.addEventListener('click', function () { runBatch('import'); });
@@ -416,16 +523,51 @@ batchFile.addEventListener('change', function () {
 forgetButton.addEventListener('click', function () {
   sessionStorage.removeItem('cpaManagementKey');
   keyInput.value = '';
+  bridgeAttemptedKey = '';
   identitiesBox.replaceChildren();
   renderSummary({});
-  setConnection('neutral', '未连接');
-  setStatus('管理密码已从当前标签页清除。');
+  setCPASyncStatus('neutral', 'CPA 同步状态未知', '连接后自动检查原生 Codex 凭证同步与额度桥接。');
+  if (embeddedInCPAMC) showManualConnection('管理密码已从当前标签页清除。');
+  else {
+    setConnection('neutral', '未连接');
+    setStatus('管理密码已从当前标签页清除。');
+  }
 });
 
-if (new URLSearchParams(window.location.search).get('embed') === 'cpamc' && window.parent !== window) {
-  let targetOrigin = '*';
-  try { if (document.referrer) targetOrigin = new URL(document.referrer).origin; } catch (_) { targetOrigin = '*'; }
-  window.parent.postMessage({ type: 'cpa-codex-agent-identity:ready' }, targetOrigin);
+if (managementBridgeEnabled) {
+  window.addEventListener('message', function (event) {
+    if (event.source !== window.parent || !isHTTPOrigin(event.origin)) return;
+    const data = event.data || {};
+    if (data.type !== managementKeyMessageType || data.nonce !== bridgeNonce) return;
+    const key = typeof data.managementKey === 'string' ? data.managementKey.trim() : '';
+    if (!isValidManagementKey(key)) {
+      showManualConnection('CPA 当前登录信息不可用，请手动输入管理密码。', 'error');
+      return;
+    }
+    if (key === bridgeAttemptedKey) return;
+    bridgeAttemptedKey = key;
+    clearBridgeFallbackTimer();
+    hideManualConnection();
+    keyInput.value = key;
+    setConnection('neutral', '正在连接');
+    setStatus('正在使用 CPA 当前登录会话连接…');
+    void refresh({ fromBridge: true });
+  });
 }
 
-if (managementKey()) refresh();
+if (embeddedInCPAMC && window.parent !== window) {
+  let targetOrigin = '*';
+  try {
+    if (document.referrer) {
+      const referrerOrigin = new URL(document.referrer).origin;
+      if (isHTTPOrigin(referrerOrigin)) targetOrigin = referrerOrigin;
+    }
+  } catch (_) {
+    targetOrigin = '*';
+  }
+  const readyMessage = { type: readyMessageType };
+  if (managementBridgeEnabled) readyMessage.nonce = bridgeNonce;
+  window.parent.postMessage(readyMessage, targetOrigin);
+}
+
+if (managementKey()) refresh({ fromBridge: embeddedInCPAMC });

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -20,13 +21,16 @@ import (
 )
 
 const (
-	authMode          = "agent_identity_sidecar"
-	pluginProviderID  = "codex-agent-identity"
-	runtimeProviderID = "codex"
-	legacyProviderID  = "codex" // legacy sidecar auth files emitted before provider separation
-	authFilePrefix    = "codex-agent-identity-"
-	managedAuthSuffix = "-agent-identity"
-	pluginSettle      = 750 * time.Millisecond
+	authMode                = "agent_identity_sidecar"
+	pluginProviderID        = "codex-agent-identity"
+	runtimeProviderID       = "codex"
+	legacyProviderID        = "codex" // legacy sidecar auth files emitted before provider separation
+	authFilePrefix          = "codex-agent-identity-"
+	managedAuthSuffix       = "-agent-identity"
+	managementRetryAttempts = 4
+	managementRetryInitial  = 75 * time.Millisecond
+	managementRetryMaximum  = 500 * time.Millisecond
+	managementVerifyWindow  = 5 * time.Second
 )
 
 // Credential is the non-secret CPA-facing representation of an Agent Identity.
@@ -85,6 +89,24 @@ type IdentityState struct {
 	AuthFile string `json:"auth_file,omitempty"`
 }
 
+// ProbeState is the bounded, non-secret result of checking CPA's auth-file API.
+type ProbeState string
+
+const (
+	ProbeStateReady         ProbeState = "ready"
+	ProbeStateNotConfigured ProbeState = "not_configured"
+	ProbeStateUnauthorized  ProbeState = "unauthorized"
+	ProbeStateUnreachable   ProbeState = "unreachable"
+	ProbeStateError         ProbeState = "error"
+)
+
+// ProbeResult intentionally contains no URL, key, file name, or response body.
+type ProbeResult struct {
+	Configured bool       `json:"configured"`
+	Reachable  bool       `json:"reachable"`
+	State      ProbeState `json:"state"`
+}
+
 // NewManager creates a CPA auth-file manager.
 func NewManager(rawBaseURL, managementKey, sidecarBaseURL string, client *http.Client) (*Manager, error) {
 	rawBaseURL = strings.TrimRight(strings.TrimSpace(rawBaseURL), "/")
@@ -115,6 +137,51 @@ func NewManager(rawBaseURL, managementKey, sidecarBaseURL string, client *http.C
 	}, nil
 }
 
+// Probe performs a lightweight authenticated request against CPA's auth-file
+// endpoint. It never downloads or exposes credential contents, making it safe
+// for the sidecar diagnostics page.
+func (m *Manager) Probe(ctx context.Context) ProbeResult {
+	result := ProbeResult{Configured: m != nil, State: ProbeStateUnreachable}
+	if m == nil {
+		result.State = ProbeStateNotConfigured
+		return result
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	request, err := m.newRequest(ctx, http.MethodGet, "/auth-files", nil, "")
+	if err != nil {
+		result.State = ProbeStateError
+		return result
+	}
+	response, err := m.client.Do(request)
+	if err != nil {
+		result.State = ProbeStateUnreachable
+		return result
+	}
+	defer response.Body.Close()
+	result.Reachable = true
+	switch response.StatusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		result.State = ProbeStateUnauthorized
+		return result
+	case http.StatusOK:
+		var payload struct {
+			Files []authFileEntry `json:"files"`
+		}
+		if err := json.NewDecoder(io.LimitReader(response.Body, 4<<20)).Decode(&payload); err != nil {
+			result.State = ProbeStateError
+			return result
+		}
+		result.State = ProbeStateReady
+		return result
+	default:
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
+		result.State = ProbeStateError
+		return result
+	}
+}
+
 func normalizeSidecarBaseURL(value string) (string, error) {
 	value = strings.TrimRight(strings.TrimSpace(value), "/")
 	parsed, err := url.Parse(value)
@@ -133,27 +200,26 @@ func normalizeSidecarBaseURL(value string) (string, error) {
 }
 
 // UpsertIdentity creates or replaces the sidecar-owned Codex auth file for an identity.
+//
+// The management API is deliberately treated as an eventually-consistent file
+// boundary. We upload the final payload in one operation (rather than staging
+// disabled=true and then PATCHing it back) because CPA runtime-only auths may
+// acknowledge a field patch without persisting it to disk.
 func (m *Manager) UpsertIdentity(ctx context.Context, credential Credential) error {
-	credential.IdentityID = strings.TrimSpace(credential.IdentityID)
-	credential.ClientKey = strings.TrimSpace(credential.ClientKey)
-	credential.AccountID = strings.TrimSpace(credential.AccountID)
-	credential.UserID = strings.TrimSpace(credential.UserID)
-	credential.Email = strings.TrimSpace(credential.Email)
-	credential.PlanType = strings.TrimSpace(credential.PlanType)
-	credential.Kind = strings.TrimSpace(credential.Kind)
-	if credential.IdentityID == "" || credential.ClientKey == "" {
-		return errors.New("identity ID and client key are required")
-	}
-	if !strings.HasPrefix(credential.ClientKey, "cais_") {
-		return errors.New("sidecar client key is invalid")
+	ctx = nonNilContext(ctx)
+	credential = normalizeCredential(credential)
+	if err := validateCredential(credential); err != nil {
+		return err
 	}
 	name, err := authFileName(credential)
 	if err != nil {
 		return err
 	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	managedBefore, err := m.managedAuthFiles(ctx)
+
+	managedBefore, err := m.managedAuthFilesForCredentials(ctx, []Credential{credential})
 	if err != nil {
 		return err
 	}
@@ -164,75 +230,80 @@ func (m *Manager) UpsertIdentity(ctx context.Context, credential Credential) err
 	if existed && !isManagedCredential(previous, credential.IdentityID) {
 		return fmt.Errorf("%w: refusing to overwrite an unmanaged CPA auth file", ErrUnmanagedAuthFile)
 	}
-	disabled := managedCredentialDisabled(previous, existed)
+	// A disabled runtime-only auth can be omitted from CPA's list. The
+	// credential-aware discovery above still finds it by deterministic name.
 	if !existed {
-		for oldName, old := range managedBefore {
-			if oldName != name && old.IdentityID == credential.IdentityID {
-				disabled = managedCredentialDisabled(old.Raw, true)
-				break
-			}
+		if old, ok := managedBefore[name]; ok && old.IdentityID == credential.IdentityID {
+			previous = append([]byte(nil), old.Raw...)
+			existed = true
 		}
 	}
+
+	priorRaw := append([]byte(nil), previous...)
+	priorExists := existed
+	if !priorExists {
+		if oldName, old, ok := preferredManagedFile(managedBefore, credential); ok {
+			_ = oldName
+			priorRaw = append([]byte(nil), old.Raw...)
+			priorExists = true
+		}
+	}
+	disabled := managedCredentialDisabled(priorRaw, priorExists)
 	body, err := m.credentialJSONWithDisabled(credential, disabled)
 	if err != nil {
 		return err
 	}
-	if existed && equivalentJSON(previous, body) {
-		for oldName, old := range managedBefore {
-			if old.IdentityID == credential.IdentityID && oldName != name {
-				if deleteErr := m.deleteAuthFile(ctx, oldName); deleteErr != nil {
-					return deleteErr
-				}
-			}
-		}
-		return m.verifyIdentity(ctx, credential.IdentityID, true)
-	}
-	staged, err := disabledCredentialJSON(body)
-	if err != nil {
-		return err
-	}
-	if err = m.uploadAuthFile(ctx, name, staged); err != nil {
-		m.rollbackAuthFile(name, previous, existed)
-		return err
-	}
-	select {
-	case <-ctx.Done():
-		m.rollbackAuthFile(name, previous, existed)
-		return ctx.Err()
-	case <-time.After(pluginSettle):
-	}
-	if !disabled {
-		if err = m.patchAuthFileField(ctx, name, "disabled", false); err != nil {
-			m.rollbackAuthFile(name, previous, existed)
+	if priorExists {
+		body, err = mergeManagedAuthFields(body, priorRaw)
+		if err != nil {
 			return err
 		}
 	}
-	if current, currentExists, downloadErr := m.downloadAuthFile(ctx, name); downloadErr != nil || !currentExists || !isManagedCredential(current, credential.IdentityID) {
-		m.rollbackAuthFile(name, previous, existed)
-		if downloadErr != nil {
-			return downloadErr
-		}
-		return errors.New("CPA auth-file update did not persist")
+
+	rollback := func() {
+		m.rollbackManagedFiles(name, previous, existed, nil)
 	}
+	if !existed || !equivalentJSON(previous, body) {
+		if err = m.uploadAuthFile(ctx, name, body); err != nil {
+			rollback()
+			return err
+		}
+	}
+	if _, err = m.waitForAuthFile(ctx, name, func(raw []byte) bool {
+		return managedCredentialMatches(raw, credential, body)
+	}); err != nil {
+		rollback()
+		return err
+	}
+
+	// Migrate and remove stale sidecar names only after the canonical file has
+	// been observed on disk. Sorting makes the transaction deterministic and
+	// keeps rollback behavior reproducible.
+	oldNames := matchingManagedFileNames(managedBefore, credential)
 	deleted := make(map[string][]byte)
-	for oldName, old := range managedBefore {
-		if old.IdentityID != credential.IdentityID || oldName == name {
+	for _, oldName := range oldNames {
+		if oldName == name {
 			continue
 		}
+		old := managedBefore[oldName]
+		// Snapshot before DELETE. The management request can remove the file
+		// successfully and still return a transport error (for example when a
+		// proxy closes the connection after committing the request). Recording
+		// the bytes first makes that partially-applied migration reversible.
+		deleted[oldName] = append([]byte(nil), old.Raw...)
 		if err = m.deleteAuthFile(ctx, oldName); err != nil {
-			for deletedName, deletedRaw := range deleted {
-				_ = m.uploadAuthFile(context.Background(), deletedName, deletedRaw)
-			}
-			m.rollbackAuthFile(name, previous, existed)
+			m.rollbackManagedFiles(name, previous, existed, deleted)
 			return err
 		}
-		deleted[oldName] = old.Raw
-	}
-	if err = m.verifyIdentity(ctx, credential.IdentityID, true); err != nil {
-		for deletedName, deletedRaw := range deleted {
-			_ = m.uploadAuthFile(context.Background(), deletedName, deletedRaw)
+		if err = m.waitForAuthFileAbsent(ctx, oldName); err != nil {
+			m.rollbackManagedFiles(name, previous, existed, deleted)
+			return err
 		}
-		m.rollbackAuthFile(name, previous, existed)
+	}
+	if _, err = m.waitForAuthFile(ctx, name, func(raw []byte) bool {
+		return managedCredentialMatches(raw, credential, body)
+	}); err != nil {
+		m.rollbackManagedFiles(name, previous, existed, deleted)
 		return err
 	}
 	return nil
@@ -240,109 +311,74 @@ func (m *Manager) UpsertIdentity(ctx context.Context, credential Credential) err
 
 // RemoveIdentity removes only the sidecar-owned auth file for this identity.
 func (m *Manager) RemoveIdentity(ctx context.Context, identityID string) error {
-	identityID = strings.TrimSpace(identityID)
-	if err := validateIdentityID(identityID); err != nil {
-		return err
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	managed, err := m.managedAuthFiles(ctx)
-	if err != nil {
-		return err
-	}
-	deleted := make(map[string][]byte)
-	for name, file := range managed {
-		if file.IdentityID != identityID {
-			continue
-		}
-		if err = m.deleteAuthFile(ctx, name); err != nil {
-			for deletedName, deletedRaw := range deleted {
-				_ = m.uploadAuthFile(context.Background(), deletedName, deletedRaw)
-			}
-			return err
-		}
-		deleted[name] = file.Raw
-	}
-	if err = m.verifyIdentity(ctx, identityID, false); err != nil {
-		for deletedName, deletedRaw := range deleted {
-			_ = m.uploadAuthFile(context.Background(), deletedName, deletedRaw)
-		}
-		return err
-	}
-	return nil
+	_, err := m.RemoveIdentityWithSnapshot(ctx, identityID)
+	return err
 }
 
 // SnapshotIdentity returns all native CPA auth files owned by one identity.
 // Disabled files are intentionally included so they can be backed up and
 // deleted just like enabled files.
 func (m *Manager) SnapshotIdentity(ctx context.Context, identityID string) ([]AuthFileSnapshot, error) {
-	identityID = strings.TrimSpace(identityID)
-	if err := validateIdentityID(identityID); err != nil {
+	return m.SnapshotCredential(ctx, Credential{IdentityID: strings.TrimSpace(identityID)})
+}
+
+// SnapshotCredential returns all native CPA auth files owned by a credential,
+// including disabled runtime-only files which CPA may omit from /auth-files.
+func (m *Manager) SnapshotCredential(ctx context.Context, credential Credential) ([]AuthFileSnapshot, error) {
+	ctx = nonNilContext(ctx)
+	credential = normalizeCredential(credential)
+	if err := validateIdentityID(credential.IdentityID); err != nil {
 		return nil, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	managed, err := m.managedAuthFiles(ctx)
+	files, err := m.managedAuthFilesForCredentials(ctx, []Credential{credential})
 	if err != nil {
 		return nil, err
 	}
-	snapshots := make([]AuthFileSnapshot, 0)
-	for name, file := range managed {
-		if file.IdentityID != identityID {
-			continue
-		}
-		snapshots = append(snapshots, AuthFileSnapshot{
-			Name:       filepath.Base(name),
-			IdentityID: file.IdentityID,
-			Raw:        append([]byte(nil), file.Raw...),
-			Disabled:   managedCredentialDisabled(file.Raw, true),
-		})
-	}
-	sort.Slice(snapshots, func(i, j int) bool { return snapshots[i].Name < snapshots[j].Name })
-	return snapshots, nil
+	return snapshotsForCredential(files, credential), nil
 }
 
 // RemoveIdentityWithSnapshot deletes the native auth files and returns the
 // exact bytes that were removed so a caller can roll the CPA side back if a
 // later step fails.
 func (m *Manager) RemoveIdentityWithSnapshot(ctx context.Context, identityID string) ([]AuthFileSnapshot, error) {
-	identityID = strings.TrimSpace(identityID)
-	if err := validateIdentityID(identityID); err != nil {
+	return m.RemoveCredentialWithSnapshot(ctx, Credential{IdentityID: strings.TrimSpace(identityID)})
+}
+
+// RemoveCredentialWithSnapshot removes all auth-file names known to belong to
+// one credential, including deterministic legacy names hidden by CPA when a
+// runtime-only auth is disabled.
+func (m *Manager) RemoveCredentialWithSnapshot(ctx context.Context, credential Credential) ([]AuthFileSnapshot, error) {
+	ctx = nonNilContext(ctx)
+	credential = normalizeCredential(credential)
+	if err := validateIdentityID(credential.IdentityID); err != nil {
 		return nil, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	managed, err := m.managedAuthFiles(ctx)
+
+	files, err := m.managedAuthFilesForCredentials(ctx, []Credential{credential})
 	if err != nil {
 		return nil, err
 	}
-	deleted := make(map[string][]byte)
-	snapshots := make([]AuthFileSnapshot, 0)
-	for name, file := range managed {
-		if file.IdentityID != identityID {
-			continue
-		}
+	names := matchingManagedFileNames(files, credential)
+	snapshots := snapshotsForCredential(files, credential)
+	deleted := make(map[string][]byte, len(names))
+	for _, name := range names {
+		// Record the previous bytes before the remote delete. If the API
+		// acknowledges the delete but visibility lags, rollback still knows
+		// which file must be restored.
+		deleted[name] = append([]byte(nil), files[name].Raw...)
 		if err = m.deleteAuthFile(ctx, name); err != nil {
-			for deletedName, deletedRaw := range deleted {
-				_ = m.uploadAuthFile(context.Background(), deletedName, deletedRaw)
-			}
+			m.restoreManagedFiles(deleted)
 			return nil, err
 		}
-		deleted[name] = file.Raw
-		snapshots = append(snapshots, AuthFileSnapshot{
-			Name:       filepath.Base(name),
-			IdentityID: file.IdentityID,
-			Raw:        append([]byte(nil), file.Raw...),
-			Disabled:   managedCredentialDisabled(file.Raw, true),
-		})
-	}
-	if err = m.verifyIdentity(ctx, identityID, false); err != nil {
-		for deletedName, deletedRaw := range deleted {
-			_ = m.uploadAuthFile(context.Background(), deletedName, deletedRaw)
+		if err = m.waitForAuthFileAbsent(ctx, name); err != nil {
+			m.restoreManagedFiles(deleted)
+			return nil, err
 		}
-		return nil, err
 	}
-	sort.Slice(snapshots, func(i, j int) bool { return snapshots[i].Name < snapshots[j].Name })
 	return snapshots, nil
 }
 
@@ -352,9 +388,12 @@ func (m *Manager) RestoreAuthFiles(ctx context.Context, snapshots []AuthFileSnap
 	if len(snapshots) == 0 {
 		return nil
 	}
+	ctx = nonNilContext(ctx)
+	ordered := append([]AuthFileSnapshot(nil), snapshots...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Name < ordered[j].Name })
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, snapshot := range snapshots {
+	for _, snapshot := range ordered {
 		name := filepath.Base(strings.TrimSpace(snapshot.Name))
 		if name == "" || name != snapshot.Name || strings.Contains(name, "..") {
 			return errors.New("CPA auth-file snapshot name is invalid")
@@ -362,42 +401,67 @@ func (m *Manager) RestoreAuthFiles(ctx context.Context, snapshots []AuthFileSnap
 		if err := m.uploadAuthFile(ctx, name, snapshot.Raw); err != nil {
 			return err
 		}
+		if _, err := m.waitForAuthFile(ctx, name, func(raw []byte) bool {
+			return equivalentJSON(raw, snapshot.Raw)
+		}); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
-// SetIdentityDisabled changes the native CPA auth-file state without rotating the sidecar key.
+// SetIdentityDisabled changes the native CPA auth-file state without rotating
+// the sidecar key. The identity-only form remains for API compatibility; new
+// callers should use SetIdentityDisabledForCredential so hidden legacy names
+// can be discovered deterministically.
 func (m *Manager) SetIdentityDisabled(ctx context.Context, identityID string, disabled bool) error {
-	identityID = strings.TrimSpace(identityID)
-	if err := validateIdentityID(identityID); err != nil {
+	return m.SetIdentityDisabledForCredential(ctx, Credential{IdentityID: strings.TrimSpace(identityID)}, disabled)
+}
+
+// SetIdentityDisabledForCredential updates the complete JSON document instead
+// of relying on CPA's PATCH endpoint. This is required for runtime-only auths:
+// CPA may update the in-memory Auth object while skipping persistence of a
+// field-only mutation.
+func (m *Manager) SetIdentityDisabledForCredential(ctx context.Context, credential Credential, disabled bool) error {
+	ctx = nonNilContext(ctx)
+	credential = normalizeCredential(credential)
+	if err := validateIdentityID(credential.IdentityID); err != nil {
 		return err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	managed, err := m.managedAuthFiles(ctx)
+
+	files, err := m.managedAuthFilesForCredentials(ctx, []Credential{credential})
 	if err != nil {
 		return err
 	}
-	name := ""
-	for fileName, file := range managed {
-		if file.IdentityID == identityID {
-			name = fileName
-			break
-		}
-	}
-	if name == "" {
+	names := matchingManagedFileNames(files, credential)
+	if len(names) == 0 {
 		return errors.New("CPA Codex credential is not synchronized")
 	}
-	if err = m.patchAuthFileField(ctx, name, "disabled", disabled); err != nil {
-		return err
-	}
-	raw, exists, err := m.downloadAuthFile(ctx, name)
-	if err != nil {
-		return err
-	}
-	storedID, okManaged := managedCredentialIdentity(raw)
-	if !exists || !okManaged || storedID != identityID || managedCredentialDisabled(raw, true) != disabled {
-		return errors.New("CPA Codex credential state did not persist")
+	updated := make(map[string][]byte, len(names))
+	for _, name := range names {
+		oldRaw := append([]byte(nil), files[name].Raw...)
+		// Register the rollback image before uploading. A successful upload
+		// followed by a verification timeout must restore this file too.
+		updated[name] = oldRaw
+		nextRaw, errEncode := setManagedCredentialDisabled(oldRaw, disabled)
+		if errEncode != nil {
+			m.restoreManagedFiles(updated)
+			return errEncode
+		}
+		if !equivalentJSON(oldRaw, nextRaw) {
+			if err = m.uploadAuthFile(ctx, name, nextRaw); err != nil {
+				m.restoreManagedFiles(updated)
+				return err
+			}
+		}
+		if _, err = m.waitForAuthFile(ctx, name, func(raw []byte) bool {
+			return managedCredentialStateMatches(raw, credential, disabled)
+		}); err != nil {
+			m.restoreManagedFiles(updated)
+			return err
+		}
 	}
 	return nil
 }
@@ -418,22 +482,45 @@ func (m *Manager) IdentityStatus(ctx context.Context, identityIDs []string) (map
 
 // IdentityStates reports synchronization, disabled state, and safe auth-file names.
 func (m *Manager) IdentityStates(ctx context.Context, identityIDs []string) (map[string]IdentityState, error) {
-	files, err := m.managedAuthFiles(ctx)
+	credentials := make([]Credential, 0, len(identityIDs))
+	for _, id := range identityIDs {
+		credentials = append(credentials, Credential{IdentityID: strings.TrimSpace(id)})
+	}
+	return m.IdentityStatesForCredentials(ctx, credentials)
+}
+
+// IdentityStatesForCredentials is the credential-aware status path used by the
+// sidecar server. It probes deterministic canonical and legacy filenames in
+// addition to CPA's visible list, so disabled runtime-only records are not
+// falsely reported as unsynchronized.
+func (m *Manager) IdentityStatesForCredentials(ctx context.Context, credentials []Credential) (map[string]IdentityState, error) {
+	ctx = nonNilContext(ctx)
+	normalized := make([]Credential, 0, len(credentials))
+	result := make(map[string]IdentityState, len(credentials))
+	for _, credential := range credentials {
+		credential = normalizeCredential(credential)
+		id := strings.TrimSpace(credential.IdentityID)
+		if id == "" {
+			continue
+		}
+		result[id] = IdentityState{}
+		if validateIdentityID(id) == nil {
+			normalized = append(normalized, credential)
+		}
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	files, err := m.managedAuthFilesForCredentials(ctx, normalized)
 	if err != nil {
 		return nil, err
 	}
-	result := make(map[string]IdentityState, len(identityIDs))
-	for _, id := range identityIDs {
-		result[strings.TrimSpace(id)] = IdentityState{}
-	}
-	for name, file := range files {
-		if _, tracked := result[file.IdentityID]; !tracked {
-			continue
-		}
-		result[file.IdentityID] = IdentityState{
-			Synced:   true,
-			Disabled: managedCredentialDisabled(file.Raw, true),
-			AuthFile: filepath.Base(name),
+	for _, credential := range normalized {
+		if name, file, ok := preferredManagedFile(files, credential); ok {
+			result[credential.IdentityID] = IdentityState{
+				Synced:   true,
+				Disabled: managedCredentialDisabled(file.Raw, true),
+				AuthFile: filepath.Base(name),
+			}
 		}
 	}
 	return result, nil
@@ -446,6 +533,9 @@ func (m *Manager) IdentityIDForAuthIndex(ctx context.Context, authIndex string) 
 	if authIndex == "" {
 		return "", false, nil
 	}
+	ctx = nonNilContext(ctx)
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	entries, err := m.listAuthFileEntries(ctx)
 	if err != nil {
 		return "", false, err
@@ -509,6 +599,7 @@ func (m *Manager) credentialJSONWithDisabled(credential Credential, disabled boo
 		"base_url":          m.sidecarBaseURL,
 		"websockets":        true,
 		"disabled":          disabled,
+		"runtime_only":      true,
 		"agent_identity_id": credential.IdentityID,
 		"note":              "Agent Identity via sidecar",
 	}
@@ -604,38 +695,71 @@ func sanitizeFilePart(value string) string {
 	return strings.Trim(result.String(), "._-+")
 }
 
+func nonNilContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
+}
+
+func normalizeCredential(credential Credential) Credential {
+	credential.IdentityID = strings.TrimSpace(credential.IdentityID)
+	credential.ClientKey = strings.TrimSpace(credential.ClientKey)
+	credential.Kind = strings.ToLower(strings.TrimSpace(credential.Kind))
+	credential.AccountID = strings.TrimSpace(credential.AccountID)
+	credential.UserID = strings.TrimSpace(credential.UserID)
+	credential.Email = strings.TrimSpace(credential.Email)
+	credential.PlanType = strings.ToLower(strings.TrimSpace(credential.PlanType))
+	if !credential.ExpiresAt.IsZero() {
+		credential.ExpiresAt = credential.ExpiresAt.UTC()
+	}
+	return credential
+}
+
+func validateCredential(credential Credential) error {
+	if err := validateIdentityID(credential.IdentityID); err != nil {
+		return err
+	}
+	// CPA auth files carry only the opaque sidecar key. Keep the same minimum
+	// shape enforced by the plugin parser so a malformed value can never be
+	// installed and later misread as a native Codex OAuth token.
+	if len(credential.ClientKey) < len("cais_")+32 ||
+		!strings.HasPrefix(credential.ClientKey, "cais_") ||
+		strings.ContainsAny(credential.ClientKey, "\r\n") {
+		return errors.New("client key is invalid")
+	}
+	return nil
+}
+
 func isManagedCredential(raw []byte, identityID string) bool {
 	managedIdentityID, managed := managedCredentialIdentity(raw)
 	return managed && managedIdentityID == strings.TrimSpace(identityID)
 }
 
 func managedCredentialIdentity(raw []byte) (string, bool) {
-	var payload struct {
-		Type       string `json:"type"`
-		AuthMode   string `json:"auth_mode"`
-		IdentityID string `json:"agent_identity_id"`
-	}
-	if json.Unmarshal(raw, &payload) != nil {
+	payload, err := decodeJSONMap(raw)
+	if err != nil {
 		return "", false
 	}
-	payloadType := strings.ToLower(strings.TrimSpace(payload.Type))
+	payloadType := strings.ToLower(strings.TrimSpace(jsonStringValue(payload["type"])))
 	managed := (payloadType == pluginProviderID || payloadType == legacyProviderID) &&
-		strings.EqualFold(strings.TrimSpace(payload.AuthMode), authMode) &&
-		validateIdentityID(payload.IdentityID) == nil
-	return strings.TrimSpace(payload.IdentityID), managed
+		strings.EqualFold(strings.TrimSpace(jsonStringValue(payload["auth_mode"])), authMode) &&
+		validateIdentityID(jsonStringValue(payload["agent_identity_id"])) == nil
+	if !managed {
+		return "", false
+	}
+	return strings.TrimSpace(jsonStringValue(payload["agent_identity_id"])), true
 }
 
 func managedCredentialDisabled(raw []byte, exists bool) bool {
 	if !exists {
 		return false
 	}
-	var payload struct {
-		Disabled any `json:"disabled"`
-	}
-	if json.Unmarshal(raw, &payload) != nil {
+	payload, err := decodeJSONMap(raw)
+	if err != nil {
 		return false
 	}
-	return boolValue(payload.Disabled)
+	return boolValue(payload["disabled"])
 }
 
 func boolValue(value any) bool {
@@ -663,12 +787,7 @@ func equivalentJSON(left, right []byte) bool {
 }
 
 func disabledCredentialJSON(raw []byte) ([]byte, error) {
-	var payload map[string]any
-	if json.Unmarshal(raw, &payload) != nil {
-		return nil, errors.New("encode staged CPA auth file")
-	}
-	payload["disabled"] = true
-	return json.MarshalIndent(payload, "", "  ")
+	return setManagedCredentialDisabled(raw, true)
 }
 
 func (m *Manager) verifyIdentity(ctx context.Context, identityID string, want bool) error {
@@ -689,18 +808,51 @@ func (m *Manager) verifyIdentity(ctx context.Context, identityID string, want bo
 	return nil
 }
 
-func (m *Manager) managedAuthFiles(ctx context.Context) (map[string]managedAuthFile, error) {
+type managedAuthFileCandidate struct {
+	Name          string
+	RetryNotFound bool
+}
+
+// managedAuthFilesForCredentials discovers visible files and deterministic
+// names for disabled runtime-only files, then validates the downloaded JSON.
+// It deliberately does not trust a filename as proof of ownership.
+func (m *Manager) managedAuthFilesForCredentials(ctx context.Context, credentials []Credential) (map[string]managedAuthFile, error) {
+	ctx = nonNilContext(ctx)
 	entries, err := m.listAuthFileEntries(ctx)
 	if err != nil {
 		return nil, err
 	}
-	files := make(map[string]managedAuthFile)
+
+	wantedIDs := make(map[string]struct{}, len(credentials))
+	candidateRetries := make(map[string]bool)
 	for _, item := range entries {
-		name := filepath.Base(strings.TrimSpace(item.Name))
-		if !strings.HasPrefix(strings.ToLower(name), "codex-") || !strings.HasSuffix(strings.ToLower(name), ".json") {
+		name, ok := safeAuthFileName(item.Name)
+		if !ok || !isCodexAuthFileName(name) {
 			continue
 		}
-		raw, exists, downloadErr := m.downloadAuthFile(ctx, name)
+		candidateRetries[name] = true
+	}
+	for _, rawCredential := range credentials {
+		credential := normalizeCredential(rawCredential)
+		if validateIdentityID(credential.IdentityID) != nil {
+			continue
+		}
+		wantedIDs[credential.IdentityID] = struct{}{}
+		for _, candidate := range managedAuthFileCandidates(credential) {
+			if existing, exists := candidateRetries[candidate.Name]; !exists || candidate.RetryNotFound {
+				candidateRetries[candidate.Name] = existing || candidate.RetryNotFound
+			}
+		}
+	}
+
+	names := make([]string, 0, len(candidateRetries))
+	for name := range candidateRetries {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	files := make(map[string]managedAuthFile, len(names))
+	for _, name := range names {
+		raw, exists, downloadErr := m.downloadAuthFileWithOptions(ctx, name, candidateRetries[name])
 		if downloadErr != nil {
 			return nil, downloadErr
 		}
@@ -708,126 +860,767 @@ func (m *Manager) managedAuthFiles(ctx context.Context) (map[string]managedAuthF
 			continue
 		}
 		identityID, managed := managedCredentialIdentity(raw)
-		if managed {
-			files[name] = managedAuthFile{IdentityID: identityID, Raw: raw}
+		if !managed {
+			continue
 		}
+		if len(wantedIDs) > 0 {
+			if _, wanted := wantedIDs[identityID]; !wanted {
+				continue
+			}
+		}
+		files[name] = managedAuthFile{IdentityID: identityID, Raw: append([]byte(nil), raw...)}
 	}
 	return files, nil
 }
 
+func (m *Manager) managedAuthFiles(ctx context.Context) (map[string]managedAuthFile, error) {
+	return m.managedAuthFilesForCredentials(ctx, nil)
+}
+
+func managedAuthFileCandidates(credential Credential) []managedAuthFileCandidate {
+	credential = normalizeCredential(credential)
+	if validateIdentityID(credential.IdentityID) != nil {
+		return nil
+	}
+	seen := make(map[string]int)
+	result := make([]managedAuthFileCandidate, 0, 9)
+	add := func(name string, retryNotFound bool) {
+		name, ok := safeAuthFileName(name)
+		if !ok {
+			return
+		}
+		if index, exists := seen[name]; exists {
+			if retryNotFound {
+				result[index].RetryNotFound = true
+			}
+			return
+		}
+		seen[name] = len(result)
+		result = append(result, managedAuthFileCandidate{Name: name, RetryNotFound: retryNotFound})
+	}
+
+	email := sanitizeFilePart(credential.Email)
+	if email == "" {
+		if legacy, err := legacyAuthFileName(credential.IdentityID); err == nil {
+			add(legacy, true)
+		}
+		return result
+	}
+	planType := sanitizeFilePart(strings.ToLower(credential.PlanType))
+	workspacePrefix := ""
+	if accountID := strings.TrimSpace(credential.AccountID); accountID != "" {
+		digest := sha256.Sum256([]byte(accountID))
+		workspacePrefix = hex.EncodeToString(digest[:])[:8] + "-"
+	}
+
+	// The first form is the current canonical name. Suffix-bearing historical
+	// names are cheap to retry because they are the names emitted by this
+	// sidecar; no-suffix variants are probed once unless they are listed by CPA.
+	forms := []struct {
+		workspace string
+		suffix    bool
+		retry404  bool
+	}{
+		{workspace: workspacePrefix, suffix: true, retry404: true},
+		{workspace: workspacePrefix, suffix: false, retry404: false},
+		{workspace: "", suffix: true, retry404: true},
+		{workspace: "", suffix: false, retry404: false},
+	}
+	for _, withPlan := range []bool{true, false} {
+		for _, form := range forms {
+			name := "codex-" + form.workspace + email
+			if withPlan && planType != "" {
+				name += "-" + planType
+			}
+			if form.suffix {
+				name += managedAuthSuffix
+			}
+			add(name+".json", form.retry404)
+		}
+	}
+	if legacy, err := legacyAuthFileName(credential.IdentityID); err == nil {
+		add(legacy, true)
+	}
+	return result
+}
+
+func safeAuthFileName(value string) (string, bool) {
+	name := strings.TrimSpace(value)
+	if name == "" || name == "." || name == ".." || filepath.Base(name) != name || strings.ContainsAny(name, `/\\`) || !strings.HasSuffix(strings.ToLower(name), ".json") {
+		return "", false
+	}
+	return name, true
+}
+
+func isCodexAuthFileName(name string) bool {
+	name = strings.ToLower(strings.TrimSpace(name))
+	return strings.HasPrefix(name, "codex-") && strings.HasSuffix(name, ".json")
+}
+
+func managedCredentialMatchScore(raw []byte, credential Credential) (int, bool) {
+	credential = normalizeCredential(credential)
+	identityID, managed := managedCredentialIdentity(raw)
+	if !managed || identityID != credential.IdentityID {
+		return 0, false
+	}
+	payload, err := decodeJSONMap(raw)
+	if err != nil {
+		return 0, false
+	}
+	score := 1
+	if credential.ClientKey != "" {
+		if token := strings.TrimSpace(jsonStringValue(payload["access_token"])); token == credential.ClientKey {
+			score += 1000
+		} else if token != "" {
+			// A client key can remain stable for the lifetime of an identity, but
+			// accepting an older key here lets an upsert migrate legacy filenames.
+			score += 1
+		}
+	}
+	if ok, points := matchingStringField(payload, "account_id", credential.AccountID, false); !ok {
+		return 0, false
+	} else {
+		score += points
+	}
+	if ok, points := matchingStringField(payload, "chatgpt_user_id", credential.UserID, false); !ok {
+		return 0, false
+	} else {
+		score += points
+	}
+	if ok, points := matchingStringField(payload, "email", credential.Email, true); !ok {
+		return 0, false
+	} else {
+		score += points
+	}
+	if ok, points := matchingStringField(payload, "plan_type", credential.PlanType, true); !ok {
+		return 0, false
+	} else {
+		score += points
+	}
+	if ok, points := matchingStringField(payload, "credential_kind", credential.Kind, true); !ok {
+		return 0, false
+	} else {
+		score += points
+	}
+	return score, true
+}
+
+func matchingStringField(payload map[string]any, key, want string, foldCase bool) (bool, int) {
+	want = strings.TrimSpace(want)
+	if want == "" {
+		return true, 0
+	}
+	got := strings.TrimSpace(jsonStringValue(payload[key]))
+	if got == "" {
+		// Legacy sidecar files may not contain all metadata. Identity and the
+		// remaining fields still provide the ownership boundary.
+		return true, 2
+	}
+	if foldCase {
+		if !strings.EqualFold(got, want) {
+			return false, 0
+		}
+	} else if got != want {
+		return false, 0
+	}
+	return true, 25
+}
+
+func matchingManagedFileNames(files map[string]managedAuthFile, credential Credential) []string {
+	credential = normalizeCredential(credential)
+	names := make([]string, 0, len(files))
+	for name, file := range files {
+		if _, ok := managedCredentialMatchScore(file.Raw, credential); ok {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+func preferredManagedFile(files map[string]managedAuthFile, credential Credential) (string, managedAuthFile, bool) {
+	credential = normalizeCredential(credential)
+	names := matchingManagedFileNames(files, credential)
+	if len(names) == 0 {
+		return "", managedAuthFile{}, false
+	}
+	if canonical, err := authFileName(credential); err == nil {
+		for _, name := range names {
+			if name == canonical {
+				return name, files[name], true
+			}
+		}
+	}
+	sort.SliceStable(names, func(i, j int) bool {
+		leftScore, _ := managedCredentialMatchScore(files[names[i]].Raw, credential)
+		rightScore, _ := managedCredentialMatchScore(files[names[j]].Raw, credential)
+		if leftScore != rightScore {
+			return leftScore > rightScore
+		}
+		return names[i] < names[j]
+	})
+	return names[0], files[names[0]], true
+}
+
+func snapshotsForCredential(files map[string]managedAuthFile, credential Credential) []AuthFileSnapshot {
+	names := matchingManagedFileNames(files, credential)
+	result := make([]AuthFileSnapshot, 0, len(names))
+	for _, name := range names {
+		file := files[name]
+		result = append(result, AuthFileSnapshot{
+			Name:       name,
+			IdentityID: file.IdentityID,
+			Raw:        append([]byte(nil), file.Raw...),
+			Disabled:   managedCredentialDisabled(file.Raw, true),
+		})
+	}
+	return result
+}
+
+var managedCPAFieldKeys = map[string]struct{}{
+	"priority":              {},
+	"weight":                {},
+	"proxy_url":             {},
+	"proxy-url":             {},
+	"headers":               {},
+	"model_aliases":         {},
+	"model-aliases":         {},
+	"excluded_models":       {},
+	"excluded-models":       {},
+	"request_retry":         {},
+	"request-retry":         {},
+	"prefix":                {},
+	"disable_cooling":       {},
+	"disable-cooling":       {},
+	"request_scoped_errors": {},
+	"request-scoped-errors": {},
+	"tool_prefix_disabled":  {},
+	"tool-prefix-disabled":  {},
+	"fingerprint_profile":   {},
+	"fingerprint-profile":   {},
+	"note":                  {},
+}
+
+func mergeManagedAuthFields(nextRaw, priorRaw []byte) ([]byte, error) {
+	next, err := decodeJSONMap(nextRaw)
+	if err != nil {
+		return nil, errors.New("encode CPA auth file")
+	}
+	prior, err := decodeJSONMap(priorRaw)
+	if err != nil {
+		return nil, errors.New("read previous CPA auth file")
+	}
+	for key := range managedCPAFieldKeys {
+		value, exists := prior[key]
+		if !exists {
+			continue
+		}
+		if key == "note" {
+			if note := strings.TrimSpace(jsonStringValue(value)); note != "" {
+				next[key] = value
+			}
+			continue
+		}
+		if _, exists := next[key]; !exists {
+			next[key] = value
+		}
+	}
+	return json.MarshalIndent(next, "", "  ")
+}
+
+func managedCredentialMatches(raw []byte, credential Credential, expectedRaw []byte) bool {
+	if _, ok := managedCredentialMatchScore(raw, credential); !ok {
+		return false
+	}
+	actual, err := decodeJSONMap(raw)
+	if err != nil {
+		return false
+	}
+	expected, err := decodeJSONMap(expectedRaw)
+	if err != nil {
+		return false
+	}
+	if !strings.EqualFold(jsonStringValue(actual["auth_mode"]), authMode) ||
+		strings.TrimSpace(jsonStringValue(actual["agent_identity_id"])) != credential.IdentityID {
+		return false
+	}
+	if credential.ClientKey != "" && strings.TrimSpace(jsonStringValue(actual["access_token"])) != credential.ClientKey {
+		return false
+	}
+	if !sameNormalizedString(actual, expected, "base_url", true) || !sameBoolean(actual, expected, "disabled") {
+		return false
+	}
+	if runtimeOnly, exists := actual["runtime_only"]; exists && !boolValue(runtimeOnly) {
+		return false
+	}
+	for _, key := range []string{"email", "account_id", "chatgpt_user_id", "plan_type", "credential_kind", "expires_at", "fedramp"} {
+		if expectedValue, exists := expected[key]; exists {
+			actualValue, actualExists := actual[key]
+			if !actualExists || !jsonValuesEquivalent(key, actualValue, expectedValue) {
+				return false
+			}
+		}
+	}
+	if expectedWebsockets, exists := expected["websockets"]; exists {
+		if actualWebsockets, actualExists := actual["websockets"]; actualExists && !jsonValuesEquivalent("websockets", actualWebsockets, expectedWebsockets) {
+			return false
+		}
+	}
+	return true
+}
+
+func managedCredentialStateMatches(raw []byte, credential Credential, disabled bool) bool {
+	if _, ok := managedCredentialMatchScore(raw, credential); !ok {
+		return false
+	}
+	return managedCredentialDisabled(raw, true) == disabled
+}
+
+func setManagedCredentialDisabled(raw []byte, disabled bool) ([]byte, error) {
+	if _, managed := managedCredentialIdentity(raw); !managed {
+		return nil, errors.New("CPA auth file is not managed by Codex Agent Identity")
+	}
+	payload, err := decodeJSONMap(raw)
+	if err != nil {
+		return nil, errors.New("encode CPA auth file state")
+	}
+	payload["disabled"] = disabled
+	return json.MarshalIndent(payload, "", "  ")
+}
+
+func decodeJSONMap(raw []byte) (map[string]any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var payload map[string]any
+	if err := decoder.Decode(&payload); err != nil || payload == nil {
+		return nil, errors.New("CPA auth file must be a JSON object")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return nil, errors.New("CPA auth file has trailing data")
+	}
+	return payload, nil
+}
+
+func jsonStringValue(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case json.Number:
+		return typed.String()
+	case float64:
+		return fmt.Sprintf("%v", typed)
+	case bool:
+		return fmt.Sprintf("%t", typed)
+	default:
+		return ""
+	}
+}
+
+func sameNormalizedString(actual, expected map[string]any, key string, trimSlash bool) bool {
+	want, wantExists := expected[key]
+	got, gotExists := actual[key]
+	if !wantExists {
+		return true
+	}
+	if !gotExists {
+		return false
+	}
+	left := strings.TrimSpace(jsonStringValue(got))
+	right := strings.TrimSpace(jsonStringValue(want))
+	if trimSlash {
+		left = strings.TrimRight(left, "/")
+		right = strings.TrimRight(right, "/")
+	}
+	return left == right
+}
+
+func sameBoolean(actual, expected map[string]any, key string) bool {
+	want, wantExists := expected[key]
+	if !wantExists {
+		return true
+	}
+	got, gotExists := actual[key]
+	return gotExists && boolValue(got) == boolValue(want)
+}
+
+func jsonValuesEquivalent(key string, left, right any) bool {
+	if key == "plan_type" || key == "credential_kind" || key == "email" {
+		return strings.EqualFold(strings.TrimSpace(jsonStringValue(left)), strings.TrimSpace(jsonStringValue(right)))
+	}
+	if key == "expires_at" {
+		return strings.TrimSpace(jsonStringValue(left)) == strings.TrimSpace(jsonStringValue(right))
+	}
+	if key == "fedramp" || key == "websockets" {
+		return boolValue(left) == boolValue(right)
+	}
+	return reflect.DeepEqual(left, right) || strings.TrimSpace(jsonStringValue(left)) == strings.TrimSpace(jsonStringValue(right))
+}
+
+func (m *Manager) restoreManagedFiles(files map[string][]byte) error {
+	if len(files) == 0 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), managementVerifyWindow+2*time.Second)
+	defer cancel()
+	return m.restoreManagedFilesWithContext(ctx, files)
+}
+
+func (m *Manager) restoreManagedFilesWithContext(ctx context.Context, files map[string][]byte) error {
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if _, ok := safeAuthFileName(name); !ok {
+			return errors.New("CPA auth-file restore name is invalid")
+		}
+		if err := m.uploadAuthFile(ctx, name, files[name]); err != nil {
+			return err
+		}
+		if _, err := m.waitForAuthFile(ctx, name, func(raw []byte) bool {
+			return equivalentJSON(raw, files[name])
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *Manager) rollbackManagedFiles(name string, previous []byte, existed bool, deleted map[string][]byte) error {
+	ctx, cancel := context.WithTimeout(context.Background(), managementVerifyWindow+2*time.Second)
+	defer cancel()
+	var firstErr error
+	if name != "" {
+		if existed {
+			if err := m.uploadAuthFile(ctx, name, previous); err != nil {
+				firstErr = err
+			} else if _, err := m.waitForAuthFile(ctx, name, func(raw []byte) bool {
+				return equivalentJSON(raw, previous)
+			}); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		} else {
+			if err := m.deleteAuthFile(ctx, name); err != nil && firstErr == nil {
+				firstErr = err
+			}
+			if err := m.waitForAuthFileAbsent(ctx, name); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	if err := m.restoreManagedFilesWithContext(ctx, deleted); err != nil && firstErr == nil {
+		firstErr = err
+	}
+	return firstErr
+}
+
+func managementRetryDelay(attempt int) time.Duration {
+	delay := managementRetryInitial
+	for index := 0; index < attempt && delay < managementRetryMaximum; index++ {
+		if delay > managementRetryMaximum/2 {
+			return managementRetryMaximum
+		}
+		delay *= 2
+	}
+	if delay > managementRetryMaximum {
+		return managementRetryMaximum
+	}
+	return delay
+}
+
+func waitManagementRetry(ctx context.Context, delay time.Duration) error {
+	ctx = nonNilContext(ctx)
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+type managementStatusError struct {
+	operation string
+	status    int
+}
+
+func (e *managementStatusError) Error() string {
+	if e == nil {
+		return "CPA management request failed"
+	}
+	return fmt.Sprintf("%s: status %d", e.operation, e.status)
+}
+
+func retryableManagementError(err error, retryNotFound bool) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var statusErr *managementStatusError
+	if errors.As(err, &statusErr) {
+		switch {
+		case statusErr.status == http.StatusNotFound:
+			return retryNotFound
+		case statusErr.status == http.StatusRequestTimeout,
+			statusErr.status == http.StatusTooEarly,
+			statusErr.status == http.StatusTooManyRequests,
+			statusErr.status >= 500:
+			return true
+		default:
+			return false
+		}
+	}
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	var networkErr net.Error
+	return errors.As(err, &networkErr)
+}
+
+func (m *Manager) waitForAuthFile(ctx context.Context, name string, predicate func([]byte) bool) ([]byte, error) {
+	if predicate == nil {
+		return nil, errors.New("CPA auth-file verification predicate is required")
+	}
+	if _, ok := safeAuthFileName(name); !ok {
+		return nil, errors.New("CPA auth-file verification name is invalid")
+	}
+	ctx = nonNilContext(ctx)
+	verifyCtx, cancel := context.WithTimeout(ctx, managementVerifyWindow)
+	defer cancel()
+	interval := managementRetryInitial
+	var lastErr error
+	for {
+		raw, exists, err := m.downloadAuthFileWithOptions(verifyCtx, name, true)
+		if err == nil {
+			if exists && predicate(raw) {
+				return raw, nil
+			}
+			lastErr = errors.New("CPA auth-file contents are not yet visible")
+		} else {
+			if !retryableManagementError(err, true) {
+				return nil, err
+			}
+			lastErr = err
+		}
+		if verifyCtx.Err() != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			return nil, fmt.Errorf("CPA auth-file update did not persist: %w", lastErr)
+		}
+		if err := waitManagementRetry(verifyCtx, interval); err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			return nil, fmt.Errorf("CPA auth-file update did not persist: %w", lastErr)
+		}
+		if interval < managementRetryMaximum {
+			interval *= 2
+			if interval > managementRetryMaximum {
+				interval = managementRetryMaximum
+			}
+		}
+	}
+}
+
+func (m *Manager) waitForAuthFileAbsent(ctx context.Context, name string) error {
+	if _, ok := safeAuthFileName(name); !ok {
+		return errors.New("CPA auth-file verification name is invalid")
+	}
+	ctx = nonNilContext(ctx)
+	verifyCtx, cancel := context.WithTimeout(ctx, managementVerifyWindow)
+	defer cancel()
+	interval := managementRetryInitial
+	var lastErr error
+	for {
+		_, exists, err := m.downloadAuthFileWithOptions(verifyCtx, name, true)
+		if err == nil {
+			if !exists {
+				return nil
+			}
+			lastErr = errors.New("CPA auth-file is still present")
+		} else {
+			if !retryableManagementError(err, true) {
+				return err
+			}
+			lastErr = err
+		}
+		if verifyCtx.Err() != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return fmt.Errorf("CPA auth-file deletion did not persist: %w", lastErr)
+		}
+		if err := waitManagementRetry(verifyCtx, interval); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return fmt.Errorf("CPA auth-file deletion did not persist: %w", lastErr)
+		}
+		if interval < managementRetryMaximum {
+			interval *= 2
+			if interval > managementRetryMaximum {
+				interval = managementRetryMaximum
+			}
+		}
+	}
+}
+
 func (m *Manager) listAuthFileEntries(ctx context.Context) ([]authFileEntry, error) {
-	request, err := m.newRequest(ctx, http.MethodGet, "/auth-files", nil, "")
-	if err != nil {
-		return nil, err
+	ctx = nonNilContext(ctx)
+	var lastErr error
+	for attempt := 0; attempt < managementRetryAttempts; attempt++ {
+		request, err := m.newRequest(ctx, http.MethodGet, "/auth-files", nil, "")
+		if err != nil {
+			return nil, err
+		}
+		response, err := m.client.Do(request)
+		if err != nil {
+			lastErr = fmt.Errorf("list CPA auth files: %w", err)
+		} else {
+			body := response.Body
+			if response.StatusCode != http.StatusOK {
+				_, _ = io.Copy(io.Discard, io.LimitReader(body, 1<<20))
+				_ = body.Close()
+				lastErr = &managementStatusError{operation: "list CPA auth files", status: response.StatusCode}
+			} else {
+				var wrapper struct {
+					Files []authFileEntry `json:"files"`
+				}
+				decodeErr := json.NewDecoder(io.LimitReader(body, 4<<20)).Decode(&wrapper)
+				_ = body.Close()
+				if decodeErr != nil {
+					return nil, errors.New("list CPA auth files: invalid response")
+				}
+				sort.SliceStable(wrapper.Files, func(i, j int) bool {
+					return wrapper.Files[i].Name < wrapper.Files[j].Name
+				})
+				return wrapper.Files, nil
+			}
+		}
+		if attempt+1 >= managementRetryAttempts || !retryableManagementError(lastErr, false) {
+			return nil, lastErr
+		}
+		if err := waitManagementRetry(ctx, managementRetryDelay(attempt)); err != nil {
+			return nil, err
+		}
 	}
-	response, err := m.client.Do(request)
-	if err != nil {
-		return nil, fmt.Errorf("list CPA auth files: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("list CPA auth files: status %d", response.StatusCode)
-	}
-	var wrapper struct {
-		Files []authFileEntry `json:"files"`
-	}
-	if json.NewDecoder(io.LimitReader(response.Body, 4<<20)).Decode(&wrapper) != nil {
-		return nil, errors.New("list CPA auth files: invalid response")
-	}
-	return wrapper.Files, nil
+	return nil, lastErr
 }
 
 func (m *Manager) downloadAuthFile(ctx context.Context, name string) ([]byte, bool, error) {
-	request, err := m.newRequest(ctx, http.MethodGet, "/auth-files/download", nil, name)
-	if err != nil {
-		return nil, false, err
+	return m.downloadAuthFileWithOptions(ctx, name, true)
+}
+
+func (m *Manager) downloadAuthFileWithOptions(ctx context.Context, name string, retryNotFound bool) ([]byte, bool, error) {
+	if _, ok := safeAuthFileName(name); !ok {
+		return nil, false, errors.New("CPA auth-file name is invalid")
 	}
-	response, err := m.client.Do(request)
-	if err != nil {
-		return nil, false, fmt.Errorf("download CPA auth file: %w", err)
+	ctx = nonNilContext(ctx)
+	var lastErr error
+	for attempt := 0; attempt < managementRetryAttempts; attempt++ {
+		request, err := m.newRequest(ctx, http.MethodGet, "/auth-files/download", nil, name)
+		if err != nil {
+			return nil, false, err
+		}
+		response, err := m.client.Do(request)
+		if err != nil {
+			lastErr = fmt.Errorf("download CPA auth file: %w", err)
+		} else if response.StatusCode == http.StatusNotFound {
+			_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
+			_ = response.Body.Close()
+			if !retryNotFound || attempt+1 >= managementRetryAttempts {
+				return nil, false, nil
+			}
+			lastErr = &managementStatusError{operation: "download CPA auth file", status: http.StatusNotFound}
+		} else if response.StatusCode != http.StatusOK {
+			_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
+			_ = response.Body.Close()
+			lastErr = &managementStatusError{operation: "download CPA auth file", status: response.StatusCode}
+		} else {
+			raw, readErr := io.ReadAll(io.LimitReader(response.Body, 4<<20))
+			_ = response.Body.Close()
+			if readErr != nil {
+				lastErr = fmt.Errorf("download CPA auth file: %w", readErr)
+			} else {
+				return raw, true, nil
+			}
+		}
+		if attempt+1 >= managementRetryAttempts || !retryableManagementError(lastErr, retryNotFound) {
+			return nil, false, lastErr
+		}
+		if err := waitManagementRetry(ctx, managementRetryDelay(attempt)); err != nil {
+			return nil, false, err
+		}
 	}
-	defer response.Body.Close()
-	if response.StatusCode == http.StatusNotFound {
-		return nil, false, nil
-	}
-	if response.StatusCode != http.StatusOK {
-		return nil, false, fmt.Errorf("download CPA auth file: status %d", response.StatusCode)
-	}
-	raw, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
-	if err != nil {
-		return nil, false, errors.New("download CPA auth file: invalid response")
-	}
-	return raw, true, nil
+	return nil, false, lastErr
 }
 
 func (m *Manager) uploadAuthFile(ctx context.Context, name string, raw []byte) error {
-	request, err := m.newRequest(ctx, http.MethodPost, "/auth-files", bytes.NewReader(raw), name)
-	if err != nil {
-		return err
+	if _, ok := safeAuthFileName(name); !ok {
+		return errors.New("CPA auth-file name is invalid")
 	}
-	request.Header.Set("Content-Type", "application/json")
-	response, err := m.client.Do(request)
-	if err != nil {
-		return fmt.Errorf("upload CPA auth file: %w", err)
+	ctx = nonNilContext(ctx)
+	var lastErr error
+	for attempt := 0; attempt < managementRetryAttempts; attempt++ {
+		request, err := m.newRequest(ctx, http.MethodPost, "/auth-files", bytes.NewReader(raw), name)
+		if err != nil {
+			return err
+		}
+		request.Header.Set("Content-Type", "application/json")
+		response, err := m.client.Do(request)
+		if err != nil {
+			lastErr = fmt.Errorf("upload CPA auth file: %w", err)
+		} else {
+			_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
+			_ = response.Body.Close()
+			if response.StatusCode >= 200 && response.StatusCode < 300 {
+				return nil
+			}
+			lastErr = &managementStatusError{operation: "upload CPA auth file", status: response.StatusCode}
+		}
+		if attempt+1 >= managementRetryAttempts || !retryableManagementError(lastErr, false) {
+			return lastErr
+		}
+		if err := waitManagementRetry(ctx, managementRetryDelay(attempt)); err != nil {
+			return err
+		}
 	}
-	defer response.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("upload CPA auth file: status %d", response.StatusCode)
-	}
-	return nil
+	return lastErr
 }
 
 func (m *Manager) deleteAuthFile(ctx context.Context, name string) error {
-	request, err := m.newRequest(ctx, http.MethodDelete, "/auth-files", nil, name)
-	if err != nil {
-		return err
+	if _, ok := safeAuthFileName(name); !ok {
+		return errors.New("CPA auth-file name is invalid")
 	}
-	response, err := m.client.Do(request)
-	if err != nil {
-		return fmt.Errorf("delete CPA auth file: %w", err)
+	ctx = nonNilContext(ctx)
+	var lastErr error
+	for attempt := 0; attempt < managementRetryAttempts; attempt++ {
+		request, err := m.newRequest(ctx, http.MethodDelete, "/auth-files", nil, name)
+		if err != nil {
+			return err
+		}
+		response, err := m.client.Do(request)
+		if err != nil {
+			lastErr = fmt.Errorf("delete CPA auth file: %w", err)
+		} else {
+			_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
+			_ = response.Body.Close()
+			if response.StatusCode == http.StatusNotFound || (response.StatusCode >= 200 && response.StatusCode < 300) {
+				return nil
+			}
+			lastErr = &managementStatusError{operation: "delete CPA auth file", status: response.StatusCode}
+		}
+		if attempt+1 >= managementRetryAttempts || !retryableManagementError(lastErr, false) {
+			return lastErr
+		}
+		if err := waitManagementRetry(ctx, managementRetryDelay(attempt)); err != nil {
+			return err
+		}
 	}
-	defer response.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
-	if response.StatusCode == http.StatusNotFound {
-		return nil
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("delete CPA auth file: status %d", response.StatusCode)
-	}
-	return nil
-}
-
-func (m *Manager) patchAuthFileField(ctx context.Context, name, field string, value any) error {
-	body, err := json.Marshal(map[string]any{"name": name, field: value})
-	if err != nil {
-		return errors.New("encode CPA auth-file field update")
-	}
-	request, err := m.newRequest(ctx, http.MethodPatch, "/auth-files/fields", bytes.NewReader(body), "")
-	if err != nil {
-		return err
-	}
-	request.Header.Set("Content-Type", "application/json")
-	response, err := m.client.Do(request)
-	if err != nil {
-		return fmt.Errorf("patch CPA auth file: %w", err)
-	}
-	defer response.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 1<<20))
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return fmt.Errorf("patch CPA auth file: status %d", response.StatusCode)
-	}
-	return nil
-}
-
-func (m *Manager) rollbackAuthFile(name string, previous []byte, existed bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if existed {
-		_ = m.uploadAuthFile(ctx, name, previous)
-		return
-	}
-	_ = m.deleteAuthFile(ctx, name)
+	return lastErr
 }
 
 func (m *Manager) newRequest(ctx context.Context, method, endpoint string, body io.Reader, name string) (*http.Request, error) {

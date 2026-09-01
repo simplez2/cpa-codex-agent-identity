@@ -34,9 +34,9 @@ it. Tests exercise it only through a local httptest upstream.
 
 The plugin targets CPA dynamic plugin ABI v1 and is compiled with Go 1.26.6 or
 later against the current verified source baseline, CLIProxyAPI v7.2.145.
-The current source line is v0.3.8 and is built against CLIProxyAPI v7.2.145;
-the public registry and directly installable assets are v0.3.7, backed by the
-published and checksummed v0.3.7 GitHub Release archives. The CPA image remains an
+The current source line is v0.3.9 and is built against CLIProxyAPI v7.2.145;
+the public registry and directly installable assets are v0.3.8, backed by the
+published and checksummed v0.3.8 GitHub Release archives. The CPA image remains an
 environment variable and is never rebuilt or forked here.
 
 A CPA upgrade should follow this sequence:
@@ -98,9 +98,12 @@ client -> CPA stock executor -> sidecar data plane -> fixed OpenAI origins
 
 CPA intentionally leaves `/v0/resource/plugins/...` outside Management-key
 authentication because CPAMC loads these resources inside an iframe. The plugin
-therefore registers a resource wrapper that contains no Management key, original
-credential, or host callback. The resource route only embeds the sidecar dashboard;
-listing, previewing, importing, enabling, disabling, refreshing, and deleting
+therefore registers a resource wrapper that contains no hard-coded Management key,
+original credential, or privileged host callback. It reuses CPAMC's scoped
+obfuscated auth state only through a source-, origin-, and nonce-checked
+`postMessage`; the key is never added to the iframe URL or persisted by the
+wrapper. The resource route embeds the sidecar dashboard; listing, previewing,
+importing, enabling, disabling, refreshing, and deleting
 identities still require the sidecar's own Bearer management password.
 
 During registration, the plugin echoes the CPA host's requested schema version,

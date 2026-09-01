@@ -84,6 +84,37 @@ func cpaCredential(identityID, clientKey string, credential *identity.Credential
 	}
 }
 
+func cpaCredentialFromStored(stored *identitystore.Identity) cpa.Credential {
+	if stored == nil {
+		return cpa.Credential{}
+	}
+	return cpa.Credential{
+		IdentityID: stored.ID,
+		ClientKey:  stored.ClientKey,
+		Kind:       stored.Kind,
+		AccountID:  stored.AccountID,
+		Email:      stored.Email,
+		PlanType:   stored.PlanType,
+		ExpiresAt:  stored.ExpiresAt,
+		FedRAMP:    stored.FedRAMP,
+	}
+}
+
+func cpaCredentialFromPublic(public identitystore.PublicIdentity) cpa.Credential {
+	credential := cpa.Credential{
+		IdentityID: public.ID,
+		Kind:       public.Kind,
+		AccountID:  public.AccountID,
+		Email:      public.Email,
+		PlanType:   public.PlanType,
+		FedRAMP:    public.FedRAMP,
+	}
+	if public.ExpiresAt != nil {
+		credential.ExpiresAt = public.ExpiresAt.UTC()
+	}
+	return credential
+}
+
 func storeMetadata(credential *identity.CredentialInfo, accountScoped bool) identitystore.CredentialMetadata {
 	if credential == nil {
 		return identitystore.CredentialMetadata{}

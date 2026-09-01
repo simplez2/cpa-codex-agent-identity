@@ -141,6 +141,9 @@ func TestSidecarManagementUISynchronizesCPACodexAuthFile(t *testing.T) {
 	if !bytes.Contains(uiBody, []byte(`id="connection-form"`)) || !bytes.Contains(uiBody, []byte(`autocomplete="username"`)) || !bytes.Contains(uiBody, []byte(`rel="icon" href="data:,"`)) {
 		t.Fatalf("management UI is missing form or favicon metadata: %s", uiBody)
 	}
+	if !bytes.Contains(uiBody, []byte(`id="cpa-sync-status"`)) || !bytes.Contains(uiBody, []byte(`id="cpa-sync-label"`)) {
+		t.Fatalf("management UI is missing the CPA sync status surface: %s", uiBody)
+	}
 	if bytes.Contains(uiBody, []byte(managementKey)) {
 		t.Fatal("management UI leaked the configured management key")
 	}
@@ -163,6 +166,9 @@ func TestSidecarManagementUISynchronizesCPACodexAuthFile(t *testing.T) {
 		!bytes.Contains(appBody, []byte("sessionStorage.getItem('cpaManagementKey')")) ||
 		!bytes.Contains(appBody, []byte("sessionStorage.setItem('cpaManagementKey'")) {
 		t.Fatalf("management UI key-storage policy is missing: status=%d", appResponse.StatusCode)
+	}
+	if !bytes.Contains(appBody, []byte("api('diagnostics')")) || !bytes.Contains(appBody, []byte("renderDiagnostics")) {
+		t.Fatalf("management UI does not render CPA diagnostics: %s", appBody)
 	}
 	if bytes.Contains(appBody, []byte("localStorage")) || bytes.Contains(appBody, []byte(managementKey)) {
 		t.Fatal("management UI script crossed the management-key storage boundary")
@@ -662,6 +668,7 @@ func TestManagementAPICallUsesAgentAssertionForQuotaAndForwardsOAuth(t *testing.
 	const managementKey = "management-key-at-least-24-characters"
 	var registrations atomic.Int32
 	var quotaCalls atomic.Int32
+	var forwardedCalls atomic.Int32
 
 	services := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch {
@@ -698,7 +705,7 @@ func TestManagementAPICallUsesAgentAssertionForQuotaAndForwardsOAuth(t *testing.
 		"type":              "codex",
 		"auth_mode":         "agent_identity_sidecar",
 		"agent_identity_id": publicIdentity.ID,
-		"access_token":      "cais_test",
+		"access_token":      "cais_test_0000000000000000000000000000",
 	})
 	cpaServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Header.Get("Authorization") != "Bearer "+managementKey {
@@ -721,6 +728,7 @@ func TestManagementAPICallUsesAgentAssertionForQuotaAndForwardsOAuth(t *testing.
 				http.NotFound(writer, request)
 			}
 		case "/api-call":
+			forwardedCalls.Add(1)
 			var forwarded map[string]any
 			if json.NewDecoder(request.Body).Decode(&forwarded) != nil || forwarded["auth_index"] != "oauth-index" {
 				http.Error(writer, "bad forward", http.StatusBadRequest)
@@ -792,6 +800,28 @@ func TestManagementAPICallUsesAgentAssertionForQuotaAndForwardsOAuth(t *testing.
 	}
 	if json.Unmarshal(raw, &oauthResponse) != nil || status != http.StatusOK || oauthResponse.Body != `{"oauth":true}` {
 		t.Fatalf("oauth status=%d response=%s", status, raw)
+	}
+	if forwardedCalls.Load() != 1 {
+		t.Fatalf("forwarded calls=%d, want 1 after native OAuth request", forwardedCalls.Load())
+	}
+
+	// A stale sidecar index must not send a cais_ key through CPA's native
+	// OAuth parser. This is the failure mode that otherwise surfaces as a
+	// misleading 401 "Could not parse your authentication token".
+	staleBody := []byte(`{"auth_index":999,"method":"GET","url":"https://chatgpt.com/backend-api/wham/usage","header":{"Authorization":"Bearer cais_test_0000000000000000000000000000"}}`)
+	staleRequest, _ := http.NewRequest(http.MethodPost, sidecar.URL+"/v0/management/api-call", bytes.NewReader(staleBody))
+	staleRequest.Header.Set("Content-Type", "application/json")
+	staleRequest.Header.Set("Authorization", "Bearer "+managementKey)
+	staleResponse, err := http.DefaultClient.Do(staleRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer staleResponse.Body.Close()
+	if _, err = io.Copy(io.Discard, staleResponse.Body); err != nil {
+		t.Fatal(err)
+	}
+	if staleResponse.StatusCode != http.StatusBadGateway || forwardedCalls.Load() != 1 {
+		t.Fatalf("stale sidecar status=%d forwarded=%d, want 502 and no extra forward", staleResponse.StatusCode, forwardedCalls.Load())
 	}
 }
 
@@ -876,7 +906,7 @@ func TestManagementAPICallPersonalAccessTokenFallsBackToUsageForResetCredits(t *
 		"auth_mode":         "agent_identity_sidecar",
 		"credential_kind":   "personal_access_token",
 		"agent_identity_id": publicIdentity.ID,
-		"access_token":      "cais_test",
+		"access_token":      "cais_test_0000000000000000000000000000",
 	})
 	cpaServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Header.Get("Authorization") != "Bearer "+managementKey {
@@ -1362,6 +1392,100 @@ func importIdentityDetailsAtPath(t *testing.T, importURL, token string) (clientK
 		t.Fatalf("invalid import response: %s", raw)
 	}
 	return decoded.ClientKey, decoded.Identity.ID, raw
+}
+
+func TestDiagnosticsRequiresAuthAndReportsCPASyncState(t *testing.T) {
+	t.Parallel()
+	const managementKey = "management-key-at-least-24-characters"
+	var mode atomic.Value
+	mode.Store("ready")
+	cpaServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v0/management/auth-files" {
+			http.NotFound(writer, request)
+			return
+		}
+		if request.Header.Get("Authorization") != "Bearer "+managementKey {
+			http.Error(writer, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		switch mode.Load().(string) {
+		case "unauthorized":
+			http.Error(writer, "unauthorized", http.StatusUnauthorized)
+		case "unreachable":
+			http.Error(writer, "unexpected", http.StatusBadGateway)
+		default:
+			_ = json.NewEncoder(writer).Encode(map[string]any{"files": []any{}})
+		}
+	}))
+	defer cpaServer.Close()
+
+	channels, err := cpa.NewManager(cpaServer.URL+"/v0/management", managementKey, "http://sidecar:8787/backend-api/codex", cpaServer.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := identitystore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream, _ := url.Parse("https://chatgpt.com")
+	handler, err := server.New(server.Config{
+		UpstreamOrigin: upstream,
+		ManagementKey:  managementKey,
+		CPAChannels:    channels,
+	}, store, identity.NewManager("https://example.invalid/jwks", "https://example.invalid/auth", http.DefaultClient))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	unauthorized := httptest.NewRequest(http.MethodGet, "/agent-identity/api/diagnostics", nil)
+	unauthorizedRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(unauthorizedRecorder, unauthorized)
+	if unauthorizedRecorder.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized diagnostics status=%d", unauthorizedRecorder.Code)
+	}
+
+	request := httptest.NewRequest(http.MethodGet, "/agent-identity/api/diagnostics", nil)
+	request.Header.Set("Authorization", "Bearer "+managementKey)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("ready diagnostics status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	var ready struct {
+		Status       string `json:"status"`
+		Service      string `json:"service"`
+		APIVersion   string `json:"api_version"`
+		Capabilities struct {
+			AuthManagement bool `json:"auth_management"`
+			CPASync        bool `json:"cpa_sync"`
+			QuotaBridge    bool `json:"quota_bridge"`
+		} `json:"capabilities"`
+		CPASync cpa.ProbeResult `json:"cpa_sync"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &ready); err != nil {
+		t.Fatal(err)
+	}
+	if ready.Status != "ok" || ready.Service != "codex-agent-identity" || ready.APIVersion != "v1" ||
+		!ready.Capabilities.AuthManagement || !ready.Capabilities.CPASync || !ready.Capabilities.QuotaBridge ||
+		ready.CPASync.State != cpa.ProbeStateReady || !ready.CPASync.Configured || !ready.CPASync.Reachable {
+		t.Fatalf("unexpected ready diagnostics: %#v", ready)
+	}
+
+	mode.Store("unauthorized")
+	request = httptest.NewRequest(http.MethodGet, "/admin/v1/diagnostics", nil)
+	request.Header.Set("X-Management-Key", managementKey)
+	recorder = httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	var degraded struct {
+		Status  string          `json:"status"`
+		CPASync cpa.ProbeResult `json:"cpa_sync"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &degraded); err != nil {
+		t.Fatal(err)
+	}
+	if recorder.Code != http.StatusOK || degraded.Status != "degraded" || degraded.CPASync.State != cpa.ProbeStateUnauthorized || !degraded.CPASync.Reachable {
+		t.Fatalf("unexpected unauthorized diagnostics: status=%d body=%s decoded=%#v", recorder.Code, recorder.Body.String(), degraded)
+	}
 }
 
 func TestHealthEndpoint(t *testing.T) {
