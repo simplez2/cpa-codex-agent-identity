@@ -27,14 +27,17 @@
         </div>
         <span id="connection-pill" class="pill neutral">未连接</span>
       </div>
-      <label for="management-key">CPA 管理密码</label>
-      <form id="connection-form" class="row connection-row">
-        <input type="text" name="username" autocomplete="username" value="cpa-management" hidden>
-        <input id="management-key" type="password" autocomplete="current-password" placeholder="与 CPA 管理中心相同的密码">
-        <button id="connect" type="submit">连接</button>
-        <button id="forget" type="button" class="secondary">清除</button>
-      </form>
-      <p class="hint">密码仅存于当前标签页的 <code>sessionStorage</code>，不会写入 localStorage，也不会进入导出文件。</p>
+      <div id="manual-connection" class="manual-connection">
+        <label for="management-key">CPA 管理密码</label>
+        <form id="connection-form" class="row connection-row">
+          <input type="text" name="username" autocomplete="username" value="cpa-management" hidden>
+          <input id="management-key" type="password" autocomplete="current-password" placeholder="与 CPA 管理中心相同的密码">
+          <button id="connect" type="submit">连接</button>
+          <button id="forget" type="button" class="secondary">清除</button>
+        </form>
+        <p class="hint">密码仅存于当前标签页的 <code>sessionStorage</code>，不会写入 localStorage，也不会进入导出文件。</p>
+      </div>
+      <button id="manual-connect" type="button" class="secondary manual-connect" hidden>手动输入管理密码</button>
     </section>
 
     <section class="summary-grid" aria-label="凭证摘要">
@@ -106,6 +109,13 @@
         <button id="refresh" type="button" class="secondary">刷新</button>
       </div>
       <div id="status" class="status" role="status" aria-live="polite">请输入管理密码并连接。</div>
+      <div id="cpa-sync-status" class="integration-status neutral" role="status" aria-live="polite">
+        <span class="integration-indicator" aria-hidden="true"></span>
+        <div>
+          <strong id="cpa-sync-label">CPA 同步状态未知</strong>
+          <small id="cpa-sync-detail">连接后自动检查原生 Codex 凭证同步与额度桥接。</small>
+        </div>
+      </div>
       <div id="identities" class="identities"></div>
     </section>
   </main>

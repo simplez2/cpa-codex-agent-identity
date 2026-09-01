@@ -130,10 +130,12 @@ func New(config Config, store *identitystore.Store, manager *identity.Manager) (
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", result.handleHealth)
+	mux.HandleFunc("/admin/v1/diagnostics", result.handleDiagnostics)
 	mux.HandleFunc("/admin/v1/identities/import", result.handleImport)
 	mux.HandleFunc("/admin/v1/identities/import/batch", result.handleBatchImport)
 	mux.HandleFunc("/admin/v1/identities", result.handleIdentities)
 	mux.HandleFunc("/admin/v1/identities/", result.handleIdentity)
+	mux.HandleFunc("/agent-identity/api/diagnostics", result.handleDiagnostics)
 	mux.HandleFunc("/agent-identity/api/identities/import", result.handleImport)
 	mux.HandleFunc("/agent-identity/api/identities/import/batch", result.handleBatchImport)
 	mux.HandleFunc("/agent-identity/api/identities", result.handleIdentities)
@@ -166,6 +168,53 @@ func (s *Server) handleHealth(writer http.ResponseWriter, request *http.Request)
 		return
 	}
 	writeJSON(writer, http.StatusOK, map[string]any{"status": "ok"})
+}
+
+type diagnosticsCapabilities struct {
+	AuthManagement bool `json:"auth_management"`
+	CPASync        bool `json:"cpa_sync"`
+	QuotaBridge    bool `json:"quota_bridge"`
+}
+
+type diagnosticsResponse struct {
+	Status       string                  `json:"status"`
+	Service      string                  `json:"service"`
+	APIVersion   string                  `json:"api_version"`
+	Capabilities diagnosticsCapabilities `json:"capabilities"`
+	CPASync      cpa.ProbeResult         `json:"cpa_sync"`
+}
+
+func (s *Server) handleDiagnostics(writer http.ResponseWriter, request *http.Request) {
+	if request.Method != http.MethodGet {
+		writeJSON(writer, http.StatusMethodNotAllowed, map[string]any{"error": "method not allowed"})
+		return
+	}
+	if !s.authorizeManagement(request) {
+		writeJSON(writer, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
+		return
+	}
+
+	probe := cpa.ProbeResult{State: cpa.ProbeStateNotConfigured}
+	if s.channels != nil {
+		ctx, cancel := context.WithTimeout(request.Context(), 3*time.Second)
+		probe = s.channels.Probe(ctx)
+		cancel()
+	}
+	status := "ok"
+	if probe.State != cpa.ProbeStateReady {
+		status = "degraded"
+	}
+	writeJSON(writer, http.StatusOK, diagnosticsResponse{
+		Status:     status,
+		Service:    "codex-agent-identity",
+		APIVersion: "v1",
+		Capabilities: diagnosticsCapabilities{
+			AuthManagement: true,
+			CPASync:        s.channels != nil,
+			QuotaBridge:    s.channels != nil,
+		},
+		CPASync: probe,
+	})
 }
 
 func (s *Server) handleUI(writer http.ResponseWriter, request *http.Request) {
@@ -374,12 +423,12 @@ func (s *Server) handleIdentities(writer http.ResponseWriter, request *http.Requ
 	states := map[string]cpa.IdentityState{}
 	var syncError string
 	if s.channels != nil {
-		ids := make([]string, 0, len(identities))
+		credentials := make([]cpa.Credential, 0, len(identities))
 		for _, item := range identities {
-			ids = append(ids, item.ID)
+			credentials = append(credentials, cpaCredentialFromPublic(item))
 		}
 		var err error
-		states, err = s.channels.IdentityStates(request.Context(), ids)
+		states, err = s.channels.IdentityStatesForCredentials(request.Context(), credentials)
 		if err != nil {
 			syncError = "CPA Codex credential status unavailable"
 		}
@@ -451,7 +500,7 @@ func (s *Server) handleIdentity(writer http.ResponseWriter, request *http.Reques
 		}
 		var removedCPA []cpa.AuthFileSnapshot
 		if s.channels != nil {
-			removedCPA, err = s.channels.RemoveIdentityWithSnapshot(request.Context(), id)
+			removedCPA, err = s.channels.RemoveCredentialWithSnapshot(request.Context(), cpaCredentialFromStored(previous))
 			if err != nil {
 				writeJSON(writer, http.StatusBadGateway, map[string]any{"error": "failed to remove CPA Codex credential", "backup_id": backupID})
 				return
@@ -496,7 +545,7 @@ func (s *Server) handleIdentity(writer http.ResponseWriter, request *http.Reques
 	}
 	switch action {
 	case "enable", "disable":
-		if err := s.channels.SetIdentityDisabled(request.Context(), id, action == "disable"); err != nil {
+		if err := s.channels.SetIdentityDisabledForCredential(request.Context(), cpaCredentialFromStored(previous), action == "disable"); err != nil {
 			writeJSON(writer, http.StatusBadGateway, map[string]any{"error": "failed to update CPA Codex credential state"})
 			return
 		}
@@ -611,6 +660,7 @@ func (s *Server) handleCPAAPICall(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 	authIndex := firstNonEmpty(call.AuthIndexSnake, call.AuthIndexCamel, call.AuthIndexPascal)
+	sidecarCredential := containsSidecarCredentialHeader(call.Header)
 	identityID, managed, err := s.channels.IdentityIDForAuthIndex(request.Context(), authIndex)
 	if err != nil {
 		writeJSON(writer, http.StatusBadGateway, map[string]any{"error": "CPA credential lookup failed"})
@@ -618,6 +668,13 @@ func (s *Server) handleCPAAPICall(writer http.ResponseWriter, request *http.Requ
 	}
 	storedIdentity, exists := s.store.GetByID(identityID)
 	if !managed || !exists {
+		// Never hand a recognizable cais_ key back to CPA's native OAuth
+		// parser. If the sidecar index is stale or cannot be resolved, fail
+		// closed; native OAuth requests remain transparently forwarded.
+		if sidecarCredential {
+			writeJSON(writer, http.StatusBadGateway, map[string]any{"error": "sidecar credential lookup failed"})
+			return
+		}
 		s.forwardCPAAPICall(writer, request, raw)
 		return
 	}

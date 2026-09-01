@@ -12,7 +12,7 @@
   <p>简体中文 · <a href="README.md">English</a></p>
 </div>
 
-> **版本边界：** 当前源码开发线为 **v0.3.8**，编译基线为 CLIProxyAPI **v7.2.145**。本仓库已发布的 registry 和直接安装资产仍为 **v0.3.7**；公开 CPA Plugin Store 当前仍使用旧版回退展示元数据，在其切换前可使用本仓库的 direct registry。只有在 v0.3.8 完成测试、打包、Release、校验值和 registry 更新后，插件商店才会切换到 v0.3.8。
+> **版本边界：** 当前源码开发线为 **v0.3.9**，编译基线为 CLIProxyAPI **v7.2.145**。本仓库已发布的 registry 和直接安装资产仍为 **v0.3.8**；公开 CPA Plugin Store 当前仍使用旧版回退展示元数据，在其切换前可使用本仓库的 direct registry。只有在 v0.3.9 完成测试、打包、Release、校验值和 registry 更新后，插件商店才会切换到 v0.3.9。
 
 这是一个面向 CLIProxyAPI（CPA）的 Codex Agent Identity / Personal Access
 Token 集成项目。首个公开版本由两个部分组成：
@@ -58,7 +58,7 @@ runtime provider 仍为 `codex`，因此会进入 CPA 原生 Codex executor。�
 
 ### 当前 plugin-pages 入口
 
-CPA 的 /v0/resource/plugins/... 资源路由不经过 Management key 认证，因为 CPAMC 会在 iframe 中加载它。插件通过 ResourceRoute 注册 /open，由 CPA 原生 plugin-pages 菜单显示 Codex Agent Identity。这个 wrapper 不包含 Management key、token 或宿主回调，只负责嵌入 sidecar 页面；真正的身份列表、预检、导入、启用、停用和删除仍由 sidecar 的 Bearer 管理认证保护。
+CPA 的 `/v0/resource/plugins/...` 资源路由不经过 Management key 认证，因为 CPAMC 会在 iframe 中加载它。插件通过 ResourceRoute 注册 `/open`，由 CPA 原生 plugin-pages 菜单显示 Codex Agent Identity。wrapper 不内置、不写入 URL、也不持久化 Management key；它会读取 CPAMC 当前 scoped 加密登录状态，并仅通过同时校验 source、origin 与随机 nonce 的 `postMessage` 把 key 交给同源 sidecar iframe。真正的身份列表、预检、导入、启用、停用和删除仍由 sidecar 的 Bearer 管理认证保护。
 
 不要再把卡片按钮、外挂 overlay 入口和 plugin-pages 菜单混为一谈。当前推荐入口是 CPA 原生 plugin-pages；management-overlay 仅用于 reset-credit 可见性和 Codex 额度 API bridge，不修改插件卡片。
 
@@ -70,7 +70,7 @@ CPA 的 /v0/resource/plugins/... 资源路由不经过 Management key 认证，�
 
 公开 `router-for-me/CLIProxyAPI-Plugins-Store` 已包含本插件，但 registry 中的回退展示版本仍是 `0.3.3`。新版 CPA 通常会先查询最新 GitHub Release 再展示和安装；当该元数据查询失败或命中旧缓存时，页面就可能继续显示 `0.3.3`。
 
-本项目的 `registry.json` 是单独的 CPA schema v2 直接资产清单，固定了已发布 `0.3.7` 资产的大小和 SHA-256，不依赖 GitHub Release 元数据查询。可将它作为明确回退源加入 CPA 配置：
+本项目的 `registry.json` 是单独的 CPA schema v2 直接资产清单，固定了已发布 `0.3.8` 资产的大小和 SHA-256，不依赖 GitHub Release 元数据查询。可将它作为明确回退源加入 CPA 配置：
 
 ~~~yaml
 plugins:
@@ -151,8 +151,8 @@ location ^~ /agent-identity/ {
 ~~~
 
 如果确实需要跨来源嵌入，必须把受信任页面的完整 origin 加入
-EMBED_ALLOWED_ORIGINS。管理密码只保存在当前标签页的 sessionStorage，不会
-写入 localStorage、URL、Cookie 或导出文件。
+EMBED_ALLOWED_ORIGINS。sidecar 管理页只把管理密码保存在当前标签页的 sessionStorage；CPAMC 自己可能使用 scoped 混淆 localStorage 保存登录状态。
+wrapper 仅复用当前选中的 scope，并通过校验 source、origin 与随机 nonce 的 `postMessage` 转交；不会把 key 写入 iframe URL、Cookie、导出文件或 sidecar localStorage。
 
 插件解析器默认允许容器服务名以及 `localhost`、`127.0.0.1`、`::1`。HTTP 默认只允许 8787，loopback 额外允许宿主机映射端口 18787；其他明确需要的 HTTP 端口必须通过 `CODEX_AGENT_IDENTITY_SIDECAR_HTTP_PORTS` 逐项加入。
 
@@ -218,8 +218,8 @@ checksums.txt、GitHub Release，以及 GHCR 的多架构 sidecar 镜像。
 
 - 原始凭证使用 AES-256-GCM 加密，密钥必须与数据卷分开保存。
 - .so 是 CPA 进程内受信任代码，安装前必须校验发布哈希。
-- 插件资源入口只能作为不含 secret 的 wrapper；不得把 token、Management key 或特权 API 操作放进
-  `/v0/resource/plugins/...`，真正的身份操作必须继续由 sidecar Bearer 认证。
+- 插件资源入口不得内置或持久化 token、Management key 或特权 API；只允许通过 source/origin/nonce 校验的 `postMessage` 复用 CPAMC 当前 scoped 登录状态，
+  `/v0/resource/plugins/...` 和 iframe URL 都不得携带 secret，真正的身份操作必须继续由 sidecar Bearer 认证。
 - 不要在 issue、日志、截图或导出中提交 token、管理密码、Cookie、代理密码、
   cais_ 密钥或 auth 文件。
 - ALLOW_PLAINTEXT_STORE 和 ALLOW_INSECURE_UPSTREAM 仅用于本地测试。

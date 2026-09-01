@@ -12,7 +12,7 @@
   <p>English · <a href="README.zh-CN.md">简体中文</a></p>
 </div>
 
-> **Release boundary:** this working tree targets **v0.3.8**, built against CLIProxyAPI **v7.2.145**. The latest published registry entry and directly installable Plugin Store assets are **v0.3.7**, backed by the checksummed Linux archives in the v0.3.7 GitHub Release. The v0.3.8 development line keeps CPA native Codex OAuth login/refresh ownership while routing Agent Identity records through CPA's native Codex executor.
+> **Release boundary:** this working tree targets **v0.3.9**, built against CLIProxyAPI **v7.2.145**. The latest published registry entry and directly installable Plugin Store assets are **v0.3.8**, backed by the checksummed Linux archives in the v0.3.8 GitHub Release. The v0.3.9 development line keeps CPA native Codex OAuth login/refresh ownership while routing Agent Identity records through CPA's native Codex executor.
 
 CPA-native management and routing support for Codex Agent Identity JWTs and opaque Personal Access Tokens whose current prefix is at-.
 
@@ -80,15 +80,17 @@ CPA never receives the original Agent Identity JWT or PAT. It receives only a ra
 - The data directory is owner-only on POSIX systems and identity files use mode 0600.
 - The data encryption key is mounted separately from the encrypted data volume.
 - Management endpoints use constant-time management-key comparison.
-- The browser stores the management password only in sessionStorage, never localStorage.
+- The sidecar UI stores the management password only in the current tab's `sessionStorage`. The plugin wrapper can read CPAMC's own scoped, obfuscated auth state, but never copies the key into an iframe URL, Cookie, export, or sidecar `localStorage`.
 - Batch responses and exports never contain an original token, Authorization header, Cookie, private key, account ID, task ID, or proxy password.
 - Import requests have size and item-count limits.
 - Batch validation uses bounded concurrency.
 - The UI builds result rows with DOM text nodes instead of inserting untrusted HTML.
 - The plugin advertises one browser-navigable ResourceRoute at
   `/v0/resource/plugins/codex-agent-identity/open`, so supported CPAMC builds can
-  show it under the plugin-pages menu. The wrapper contains no Management key or
-  credential and only embeds the sidecar UI.
+  show it under the plugin-pages menu. The wrapper never embeds or persists a
+  Management key; it reads CPAMC's current scoped auth selection and transfers
+  the key only to the same-origin sidecar frame through a nonce-bound
+  `postMessage`.
 - The authenticated Management API wrapper remains available at
   `/v0/management/codex-agent-identity/open`; the resource route is only an
   entry point and the sidecar still authenticates every identity operation.
@@ -102,7 +104,7 @@ Treat the management password, encryption key, and generated cais_ values as sec
 ## Requirements
 
 - A CPA build with dynamic plugin ABI v1, AuthProvider, Management API routes, and host auth-file management support.
-- CLIProxyAPI v7.2.145 is the verified SDK baseline for the v0.3.8 development line. The plugin uses
+- CLIProxyAPI v7.2.145 is the verified SDK baseline for the v0.3.9 development line. The plugin uses
   dynamic plugin ABI v1; always canary-test it against the exact CPA image you
   plan to deploy.
 - Linux amd64 or Linux arm64 for the released .so files.
@@ -145,7 +147,10 @@ CPA deliberately leaves `/v0/resource/plugins/...` outside Management-key
 authentication because CPAMC loads these resources inside an iframe. The current
 development line therefore advertises `/open` as a browser-navigable ResourceRoute while keeping
 all credential operations in the sidecar's own Bearer-key-protected API. The
-wrapper contains no Management key, token, or host callback.
+wrapper contains no hard-coded Management key, token, or privileged callback. It
+can reuse CPAMC's scoped encrypted login state and delivers the key only through
+a source-, origin-, and nonce-checked `postMessage`; the iframe URL remains
+secret-free.
 
 On a CPAMC build with plugin resources enabled, restart CPA after installing the
 plugin and the **Codex Agent Identity** entry should appear under plugin pages.
@@ -164,7 +169,7 @@ resolve the latest GitHub Release before showing or installing it, but when that
 metadata lookup is unavailable or cached they can still display `0.3.3`. The
 checked-in `registry.json` in this repository is a separate CPA schema v2 direct
 source with pinned, checksummed artifacts; it tracks the latest **published** direct
-version (`0.3.7`) and deliberately stays behind the v0.3.8 development line until
+version (`0.3.8`) and deliberately stays behind the v0.3.9 development line until
 its tagged Release exists. Adding it to the host-mounted CPA configuration avoids
 GitHub release-metadata lookup and stale public-store fallback versions:
 
@@ -458,7 +463,7 @@ checksums.txt
 plugin's fallback metadata version; CPA may resolve the latest GitHub Release
 separately, which is why the displayed version can depend on network/cache state.
 This repository `registry.json` is the explicit pinned-artifact fallback and is kept
-at the latest verified release; the next update to `0.3.8` belongs in the post-release
+at the latest verified release (`0.3.8`); the next update to `0.3.9` belongs in the post-release
 publication commit described in [Release process](RELEASE.md).
 
 ## Optional Management Center overlay

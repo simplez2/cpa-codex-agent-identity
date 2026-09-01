@@ -13,12 +13,170 @@ import (
 	"time"
 )
 
+func TestManagerProbeReportsSafeCPAStates(t *testing.T) {
+	t.Parallel()
+	const managementKey = "management-key"
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/v0/management/auth-files" {
+			http.NotFound(writer, request)
+			return
+		}
+		switch request.URL.Query().Get("mode") {
+		case "unauthorized":
+			http.Error(writer, "unauthorized", http.StatusUnauthorized)
+		case "forbidden":
+			http.Error(writer, "forbidden", http.StatusForbidden)
+		case "invalid":
+			writer.WriteHeader(http.StatusOK)
+			_, _ = writer.Write([]byte("not-json"))
+		case "error":
+			http.Error(writer, "broken", http.StatusBadGateway)
+		default:
+			_ = json.NewEncoder(writer).Encode(map[string]any{"files": []any{}})
+		}
+	}))
+	defer server.Close()
+
+	for _, test := range []struct {
+		name      string
+		mode      string
+		wantState ProbeState
+		wantReach bool
+	}{
+		{name: "ready", wantState: ProbeStateReady, wantReach: true},
+		{name: "unauthorized", mode: "unauthorized", wantState: ProbeStateUnauthorized, wantReach: true},
+		{name: "forbidden", mode: "forbidden", wantState: ProbeStateUnauthorized, wantReach: true},
+		{name: "invalid response", mode: "invalid", wantState: ProbeStateError, wantReach: true},
+		{name: "server error", mode: "error", wantState: ProbeStateError, wantReach: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			base := server.URL + "/v0/management"
+			if test.mode != "" {
+				base += "?mode=" + test.mode
+			}
+			manager, err := NewManager(base, managementKey, "http://sidecar:8787/backend-api/codex", server.Client())
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := manager.Probe(context.Background())
+			if !result.Configured || result.Reachable != test.wantReach || result.State != test.wantState {
+				t.Fatalf("probe=%#v, want configured=true reachable=%v state=%q", result, test.wantReach, test.wantState)
+			}
+		})
+	}
+
+	var manager *Manager
+	if result := manager.Probe(context.Background()); result.Configured || result.Reachable || result.State != ProbeStateNotConfigured {
+		t.Fatalf("nil manager probe=%#v", result)
+	}
+}
+
+func TestManagerProbeReportsUnreachableWithoutSensitiveDetails(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	endpoint := server.URL + "/v0/management"
+	server.Close()
+	manager, err := NewManager(endpoint, "management-key", "http://sidecar:8787/backend-api/codex", http.DefaultClient)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := manager.Probe(context.Background())
+	if !result.Configured || result.Reachable || result.State != ProbeStateUnreachable {
+		t.Fatalf("unreachable probe=%#v", result)
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil || strings.Contains(string(encoded), "management-key") || strings.Contains(string(encoded), endpoint) {
+		t.Fatalf("probe leaked sensitive details: %s err=%v", encoded, err)
+	}
+}
+
+func TestValidateCredentialRequiresValidClientKey(t *testing.T) {
+	t.Parallel()
+	base := Credential{IdentityID: "agent-aabb0011"}
+	cases := []struct {
+		name string
+		key  string
+		want bool
+	}{
+		{name: "empty", key: "", want: false},
+		{name: "short", key: "cais_short", want: false},
+		{name: "wrong prefix", key: "token_0000000000000000000000000000", want: false},
+		{name: "newline", key: "cais_0000000000000000000000000000\n", want: false},
+		{name: "carriage return", key: "cais_0000000000000000000000000000\r", want: false},
+		{name: "valid", key: "cais_test_0000000000000000000000000000", want: true},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			credential := base
+			credential.ClientKey = test.key
+			err := validateCredential(credential)
+			if (err == nil) != test.want {
+				t.Fatalf("validateCredential(%q) error=%v, want valid=%v", test.key, err, test.want)
+			}
+		})
+	}
+}
+
+func TestIdentityIDForAuthIndexAcceptsStringAndNumericForms(t *testing.T) {
+	t.Parallel()
+	const managementKey = "management-key"
+	const firstID = "agent-aabb0011"
+	const secondID = "agent-aabb0022"
+	const thirdID = "agent-aabb0033"
+	files := map[string][]byte{
+		"codex-first.json":  []byte(`{"type":"codex-agent-identity","auth_mode":"agent_identity_sidecar","agent_identity_id":"agent-aabb0011"}`),
+		"codex-second.json": []byte(`{"type":"codex-agent-identity","auth_mode":"agent_identity_sidecar","agent_identity_id":"agent-aabb0022"}`),
+		"codex-third.json":  []byte(`{"type":"codex-agent-identity","auth_mode":"agent_identity_sidecar","agent_identity_id":"agent-aabb0033"}`),
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer "+managementKey {
+			http.Error(writer, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		name := request.URL.Query().Get("name")
+		switch request.URL.Path {
+		case "/v0/management/auth-files":
+			_ = json.NewEncoder(writer).Encode(map[string]any{"files": []map[string]any{
+				{"name": "codex-first.json", "auth_index": 7},
+				{"name": "codex-second.json", "authIndex": "8"},
+				{"name": "codex-third.json", "AuthIndex": 9},
+			}})
+		case "/v0/management/auth-files/download":
+			if raw, ok := files[name]; ok {
+				_, _ = writer.Write(raw)
+				return
+			}
+			http.NotFound(writer, request)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+	manager, err := NewManager(server.URL+"/v0/management", managementKey, "http://sidecar:8787/backend-api/codex", server.Client())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		index string
+		id    string
+	}{
+		{index: "7", id: firstID},
+		{index: "8", id: secondID},
+		{index: "9", id: thirdID},
+	} {
+		id, managed, err := manager.IdentityIDForAuthIndex(context.Background(), test.index)
+		if err != nil || !managed || id != test.id {
+			t.Fatalf("auth index %q resolved id=%q managed=%v err=%v", test.index, id, managed, err)
+		}
+	}
+}
+
 func TestManagerUpsertStatusAndRemoveUsesNativeAuthFiles(t *testing.T) {
 	t.Parallel()
 	var mu sync.Mutex
 	files := map[string][]byte{
 		"existing-codex.json":                    []byte(`{"type":"codex","access_token":"existing"}`),
-		"codex-agent-identity-aabbccddeeff.json": []byte(`{"type":"codex","auth_mode":"agent_identity_sidecar","agent_identity_id":"agent-aabbccddeeff","access_token":"cais_old","disabled":true}`),
+		"codex-agent-identity-aabbccddeeff.json": []byte(`{"type":"codex","auth_mode":"agent_identity_sidecar","agent_identity_id":"agent-aabbccddeeff","access_token":"cais_old_0000000000000000000000000000","disabled":true}`),
 	}
 	service := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		if request.Header.Get("Authorization") != "Bearer management-key" {
@@ -89,7 +247,7 @@ func TestManagerUpsertStatusAndRemoveUsesNativeAuthFiles(t *testing.T) {
 	}
 	credential := Credential{
 		IdentityID: "agent-aabbccddeeff",
-		ClientKey:  "cais_secret",
+		ClientKey:  "cais_secret_0000000000000000000000000000",
 		AccountID:  "account-test",
 		UserID:     "user-test",
 		Email:      "user@example.invalid",
@@ -237,7 +395,7 @@ func TestCredentialJSONLabelsPersonalAccessTokenWithoutExposingIt(t *testing.T) 
 	}
 	raw, err := manager.credentialJSON(Credential{
 		IdentityID: "agent-aabbccddeeff",
-		ClientKey:  "cais_opaque",
+		ClientKey:  "cais_opaque_0000000000000000000000000000",
 		Kind:       "personal_access_token",
 		AccountID:  "account-team",
 		UserID:     "user-team",
@@ -254,7 +412,7 @@ func TestCredentialJSONLabelsPersonalAccessTokenWithoutExposingIt(t *testing.T) 
 	if json.Unmarshal(raw, &payload) != nil {
 		t.Fatalf("invalid credential JSON: %s", raw)
 	}
-	if payload["credential_kind"] != "personal_access_token" || payload["note"] != "Codex Access Token via sidecar" || payload["access_token"] != "cais_opaque" || payload["account_id"] != "account-team" {
+	if payload["credential_kind"] != "personal_access_token" || payload["note"] != "Codex Access Token via sidecar" || payload["access_token"] != "cais_opaque_0000000000000000000000000000" || payload["account_id"] != "account-team" {
 		t.Fatalf("unexpected credential payload: %#v", payload)
 	}
 }
@@ -273,7 +431,7 @@ func TestManagerRefusesUnmanagedCollision(t *testing.T) {
 	}))
 	defer service.Close()
 	manager, _ := NewManager(service.URL+"/v0/management", "management-key", "http://sidecar:8787/backend-api/codex", service.Client())
-	err := manager.UpsertIdentity(context.Background(), Credential{IdentityID: "agent-aabbccddeeff", ClientKey: "cais_secret", Email: "user@example.invalid", PlanType: "k12"})
+	err := manager.UpsertIdentity(context.Background(), Credential{IdentityID: "agent-aabbccddeeff", ClientKey: "cais_secret_0000000000000000000000000000", Email: "user@example.invalid", PlanType: "k12"})
 	if err == nil || !strings.Contains(err.Error(), "unmanaged") {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -352,7 +510,7 @@ func TestManagerAllowsNativeOAuthWithSameTeamAndEmail(t *testing.T) {
 	}
 	credential := Credential{
 		IdentityID: "agent-aabb0011",
-		ClientKey:  "cais_secret",
+		ClientKey:  "cais_secret_0000000000000000000000000000",
 		AccountID:  "workspace-one",
 		Email:      "user@example.invalid",
 		PlanType:   "team",
@@ -473,5 +631,101 @@ func TestNewManagerValidatesSidecarBaseURL(t *testing.T) {
 		if _, err := NewManager("https://example.com/v0/management", "management-key", endpoint, http.DefaultClient); err == nil {
 			t.Fatalf("NewManager accepted invalid sidecar URL %q", endpoint)
 		}
+	}
+}
+
+type deleteCommitThenDisconnectTransport struct {
+	base    http.RoundTripper
+	oldName string
+}
+
+func (transport *deleteCommitThenDisconnectTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	if request.Method == http.MethodDelete && request.URL.Query().Get("name") == transport.oldName {
+		response, err := transport.base.RoundTrip(request)
+		if response != nil {
+			_, _ = io.Copy(io.Discard, response.Body)
+			_ = response.Body.Close()
+		}
+		if err != nil {
+			return nil, err
+		}
+		return nil, io.ErrUnexpectedEOF
+	}
+	return transport.base.RoundTrip(request)
+}
+
+func TestUpsertMigrationRestoresOldFileWhenDeleteDisconnectsAfterCommit(t *testing.T) {
+	const managementKey = "management-key"
+	credential := Credential{
+		IdentityID: "agent-aabb0044",
+		ClientKey:  "cais_test_0000000000000000000000000000",
+		AccountID:  "workspace-rollback",
+		Email:      "rollback@example.invalid",
+		PlanType:   "team",
+	}
+	oldName := "codex-rollback@example.invalid-team-agent-identity.json"
+	oldRaw := []byte(`{"type":"codex-agent-identity","auth_mode":"agent_identity_sidecar","agent_identity_id":"agent-aabb0044","access_token":"cais_old_0000000000000000000000000000","account_id":"workspace-rollback","email":"rollback@example.invalid","plan_type":"team"}`)
+	files := map[string][]byte{oldName: append([]byte(nil), oldRaw...)}
+	var mu sync.Mutex
+	service := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") != "Bearer "+managementKey {
+			http.Error(writer, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		name := request.URL.Query().Get("name")
+		mu.Lock()
+		defer mu.Unlock()
+		switch request.URL.Path {
+		case "/v0/management/auth-files":
+			switch request.Method {
+			case http.MethodGet:
+				items := make([]map[string]any, 0, len(files))
+				for fileName := range files {
+					items = append(items, map[string]any{"name": fileName, "auth_index": "index-" + fileName})
+				}
+				_ = json.NewEncoder(writer).Encode(map[string]any{"files": items})
+			case http.MethodPost:
+				files[name], _ = io.ReadAll(request.Body)
+				writer.WriteHeader(http.StatusOK)
+			case http.MethodDelete:
+				if _, ok := files[name]; !ok {
+					http.NotFound(writer, request)
+					return
+				}
+				delete(files, name)
+				writer.WriteHeader(http.StatusOK)
+			}
+		case "/v0/management/auth-files/download":
+			if raw, ok := files[name]; ok {
+				_, _ = writer.Write(raw)
+				return
+			}
+			http.NotFound(writer, request)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer service.Close()
+
+	transport := &deleteCommitThenDisconnectTransport{base: service.Client().Transport, oldName: oldName}
+	client := &http.Client{Transport: transport}
+	manager, err := NewManager(service.URL+"/v0/management", managementKey, "http://sidecar:8787/backend-api/codex", client)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = manager.UpsertIdentity(context.Background(), credential); err == nil {
+		t.Fatal("expected migration failure after simulated delete disconnect")
+	}
+	canonicalName, err := authFileName(credential)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if string(files[oldName]) != string(oldRaw) {
+		t.Fatalf("old auth file was not restored: %s", files[oldName])
+	}
+	if _, ok := files[canonicalName]; ok {
+		t.Fatalf("canonical auth file remained after rollback: %q", canonicalName)
 	}
 }

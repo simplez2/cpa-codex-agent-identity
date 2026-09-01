@@ -47,15 +47,17 @@ type Parsed struct {
 // parser remains responsible for them.
 func Parse(provider, fileName string, raw []byte) (*Parsed, bool, error) {
 	provider = strings.ToLower(strings.TrimSpace(provider))
-	if provider != PluginProvider {
-		return nil, false, nil
-	}
 	payload, err := decodeObject(raw)
 	if err != nil {
 		return nil, false, nil
 	}
 	payloadType := strings.ToLower(strings.TrimSpace(stringValue(payload["type"])))
-	if !isManagedPayloadType(payloadType) || !strings.EqualFold(stringValue(payload["auth_mode"]), AuthMode) {
+	// CPA persists plugin-auth data using the runtime provider name ("codex")
+	// rather than the plugin identifier. Accept that narrow, explicitly marked
+	// sidecar form so a restart or a host refresh does not turn the cais_ client
+	// key into a native ChatGPT OAuth token. Ordinary Codex OAuth files do not
+	// carry auth_mode=agent_identity_sidecar and continue to the built-in parser.
+	if !isManagedProvider(provider) || !isManagedPayloadType(payloadType) || !strings.EqualFold(stringValue(payload["auth_mode"]), AuthMode) {
 		return nil, false, nil
 	}
 
@@ -118,11 +120,12 @@ func Parse(provider, fileName string, raw []byte) (*Parsed, bool, error) {
 	metadata := cloneMap(payload)
 	metadata["auth_kind"] = managedAuthClassification
 	attributes := map[string]string{
-		"base_url":   baseURL,
-		"auth_mode":  AuthMode,
-		"auth_kind":  managedAuthClassification,
-		"websockets": strconv.FormatBool(websockets),
-		"fedramp":    strconv.FormatBool(fedramp),
+		"base_url":     baseURL,
+		"auth_mode":    AuthMode,
+		"auth_kind":    managedAuthClassification,
+		"runtime_only": "true",
+		"websockets":   strconv.FormatBool(websockets),
+		"fedramp":      strconv.FormatBool(fedramp),
 	}
 	setOptionalAttribute(attributes, "account_id", accountID)
 	setOptionalAttribute(attributes, "chatgpt_user_id", chatGPTUserID)
@@ -141,6 +144,15 @@ func Parse(provider, fileName string, raw []byte) (*Parsed, bool, error) {
 		Attributes:       attributes,
 		NextRefreshAfter: nextRefreshAfter(expiresAt),
 	}, true, nil
+}
+
+func isManagedProvider(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case PluginProvider, RuntimeProvider:
+		return true
+	default:
+		return false
+	}
 }
 
 func isManagedPayloadType(payloadType string) bool {
@@ -323,9 +335,13 @@ func allowedSidecarHosts() map[string]struct{} {
 	result := map[string]struct{}{
 		"codex-agent-identity-sidecar":        {},
 		"codex-agent-identity-sidecar-canary": {},
-		"localhost":                           {},
-		"127.0.0.1":                           {},
-		"::1":                                 {},
+		// `sidecar` is the conventional Docker Compose service alias used by
+		// CPA deployments. Keep it built in so a Plugin Store installation
+		// works without requiring an environment-variable override.
+		"sidecar":   {},
+		"localhost": {},
+		"127.0.0.1": {},
+		"::1":       {},
 	}
 	for _, candidate := range strings.Split(os.Getenv("CODEX_AGENT_IDENTITY_SIDECAR_HOSTS"), ",") {
 		candidate = canonicalSidecarHostname(candidate)

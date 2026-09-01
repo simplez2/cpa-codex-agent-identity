@@ -444,6 +444,55 @@ button.danger:hover:not(:disabled) {
   color: var(--failure-badge-text);
 }
 
+.manual-connect { margin-top: 10px; }
+
+html[data-embed="cpamc"] .manual-connection[hidden] { display: none; }
+html[data-embed="cpamc"] .manual-connect[hidden] { display: none; }
+
+.integration-status {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 4px 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.integration-status > div { display: grid; gap: 2px; min-width: 0; }
+.integration-status strong { color: var(--text-primary); font-size: 12px; }
+.integration-status small { color: inherit; font-size: 12px; line-height: 1.45; }
+.integration-indicator {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  box-shadow: 0 0 0 3px var(--border-color);
+}
+
+.integration-status.ok {
+  border-color: var(--success-badge-border);
+  background: var(--success-badge-bg);
+  color: var(--success-badge-text);
+}
+.integration-status.ok .integration-indicator { background: var(--success-color); box-shadow: 0 0 0 3px var(--success-badge-bg); }
+.integration-status.warn {
+  border-color: var(--warning-border);
+  background: var(--warning-bg);
+  color: var(--warning-text);
+}
+.integration-status.warn .integration-indicator { background: var(--amber-color); box-shadow: 0 0 0 3px var(--amber-10); }
+.integration-status.error {
+  border-color: var(--failure-badge-border);
+  background: var(--failure-badge-bg);
+  color: var(--failure-badge-text);
+}
+.integration-status.error .integration-indicator { background: var(--error-color); box-shadow: 0 0 0 3px var(--failure-badge-bg); }
+
 .identities { display: grid; gap: 11px; }
 
 .identity {

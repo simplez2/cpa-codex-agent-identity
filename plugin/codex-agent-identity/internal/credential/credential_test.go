@@ -50,6 +50,7 @@ func TestParseManagedCredential(t *testing.T) {
 		parsed.Attributes["base_url"] != "http://codex-agent-identity-sidecar:8787/backend-api/codex" ||
 		parsed.Attributes["auth_mode"] != AuthMode ||
 		parsed.Attributes["auth_kind"] != "oauth" ||
+		parsed.Attributes["runtime_only"] != "true" ||
 		parsed.Attributes["websockets"] != "true" ||
 		parsed.Attributes["plan_type"] != "free" ||
 		parsed.Attributes["account_id"] != "account-a" ||
@@ -70,7 +71,7 @@ func TestParseManagedCredentialRetainsOAuthCompatibleHeaderClassification(t *tes
 	if token, ok := parsed.Metadata["access_token"].(string); !ok || !strings.HasPrefix(token, "cais_") {
 		t.Fatalf("sidecar client key must remain available through OAuth-compatible metadata: %#v", parsed.Metadata)
 	}
-	if strings.TrimSpace(parsed.Attributes["api_key"]) != "" || parsed.Attributes["auth_kind"] != "oauth" {
+	if strings.TrimSpace(parsed.Attributes["api_key"]) != "" || parsed.Attributes["auth_kind"] != "oauth" || parsed.Attributes["runtime_only"] != "true" {
 		t.Fatalf("sidecar credentials must keep CPA Codex OAuth defaults: %#v", parsed.Attributes)
 	}
 }
@@ -94,7 +95,6 @@ func TestParseLeavesOrdinaryCodexOAuthToCPA(t *testing.T) {
 		raw      []byte
 	}{
 		{name: "ordinary oauth", provider: RuntimeProvider, raw: []byte(`{"type":"codex","access_token":"oauth-token"}`)},
-		{name: "legacy sidecar with runtime provider", provider: RuntimeProvider, raw: legacyValidFile()},
 		{name: "wrong provider", provider: "gemini-cli", raw: validFile()},
 	}
 	for _, tc := range cases {
@@ -104,6 +104,29 @@ func TestParseLeavesOrdinaryCodexOAuthToCPA(t *testing.T) {
 				t.Fatalf("provider=%s handled=%v parsed=%#v err=%v", tc.provider, handled, parsed, err)
 			}
 		})
+	}
+}
+
+func TestParseRecognizesCPAPersistedRuntimeProviderSidecarFile(t *testing.T) {
+	t.Parallel()
+	var payload map[string]any
+	if err := json.Unmarshal(validFile(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	payload["type"] = RuntimeProvider // FileTokenStore writes the runtime provider name.
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, handled, err := Parse(RuntimeProvider, "codex-agent-identity-aabbccddeeff.json", raw)
+	if err != nil || !handled || parsed == nil {
+		t.Fatalf("handled=%v parsed=%#v err=%v", handled, parsed, err)
+	}
+	if parsed.Attributes["base_url"] != "http://codex-agent-identity-sidecar:8787/backend-api/codex" || parsed.Attributes["runtime_only"] != "true" {
+		t.Fatalf("persisted runtime attributes were not restored: %#v", parsed.Attributes)
+	}
+	if parsed.Metadata["auth_mode"] != AuthMode || parsed.Metadata["type"] != RuntimeProvider {
+		t.Fatalf("persisted runtime metadata was not retained: %#v", parsed.Metadata)
 	}
 }
 
@@ -218,12 +241,29 @@ func TestParseAllowsDefaultLoopbackSidecarEndpoints(t *testing.T) {
 	}
 }
 
+func TestParseAllowsDockerSidecarAlias(t *testing.T) {
+	t.Parallel()
+	var payload map[string]any
+	_ = json.Unmarshal(validFile(), &payload)
+	payload["base_url"] = "http://sidecar:8787/backend-api/codex"
+	raw, _ := json.Marshal(payload)
+	parsed, handled, err := Parse(PluginProvider, "managed.json", raw)
+	if err != nil || !handled || parsed == nil {
+		t.Fatalf("handled=%v parsed=%#v err=%v", handled, parsed, err)
+	}
+	if parsed.Attributes["base_url"] != "http://sidecar:8787/backend-api/codex" {
+		t.Fatalf("base_url = %q", parsed.Attributes["base_url"])
+	}
+}
+
 func TestParseKeepsHTTPPortAllowlistNarrow(t *testing.T) {
 	t.Parallel()
 	for _, endpoint := range []string{
 		"http://127.0.0.1:18788/backend-api/codex",
 		"http://codex-agent-identity-sidecar:18787/backend-api/codex",
 		"http://codex-agent-identity-sidecar/backend-api/codex",
+		"http://sidecar:18788/backend-api/codex",
+		"http://sidecar/backend-api/codex",
 	} {
 		var payload map[string]any
 		_ = json.Unmarshal(validFile(), &payload)
