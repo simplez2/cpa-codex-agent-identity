@@ -76,7 +76,9 @@ func Parse(provider, fileName string, raw []byte) (*Parsed, bool, error) {
 		// Legacy auth files stored the sidecar key in access_token.
 		sidecarClientKey = upstreamToken
 	}
-	if !strings.HasPrefix(sidecarClientKey, "cais_") || len(sidecarClientKey) < len("cais_")+32 {
+	if strings.ContainsAny(sidecarClientKey, "\r\n") ||
+		!strings.HasPrefix(sidecarClientKey, "cais_") ||
+		len(sidecarClientKey) < len("cais_")+32 {
 		return nil, true, errors.New("sidecar client key is invalid")
 	}
 	baseURL, err := validateBaseURL(stringValue(payload["base_url"]))
@@ -342,8 +344,8 @@ func validateBaseURL(value string) (string, error) {
 			return "", errors.New("sidecar base url port is invalid")
 		}
 	}
-	if scheme == "http" && !allowedSidecarHTTPPort(hostname, port) {
-		return "", errors.New("sidecar base url HTTP port is not allowed")
+	if scheme == "http" && !allowedSidecarHTTPURL(hostname, port) {
+		return "", errors.New("sidecar base url requires HTTPS outside the trusted local runtime")
 	}
 	return parsed.String(), nil
 }
@@ -369,21 +371,31 @@ func allowedSidecarHosts() map[string]struct{} {
 	return result
 }
 
-func allowedSidecarHTTPPort(hostname, port string) bool {
-	if port == "8787" {
-		return true
-	}
-	if isLoopbackSidecarHost(hostname) && port == "18787" {
-		return true
-	}
-	for _, candidate := range strings.Split(os.Getenv("CODEX_AGENT_IDENTITY_SIDECAR_HTTP_PORTS"), ",") {
-		candidate = strings.TrimSpace(candidate)
-		portNumber, err := strconv.Atoi(candidate)
-		if err == nil && portNumber >= 1 && portNumber <= 65535 && candidate == port {
+func allowedSidecarHTTPURL(hostname, port string) bool {
+	hostname = canonicalSidecarHostname(hostname)
+	if isLoopbackSidecarHost(hostname) {
+		if port == "8787" || port == "18787" {
 			return true
 		}
+		for _, candidate := range strings.Split(os.Getenv("CODEX_AGENT_IDENTITY_SIDECAR_HTTP_PORTS"), ",") {
+			candidate = strings.TrimSpace(candidate)
+			portNumber, err := strconv.Atoi(candidate)
+			if err == nil && portNumber >= 1 && portNumber <= 65535 && candidate == port {
+				return true
+			}
+		}
+		return false
 	}
-	return false
+
+	// These names are fixed service aliases on the private Compose networks
+	// shipped by this repository. User-configured hosts must use HTTPS so an
+	// environment override cannot authorize cleartext bearer-key transport.
+	switch hostname {
+	case "codex-agent-identity-sidecar", "codex-agent-identity-sidecar-canary", "sidecar":
+		return port == "8787"
+	default:
+		return false
+	}
 }
 
 func isLoopbackSidecarHost(value string) bool {

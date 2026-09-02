@@ -96,6 +96,7 @@ Each sidecar-managed CPA auth file intentionally carries two secret fields. `acc
   `/v0/management/codex-agent-identity/open`; the resource route is only an
   entry point and the sidecar still authenticates every identity operation.
 - Sidecar embedding is denied by default and requires an explicitly trusted origin.
+- The sidecar runtime bearer key may use cleartext HTTP only on loopback or the fixed private Compose service aliases and approved ports; user-configured sidecar hosts must use HTTPS, and CR/LF-bearing keys are rejected before CPA receives them.
 - The sidecar uses a fixed upstream origin and strips proxy and authorization headers that must not be forwarded.
 - Agent Identity 401 responses invalidate the cached task and retry once only when the request body is replayable.
 - PAT 401 responses are not retried with an ineffective Agent Identity flow.

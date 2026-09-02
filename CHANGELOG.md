@@ -20,6 +20,9 @@ workflow has produced and checksummed the artifacts.
 - Preserve CPA's per-auth `identity-confuse` remapping for `prompt_cache_key`,
   installation identity, window/session identifiers, and turn metadata while
   keeping the real upstream token available to stock Management API clients.
+- Reject CR/LF in sidecar client keys, and permit cleartext sidecar bearer-key
+  transport only to loopback endpoints or the fixed private Compose service
+  aliases; user-configured sidecar hosts must use HTTPS.
 
 ## [0.3.10] - 2026-09-02
 
