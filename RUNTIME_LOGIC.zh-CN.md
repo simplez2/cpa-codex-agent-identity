@@ -1,7 +1,7 @@
 # CPA Codex Agent Identity 运行逻辑与安全边界
 
-本文按当前源码说明插件、sidecar、CPA auth 文件、批量导入、代理热加载和 reset-credit 的真实运行路径。当前源码开发线为 v0.3.13；已发布 registry、可直接安装资产和 sidecar 镜像仍为 v0.3.12，v0.3.12 Release 资产的大小、SHA-256、归档根目录和目标架构均已校验。
-Release baseline: CLIProxyAPI v7.2.146；v0.3.13 的 registry 更新必须等待新资产真实生成、发布并完成校验。
+本文按当前源码说明插件、sidecar、CPA auth 文件、批量导入、代理热加载和 reset-credit 的真实运行路径。当前源码、已发布 registry、可直接安装资产和 sidecar 镜像均为 v0.3.13，v0.3.13 Release 资产的大小、SHA-256、归档根目录和目标架构均已校验。
+Release baseline: CLIProxyAPI v7.2.146；v0.3.13 的 registry、Release 资产和 sidecar 镜像均已完成校验。
 
 ## 1. 三个可独立替换的平面
 
