@@ -347,7 +347,7 @@ func TestManagerUpsertStatusAndRemoveUsesNativeAuthFiles(t *testing.T) {
 	if json.Unmarshal(raw, &payload) != nil {
 		t.Fatalf("invalid stored payload: %s", raw)
 	}
-	if payload["type"] != pluginProviderID || payload["auth_mode"] != authMode || payload["auth_kind"] != "oauth" || payload["access_token"] != credential.UpstreamToken || payload[sidecarClientKeyField] != credential.ClientKey || payload["base_url"] != "http://sidecar:8787/backend-api/codex" || payload["email"] != credential.Email || payload["plan_type"] != credential.PlanType || payload["disabled"] != false {
+	if payload["type"] != runtimeProviderID || payload["auth_mode"] != authMode || payload["auth_kind"] != "oauth" || payload["access_token"] != credential.UpstreamToken || payload[sidecarClientKeyField] != credential.ClientKey || payload["base_url"] != "http://sidecar:8787/backend-api/codex" || payload["email"] != credential.Email || payload["plan_type"] != credential.PlanType || payload["disabled"] != false {
 		t.Fatalf("unexpected stored payload: %#v", payload)
 	}
 
@@ -458,7 +458,7 @@ func TestCredentialJSONExposesPersonalAccessTokenOnlyToCPANativeAuthFile(t *test
 	if json.Unmarshal(raw, &payload) != nil {
 		t.Fatalf("invalid credential JSON: %s", raw)
 	}
-	if payload["credential_kind"] != "personal_access_token" || payload["note"] != "Codex Access Token via sidecar" || payload["access_token"] != "at-team-personal-access-token" || payload[sidecarClientKeyField] != "cais_opaque_0000000000000000000000000000" || payload["account_id"] != "account-team" {
+	if payload["type"] != runtimeProviderID || payload["credential_kind"] != "personal_access_token" || payload["note"] != "Codex Access Token via sidecar" || payload["access_token"] != "at-team-personal-access-token" || payload[sidecarClientKeyField] != "cais_opaque_0000000000000000000000000000" || payload["account_id"] != "account-team" {
 		t.Fatalf("unexpected credential payload: %#v", payload)
 	}
 }

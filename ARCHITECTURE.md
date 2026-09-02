@@ -35,12 +35,12 @@ it. Tests exercise it only through a local httptest upstream.
 ## Upgrade boundary
 
 The plugin targets CPA dynamic plugin ABI v1 and is compiled with Go 1.26.6 or
-later against the current verified source baseline, CLIProxyAPI v7.2.145.
-The current source, published registry, directly installable assets, and sidecar
-image are v0.3.11 and are built against CLIProxyAPI v7.2.145. The published
-v0.3.11 GitHub Release archives are checksummed and pinned by size. The CPA image remains an
+later against the current verified source baseline, CLIProxyAPI v7.2.146.
+The current source line is v0.3.13, while the latest published registry, directly
+installable assets, and sidecar image remain v0.3.12 until the new release is
+complete. Both lines are built against CLIProxyAPI v7.2.146. The published v0.3.12
+GitHub Release archives are checksummed and pinned by size. The CPA image remains an
 environment variable and is never rebuilt or forked here.
-
 A CPA upgrade should follow this sequence:
 
 1. Pull the candidate official CPA image without replacing production.

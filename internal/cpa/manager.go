@@ -595,8 +595,13 @@ func (m *Manager) credentialJSONWithDisabled(credential Credential, disabled boo
 	if email == "" {
 		email = credential.IdentityID + "@agent-identity.local"
 	}
+	// Persist the auth file under CPA's native Codex provider namespace. The
+	// sidecar marker below keeps the plugin-owned parser scoped to these files,
+	// while the native provider name lets CPA-compatible consumers (including
+	// Keeper) select their normal Codex quota implementation instead of treating
+	// the credential as an unknown provider.
 	payload := map[string]any{
-		"type":                pluginProviderID,
+		"type":                runtimeProviderID,
 		"auth_mode":           authMode,
 		"auth_kind":           "oauth",
 		"email":               email,

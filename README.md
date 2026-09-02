@@ -12,13 +12,13 @@
   <p>English · <a href="README.zh-CN.md">简体中文</a></p>
 </div>
 
-> **Release boundary:** the source, direct-install registry, GitHub Release assets, and sidecar image are **v0.3.11**, built against CLIProxyAPI **v7.2.145**. v0.3.11 keeps Agent Identity/PAT runtime auth classified as CPA OAuth/file-backed Codex auth so CPA-native Header Defaults and per-auth identity remapping remain active.
+> **Release boundary:** the current source line is **v0.3.13**; the latest published registry, GitHub Release assets, and sidecar image remain **v0.3.12** until the v0.3.13 release workflow completes. Both lines use the CLIProxyAPI **v7.2.146** SDK baseline. v0.3.13 stores sidecar-managed credentials under CPA's native `codex` provider namespace while retaining the explicit `auth_mode: agent_identity_sidecar` marker, so CPA-native Header Defaults, WebSocket features, identity remapping, and Keeper's Codex quota path remain active.
 
 CPA-native management and routing support for Codex Agent Identity JWTs and opaque Personal Access Tokens whose current prefix is at-.
 
 The project combines two deliberately separate components:
 
-- A CPA dynamic plugin named codex-agent-identity.so. It claims the private `codex-agent-identity` auth-file provider, recognizes only files marked `auth_mode: agent_identity_sidecar`, and maps the resulting records to CPA's native `codex` runtime executor. Ordinary `type: codex` OAuth files and CPA's native login/refresh flow remain untouched. It exposes one authenticated Management API route and one safe CPAMC plugin-page resource.
+- A CPA dynamic plugin named codex-agent-identity.so. It claims the management/login identifier `codex-agent-identity`, recognizes only `type: codex` files marked `auth_mode: agent_identity_sidecar`, and maps the resulting records to CPA's native `codex` runtime executor. Ordinary `type: codex` OAuth files without that marker and CPA's native login/refresh flow remain untouched. It exposes one authenticated Management API route and one safe CPAMC plugin-page resource.
 - A hardened sidecar. It validates credentials, encrypts original tokens, creates AgentAssertion headers, forwards Codex traffic, synchronizes native CPA auth files, and follows CPA proxy changes without a restart.
 
 The first public release keeps the mature sidecar data plane instead of rewriting streaming, image, quota, WebSocket, and AgentAssertion behavior inside the plugin. The CPA control plane is native today, while a future pure-plugin executor can be added without changing the encrypted data format.
@@ -106,7 +106,7 @@ Treat the management password, encryption key, CPA auth files, upstream credenti
 ## Requirements
 
 - A CPA build with dynamic plugin ABI v1, AuthProvider, Management API routes, and host auth-file management support.
-- CLIProxyAPI v7.2.145 is the verified SDK baseline for the v0.3.11 release. The plugin uses
+- CLIProxyAPI v7.2.146 is the verified SDK baseline for the v0.3.13 development line and the published v0.3.12 release. The plugin uses
   dynamic plugin ABI v1; always canary-test it against the exact CPA image you
   plan to deploy.
 - Linux amd64 or Linux arm64 for the released .so files.
@@ -171,7 +171,7 @@ resolve the latest GitHub Release before showing or installing it, but when that
 metadata lookup is unavailable or cached they can still display `0.3.3`. The
 checked-in `registry.json` in this repository is a separate CPA schema v2 direct
 source with pinned, checksummed artifacts; it tracks the latest verified **published**
-direct version (`0.3.11`). Adding it to the host-mounted CPA configuration avoids
+published direct version (`0.3.12`); the current source line is `0.3.13`. Adding the pinned source to the host-mounted CPA configuration avoids
 GitHub release-metadata lookup and stale public-store fallback versions:
 
 ~~~yaml
@@ -231,7 +231,7 @@ Mount the host directory into CPA:
 ~~~yaml
 services:
   cli-proxy-api:
-    image: eceasy/cli-proxy-api:v7.2.145
+    image: eceasy/cli-proxy-api:v7.2.146
     volumes:
       - ./config.yaml:/CLIProxyAPI/config.yaml
       - ./auths:/root/.cli-proxy-api
@@ -464,7 +464,7 @@ checksums.txt
 plugin's fallback metadata version; CPA may resolve the latest GitHub Release
 separately, which is why the displayed version can depend on network/cache state.
 This repository `registry.json` is the explicit pinned-artifact fallback and is kept
-at the latest verified release (`0.3.11`). Future registry updates must follow the
+at the latest verified published release (`0.3.12`). Future registry updates must follow the
 post-release publication sequence described in [Release process](RELEASE.md).
 
 ## Optional Management Center overlay

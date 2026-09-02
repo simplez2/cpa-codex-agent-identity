@@ -4,6 +4,12 @@ All notable changes to `cpa-codex-agent-identity` are documented here.
 Published registry and release assets are updated only after the tagged release
 workflow has produced and checksummed the artifacts.
 
+## [Unreleased] - 0.3.13
+
+### Fixed
+
+- Persist sidecar-managed auth files under CPA's native `codex` provider namespace while retaining the explicit `auth_mode: agent_identity_sidecar` marker. This keeps CPA's plugin parser scoped to managed files and lets CPA-compatible consumers such as Keeper use their native Codex quota path instead of classifying the credentials as unknown.
+
 ## [0.3.12] - 2026-09-02
 
 ### Changed
