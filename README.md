@@ -12,7 +12,7 @@
   <p>English · <a href="README.zh-CN.md">简体中文</a></p>
 </div>
 
-> **Release boundary:** this working tree targets **v0.3.10**, built against CLIProxyAPI **v7.2.145**. The latest published registry entry and directly installable assets are **v0.3.9**, backed by the checksummed Linux archives in the v0.3.9 GitHub Release. The v0.3.10 development line fixes Keeper's stock `/v0/management/api-call` token substitution while preserving CPA's native Codex executor for model traffic.
+> **Release boundary:** this working tree and the latest published direct-install registry/assets are **v0.3.10**, built against CLIProxyAPI **v7.2.145**. This release fixes Keeper's stock `/v0/management/api-call` token substitution while preserving CPA's native Codex executor for model traffic.
 
 CPA-native management and routing support for Codex Agent Identity JWTs and opaque Personal Access Tokens whose current prefix is at-.
 
@@ -169,9 +169,8 @@ this plugin with `0.3.3` as its fallback metadata version. Newer CPA builds norm
 resolve the latest GitHub Release before showing or installing it, but when that
 metadata lookup is unavailable or cached they can still display `0.3.3`. The
 checked-in `registry.json` in this repository is a separate CPA schema v2 direct
-source with pinned, checksummed artifacts; it tracks the latest **published** direct
-version (`0.3.9`) and deliberately stays behind the v0.3.10 development line until
-its tagged Release exists. Adding it to the host-mounted CPA configuration avoids
+source with pinned, checksummed artifacts; it tracks the latest verified **published**
+direct version (`0.3.10`). Adding it to the host-mounted CPA configuration avoids
 GitHub release-metadata lookup and stale public-store fallback versions:
 
 ~~~yaml
@@ -464,8 +463,8 @@ checksums.txt
 plugin's fallback metadata version; CPA may resolve the latest GitHub Release
 separately, which is why the displayed version can depend on network/cache state.
 This repository `registry.json` is the explicit pinned-artifact fallback and is kept
-at the latest verified release (`0.3.9`); the next update to `0.3.10` belongs in the post-release
-publication commit described in [Release process](RELEASE.md).
+at the latest verified release (`0.3.10`). Future registry updates must follow the
+post-release publication sequence described in [Release process](RELEASE.md).
 
 ## Optional Management Center overlay
 
