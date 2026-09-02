@@ -12,7 +12,7 @@
   <p>简体中文 · <a href="README.md">English</a></p>
 </div>
 
-> **版本边界：** 当前源码开发线为 **v0.3.10**，编译基线为 CLIProxyAPI **v7.2.145**。本仓库已发布的 registry 和直接安装资产为 **v0.3.10**。v0.3.10 专门修复 Keeper 通过 CPA 原生 `/v0/management/api-call` 查询额度时的 token 替换，同时保持模型请求继续走 CPA 原生 Codex executor 与 sidecar。
+> **版本边界：** 当前源码是 **v0.3.11** 开发线，编译基线为 CLIProxyAPI **v7.2.145**。本仓库已发布的 registry 和直接安装资产仍为 **v0.3.10**，必须等 v0.3.11 Release 资产构建、校验完成后才更新。v0.3.11 让 Agent Identity / PAT 在运行时保持 CPA OAuth/file-backed Codex 分类，因此 CPA 原生 Header Defaults 和按认证身份重映射会继续生效。
 
 这是一个面向 CLIProxyAPI（CPA）的 Codex Agent Identity / Personal Access
 Token 集成项目。首个公开版本由两个部分组成：
@@ -25,7 +25,7 @@ Token 集成项目。首个公开版本由两个部分组成：
 - sidecar：负责官方凭证验证、AES-256-GCM 加密存储、AgentAssertion、PAT
   转发、批量导入、CPA auth 文件同步以及 HTTP/SOCKS 代理热加载。
 
-每个 sidecar-managed CPA auth 文件会明确保存两个秘密字段：`access_token` 保存真实上游凭证，供 Keeper 等客户端通过 CPA 原生 `$TOKEN$` 替换查询额度；`sidecar_client_key` 保存随机 `cais_` 密钥，只用于 CPA Codex executor 调用 sidecar。插件保留前者到 metadata，并只把后者映射为 executor 的 `api_key`。因此 CPA auth 目录必须像原生 OAuth auth 目录一样按秘密数据保护。现有官方 OAuth 和第三方 API 渠道仍不由本插件接管。
+每个 sidecar-managed CPA auth 文件会明确保存两个秘密字段：`access_token` 保存真实上游凭证，供 Keeper 等客户端通过 CPA 原生 `$TOKEN$` 替换查询额度；`sidecar_client_key` 保存随机 `cais_` 密钥，只用于 CPA Codex executor 调用 sidecar。插件保留前者到 metadata，并通过 CPA 标准静态 `header:Authorization` attribute 只把后者发送给 sidecar；它不会设置 `api_key`。这样 Agent Identity / PAT 会继续被 CPA 视为 OAuth/file-backed Codex auth，原生 User-Agent 默认值、WebSocket Beta Features 和按认证身份重映射均由 CPA 自己执行。CPA auth 目录必须像原生 OAuth auth 目录一样按秘密数据保护。现有官方 OAuth 和第三方 API 渠道仍不由本插件接管。
 ## 文档导航
 
 - [运行逻辑与安全边界](RUNTIME_LOGIC.zh-CN.md)

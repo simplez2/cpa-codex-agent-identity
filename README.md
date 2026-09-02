@@ -12,7 +12,7 @@
   <p>English · <a href="README.zh-CN.md">简体中文</a></p>
 </div>
 
-> **Release boundary:** this working tree and the latest published direct-install registry/assets are **v0.3.10**, built against CLIProxyAPI **v7.2.145**. This release fixes Keeper's stock `/v0/management/api-call` token substitution while preserving CPA's native Codex executor for model traffic.
+> **Release boundary:** this working tree is the **v0.3.11** development line, built against CLIProxyAPI **v7.2.145**. The latest published direct-install registry/assets remain **v0.3.10** until v0.3.11 release assets are built and verified. v0.3.11 keeps Agent Identity/PAT runtime auth classified as CPA OAuth/file-backed Codex auth so CPA-native Header Defaults and per-auth identity remapping remain active.
 
 CPA-native management and routing support for Codex Agent Identity JWTs and opaque Personal Access Tokens whose current prefix is at-.
 
@@ -72,7 +72,7 @@ Codex client
   -> https://chatgpt.com/backend-api/codex
 ~~~
 
-Each sidecar-managed CPA auth file intentionally carries two secret fields. `access_token` contains the upstream credential so stock Management API clients such as Keeper can use CPA's native `$TOKEN$` substitution, while `sidecar_client_key` contains the random revocable key used by CPA's Codex executor to call the sidecar. The plugin preserves `access_token` in metadata and maps only `sidecar_client_key` to the executor's `api_key` attribute. CPA's auth directory must therefore be protected like native OAuth storage.
+Each sidecar-managed CPA auth file intentionally carries two secret fields. `access_token` contains the upstream credential so stock Management API clients such as Keeper can use CPA's native `$TOKEN$` substitution, while `sidecar_client_key` contains the random revocable key used by CPA's Codex executor to call the sidecar. The plugin preserves `access_token` in metadata and supplies only `sidecar_client_key` through CPA's standard static `header:Authorization` attribute. It deliberately omits `api_key`, preserving CPA's OAuth/file-backed classification so Codex Header Defaults and per-auth identity remapping remain native. CPA's auth directory must therefore be protected like native OAuth storage.
 
 ## Security boundary
 
@@ -105,7 +105,7 @@ Treat the management password, encryption key, CPA auth files, upstream credenti
 ## Requirements
 
 - A CPA build with dynamic plugin ABI v1, AuthProvider, Management API routes, and host auth-file management support.
-- CLIProxyAPI v7.2.145 is the verified SDK baseline for the v0.3.10 development line. The plugin uses
+- CLIProxyAPI v7.2.145 is the verified SDK baseline for the v0.3.11 development line. The plugin uses
   dynamic plugin ABI v1; always canary-test it against the exact CPA image you
   plan to deploy.
 - Linux amd64 or Linux arm64 for the released .so files.

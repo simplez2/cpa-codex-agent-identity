@@ -4,6 +4,23 @@ All notable changes to `cpa-codex-agent-identity` are documented here.
 Published registry and release assets are updated only after the tagged release
 workflow has produced and checksummed the artifacts.
 
+## [Unreleased] - 0.3.11
+
+### Changed
+
+- Keep sidecar-managed credentials classified as CPA OAuth/file-backed Codex auth
+  by delivering the `cais_` runtime key through CPA's standard static
+  `header:Authorization` attribute instead of `api_key`.
+
+### Fixed
+
+- Allow CPA-native Codex Header Defaults, including the configured User-Agent
+  fallback and WebSocket `x-codex-beta-features`, to apply to Agent Identity and
+  PAT credentials exactly as they do to file-backed Codex OAuth credentials.
+- Preserve CPA's per-auth `identity-confuse` remapping for `prompt_cache_key`,
+  installation identity, window/session identifiers, and turn metadata while
+  keeping the real upstream token available to stock Management API clients.
+
 ## [0.3.10] - 2026-09-02
 
 ### Added

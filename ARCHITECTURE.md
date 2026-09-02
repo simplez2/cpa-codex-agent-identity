@@ -7,7 +7,8 @@ integration is split into three independently replaceable parts:
    `codex-agent-identity` provider key and one authenticated Management API route.
    It recognizes only sidecar-owned auth files marked `auth_mode=agent_identity_sidecar`,
    preserves the upstream credential as native `access_token` metadata, maps the
-   separate opaque `sidecar_client_key` to the executor's `api_key`, and returns
+   separate opaque `sidecar_client_key` through CPA's static
+   `header:Authorization` attribute without setting `api_key`, and returns
    `AuthData.Provider=codex` so those records use CPA's first-class Codex executor.
    Native `type=codex` OAuth files keep CPA's built-in parser, login, refresh, and
    executor path; the plugin never claims the native `codex` AuthProvider. It exposes
@@ -35,9 +36,9 @@ it. Tests exercise it only through a local httptest upstream.
 
 The plugin targets CPA dynamic plugin ABI v1 and is compiled with Go 1.26.6 or
 later against the current verified source baseline, CLIProxyAPI v7.2.145.
-The current source line is v0.3.10 and is built against CLIProxyAPI v7.2.145;
-the published registry and directly installable assets are also v0.3.10, backed by
-the published and checksummed v0.3.10 GitHub Release archives. The CPA image remains an
+The current source line is v0.3.11 and is built against CLIProxyAPI v7.2.145;
+the published registry and directly installable assets remain v0.3.10 until the
+v0.3.11 GitHub Release archives have been built and checksummed. The CPA image remains an
 environment variable and is never rebuilt or forked here.
 
 A CPA upgrade should follow this sequence:
