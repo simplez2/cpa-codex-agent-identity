@@ -126,8 +126,14 @@ func verify(root, tag string, requireRegistryMatch bool) error {
 	if err != nil {
 		return fmt.Errorf("read CHANGELOG.md: %w", err)
 	}
-	if !strings.Contains(changelog, "## [Unreleased] - "+sourceText) {
-		return fmt.Errorf("CHANGELOG.md has no Unreleased section for %s", sourceText)
+	unreleasedHeading := "## [Unreleased] - " + sourceText
+	releasedHeading := regexp.MustCompile(`(?m)^## \[` + regexp.QuoteMeta(sourceText) + `\] - [0-9]{4}-[0-9]{2}-[0-9]{2}\r?$`)
+	if publishedText == sourceText {
+		if !releasedHeading.MatchString(changelog) {
+			return fmt.Errorf("CHANGELOG.md has no dated release section for published version %s", sourceText)
+		}
+	} else if !strings.Contains(changelog, unreleasedHeading) {
+		return fmt.Errorf("CHANGELOG.md has no Unreleased section for development version %s", sourceText)
 	}
 
 	if tag != "" && tag != "v"+sourceText {

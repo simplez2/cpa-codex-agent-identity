@@ -9,7 +9,8 @@ archive that has not been built and verified.
 - `plugin/codex-agent-identity/plugin.go` keeps a matching `pluginVersion` for
   registration metadata. The release verifier rejects drift.
 - `CHANGELOG.md` must contain `## [Unreleased] - <VERSION>` while a version is
-  under development.
+  under development. Once `registry.json` catches up to `VERSION`, it must contain
+  a dated `## [<VERSION>] - YYYY-MM-DD` release section instead.
 - `registry.json` describes the latest **published** plugin version. It may lag
   `VERSION`, but it must never be ahead of it.
 - `.env.example` pins the latest published sidecar image and therefore normally
@@ -56,12 +57,14 @@ make verify-published-release
 
    The helper refuses missing archives, wrong archive contents, a non-advancing
    version, or a registry update before the target version is in `VERSION`. It
-   updates only `registry.json` and `.env.example`. Then run `jq -e -f
+   updates only `registry.json` and `.env.example`. In the same post-release
+   commit, rename `## [Unreleased] - <VERSION>` to a dated
+   `## [<VERSION>] - YYYY-MM-DD` section. Then run `jq -e -f
    .github/scripts/validate-registry.jq registry.json` and
    `make verify-published-release` before committing.
-7. **Begin the next development line.** For example, after publishing `0.3.8`,
-   bump `VERSION` and the `Unreleased` heading to `0.3.9`, while leaving
-   `registry.json` and `.env.example` at `0.3.8` until the next release.
+7. **Begin the next development line.** For example, after publishing `0.3.10`,
+   bump `VERSION` and the `Unreleased` heading to `0.3.11`, while leaving
+   `registry.json` and `.env.example` at `0.3.10` until the next release.
 
 ## Invariants enforced by CI
 
