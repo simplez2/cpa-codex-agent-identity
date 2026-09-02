@@ -4,7 +4,33 @@ All notable changes to `cpa-codex-agent-identity` are documented here.
 Published registry and release assets are updated only after the tagged release
 workflow has produced and checksummed the artifacts.
 
-## [Unreleased] - 0.3.9
+## [Unreleased] - 0.3.10
+
+### Added
+
+- Add an end-to-end regression for the exact Keeper request path through stock
+  CPA `/v0/management/api-call`, including Team-scoped PAT headers and upstream
+  token substitution.
+- Add multi-Team regression coverage proving that one login/token can retain
+  distinct CPA auth files, auth indexes, account IDs, and sidecar runtime keys.
+
+### Changed
+
+- Split sidecar-managed CPA credentials into native `access_token` metadata for
+  stock Management API clients and a separate `sidecar_client_key` mapped to
+  the Codex executor's `api_key` attribute for model traffic through the
+  sidecar.
+- Fail closed when an auth-file upsert is missing the upstream credential;
+  startup reconciliation upgrades existing encrypted identities to the new
+  dual-field format without requiring token re-import.
+
+### Fixed
+
+- Prevent Keeper quota and reset-credit requests from substituting a `cais_`
+  sidecar key into `Authorization: Bearer $TOKEN$`, which caused ChatGPT to
+  return `401 Could not parse your authentication token`.
+
+## [0.3.9] - 2026-09-02
 
 ### Added
 

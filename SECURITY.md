@@ -18,6 +18,7 @@ account identifiers, request bodies, and private hostnames.
 - If CPAMC Plugin Store manages updates, make the host plugin directory writable
   only for the intentional install/update window, then restore read-only mode.
 - Keep CPA and the sidecar on a private Docker network.
+- Treat the CPA auth directory as plaintext secret storage: sidecar-managed files contain the upstream credential in `access_token` plus the revocable `sidecar_client_key` required for runtime routing. Restrict ownership, permissions, backups, and exports accordingly.
 - Bind management and UI host ports to loopback and publish them only through a
   TLS reverse proxy.
 - Use DATA_ENCRYPTION_KEY_FILE and keep the 32-byte key outside the encrypted

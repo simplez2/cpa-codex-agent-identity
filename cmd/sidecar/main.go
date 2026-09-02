@@ -248,15 +248,16 @@ func reconcileStoredCredentials(logger *log.Logger, store *identitystore.Store, 
 				FedRAMP:       credential.FedRAMP,
 			})
 			err = channels.UpsertIdentity(ctx, cpa.Credential{
-				IdentityID: stored.ID,
-				ClientKey:  stored.ClientKey,
-				Kind:       string(credential.Kind),
-				AccountID:  credential.AccountID,
-				UserID:     credential.UserID,
-				Email:      credential.Email,
-				PlanType:   credential.PlanType,
-				ExpiresAt:  credential.ExpiresAt,
-				FedRAMP:    credential.FedRAMP,
+				IdentityID:    stored.ID,
+				ClientKey:     stored.ClientKey,
+				UpstreamToken: stored.Token,
+				Kind:          string(credential.Kind),
+				AccountID:     credential.AccountID,
+				UserID:        credential.UserID,
+				Email:         credential.Email,
+				PlanType:      credential.PlanType,
+				ExpiresAt:     credential.ExpiresAt,
+				FedRAMP:       credential.FedRAMP,
 			})
 		}
 		cancel()

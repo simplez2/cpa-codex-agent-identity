@@ -1,7 +1,7 @@
 # CPA Codex Agent Identity 运行逻辑与安全边界
 
-本文按当前源码说明插件、sidecar、CPA auth 文件、批量导入、代理热加载和 reset-credit 的真实运行路径。当前源码开发线是 v0.3.9，公开 registry 与可直接安装资产仍是 v0.3.8。
-Release baseline: CLIProxyAPI v7.2.145; v0.3.9 assets must be rebuilt, released, and checksummed before registry publication.
+本文按当前源码说明插件、sidecar、CPA auth 文件、批量导入、代理热加载和 reset-credit 的真实运行路径。当前源码开发线是 v0.3.10，已发布 registry 与可直接安装资产是 v0.3.9。
+Release baseline: CLIProxyAPI v7.2.145; v0.3.10 assets must be rebuilt, released, and checksummed before registry publication.
 
 ## 1. 三个可独立替换的平面
 
@@ -20,7 +20,7 @@ flowchart LR
 
 - 注册私有的 `codex-agent-identity` AuthProvider，不声明 native `codex`；
 - 只识别 `type: codex-agent-identity` 且带有 `auth_mode: agent_identity_sidecar` 的 sidecar auth 文件；
-- 把随机 cais_ key 和内部 base URL 放入 CPA auth 的 OAuth 兼容字段，并返回 `Provider: codex`，从而进入 CPA 原生 Codex executor；
+- 保留真实上游凭证为 CPA metadata 的 `access_token`，把独立随机 `sidecar_client_key` 与内部 base URL 映射到 executor attributes，并返回 `Provider: codex`；
 - 注册受 CPA Management key 保护的 GET /v0/management/codex-agent-identity/open；
 - 注册 `/v0/resource/plugins/codex-agent-identity/open` 作为 CPAMC plugin-pages 的安全 wrapper；不内置 secret，仅通过 source、origin 与 nonce 校验的 `postMessage` 复用 CPAMC 当前 scoped 登录状态。
 
@@ -90,15 +90,16 @@ ALLOW_PLAINTEXT_STORE=true 只用于本地迁移/测试，生产必须关闭。�
 {
   "type": "codex-agent-identity",
   "auth_mode": "agent_identity_sidecar",
-  "access_token": "cais_<random>",
+  "access_token": "<upstream-token>",
+  "sidecar_client_key": "cais_<random>",
   "base_url": "<internal-sidecar-url>",
   "agent_identity_id": "agent-<id>",
   "disabled": false
 }
 ~~~
 
-CPA 文件不含原始 JWT/PAT。同步逻辑先读取已存在文件，在写入或字段验证失败时恢复原内容。刷新 identity 时保留 disabled 状态。
-The plugin parser only claims `type=codex-agent-identity` files carrying `auth_mode=agent_identity_sidecar`; it returns `Provider: codex` for the runtime. Ordinary `type=codex` OAuth files remain on CPA native parse/login/refresh/executor paths.
+CPA 文件按原生 OAuth 的秘密语义保存真实上游凭证，同时保存独立的 sidecar key。同步逻辑先读取已存在文件，在写入或字段验证失败时恢复原内容；启动 reconciliation 会自动把旧的 `access_token=cais_...` 文件迁移成双字段格式。刷新 identity 时保留 disabled 状态。
+The plugin parser only claims `type=codex-agent-identity` files carrying `auth_mode=agent_identity_sidecar`; it preserves metadata `access_token`, maps `sidecar_client_key` to attributes `api_key`, and returns `Provider: codex` for the runtime. Ordinary `type=codex` OAuth files remain on CPA native parse/login/refresh/executor paths.
 
 ### 同邮箱多个 Team workspace
 
@@ -126,12 +127,12 @@ codex-<workspace-hash>-<sanitized-email>-<plan>-agent-identity.json
 ## 6. PAT 请求路径
 
 1. 导入时通过 PAT whoami/验证接口确认凭据；
-2. CPA 仍只保存 cais_ key；
+2. CPA auth 文件同时保存 PAT 于 `access_token` 和独立的 `sidecar_client_key`；模型请求只使用后者调用 sidecar；
 3. sidecar 解密 PAT 并以 Authorization: Bearer 转发；
 4. 保留需要的 ChatGPT-Account-ID 等安全路由元数据；
 5. PAT 401 直接返回，不进入无效的 Agent Identity task 重建流程。
 
-原版 OAuth auth 文件不属于 sidecar-managed identity，Management api-call 兼容路径会转发回 stock CPA，不会被误接管。
+Keeper 等客户端调用 stock CPA `/v0/management/api-call` 时，CPA 从 metadata `access_token` 替换 `$TOKEN$`，因此 PAT 额度请求使用真实 Bearer token；Codex executor 则优先读取 attributes `api_key`，继续以 `cais_` 调 sidecar。原版 OAuth auth 文件不属于 sidecar-managed identity，不会被插件误接管。
 
 ## 7. Management 与浏览器边界
 
@@ -198,7 +199,7 @@ quota compatibility policy 只允许明确的方法和固定路径。reset-credi
 
 ## 11. 关键不变量
 
-- CPA 永远不应保存原始 JWT 或 PAT。
+- CPA auth 文件中的 `access_token` 必须保存真实上游凭证，`sidecar_client_key` 必须保存独立 `cais_`；两者用途不得互换。
 - sidecar auth 文件中的 cais_ key 必须随机、可撤销且不能公开。
 - 同邮箱不同 Team workspace 不得覆盖同一个 CPA auth 文件。
 - PAT 401 不进行 Agent Identity 重试。

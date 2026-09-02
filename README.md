@@ -12,7 +12,7 @@
   <p>English · <a href="README.zh-CN.md">简体中文</a></p>
 </div>
 
-> **Release boundary:** this working tree targets **v0.3.9**, built against CLIProxyAPI **v7.2.145**. The latest published registry entry and directly installable Plugin Store assets are **v0.3.8**, backed by the checksummed Linux archives in the v0.3.8 GitHub Release. The v0.3.9 development line keeps CPA native Codex OAuth login/refresh ownership while routing Agent Identity records through CPA's native Codex executor.
+> **Release boundary:** this working tree targets **v0.3.10**, built against CLIProxyAPI **v7.2.145**. The latest published registry entry and directly installable assets are **v0.3.9**, backed by the checksummed Linux archives in the v0.3.9 GitHub Release. The v0.3.10 development line fixes Keeper's stock `/v0/management/api-call` token substitution while preserving CPA's native Codex executor for model traffic.
 
 CPA-native management and routing support for Codex Agent Identity JWTs and opaque Personal Access Tokens whose current prefix is at-.
 
@@ -47,7 +47,7 @@ The first public release keeps the mature sidecar data plane instead of rewritin
 - Supports enable, disable, refresh, and delete actions.
 - Preserves disabled state during credential refresh and sidecar reconciliation.
 - Encrypts original tokens with AES-256-GCM.
-- Stores only random cais_ proxy keys in CPA auth files.
+- Stores the upstream credential in CPA's native `access_token` field and a separate random `sidecar_client_key` for sidecar model routing.
 - Uses a reserved `-agent-identity` filename suffix so sidecar PAT/Agent Identity files can coexist with CPA native OAuth files for the same email and Team workspace.
 - Hot-reloads CPA global HTTP, HTTPS, and SOCKS proxy changes for new requests.
 - Keeps the official CPA image lifecycle separate from plugin, sidecar, data, and overlay mounts.
@@ -72,12 +72,13 @@ Codex client
   -> https://chatgpt.com/backend-api/codex
 ~~~
 
-CPA never receives the original Agent Identity JWT or PAT. It receives only a random, revocable sidecar client key plus non-secret display and routing metadata. The auth file uses `type: codex-agent-identity` for plugin dispatch; after parsing, the runtime auth provider is `codex`, which is the key that selects CPA's stock Codex executor.
+Each sidecar-managed CPA auth file intentionally carries two secret fields. `access_token` contains the upstream credential so stock Management API clients such as Keeper can use CPA's native `$TOKEN$` substitution, while `sidecar_client_key` contains the random revocable key used by CPA's Codex executor to call the sidecar. The plugin preserves `access_token` in metadata and maps only `sidecar_client_key` to the executor's `api_key` attribute. CPA's auth directory must therefore be protected like native OAuth storage.
 
 ## Security boundary
 
-- Original tokens are encrypted at rest with AES-256-GCM.
-- The data directory is owner-only on POSIX systems and identity files use mode 0600.
+- Original tokens are encrypted at rest in the sidecar store with AES-256-GCM.
+- For native Keeper compatibility, the same upstream credential is also present in the CPA auth file's `access_token`; protect the CPA auth directory as secret material.
+- The data and CPA auth directories are owner-only on POSIX systems and identity files use mode 0600.
 - The data encryption key is mounted separately from the encrypted data volume.
 - Management endpoints use constant-time management-key comparison.
 - The sidecar UI stores the management password only in the current tab's `sessionStorage`. The plugin wrapper can read CPAMC's own scoped, obfuscated auth state, but never copies the key into an iframe URL, Cookie, export, or sidecar `localStorage`.
@@ -99,12 +100,12 @@ CPA never receives the original Agent Identity JWT or PAT. It receives only a ra
 - Agent Identity 401 responses invalidate the cached task and retry once only when the request body is replayable.
 - PAT 401 responses are not retried with an ineffective Agent Identity flow.
 
-Treat the management password, encryption key, and generated cais_ values as secrets.
+Treat the management password, encryption key, CPA auth files, upstream credentials, and generated cais_ values as secrets.
 
 ## Requirements
 
 - A CPA build with dynamic plugin ABI v1, AuthProvider, Management API routes, and host auth-file management support.
-- CLIProxyAPI v7.2.145 is the verified SDK baseline for the v0.3.9 development line. The plugin uses
+- CLIProxyAPI v7.2.145 is the verified SDK baseline for the v0.3.10 development line. The plugin uses
   dynamic plugin ABI v1; always canary-test it against the exact CPA image you
   plan to deploy.
 - Linux amd64 or Linux arm64 for the released .so files.
@@ -169,7 +170,7 @@ resolve the latest GitHub Release before showing or installing it, but when that
 metadata lookup is unavailable or cached they can still display `0.3.3`. The
 checked-in `registry.json` in this repository is a separate CPA schema v2 direct
 source with pinned, checksummed artifacts; it tracks the latest **published** direct
-version (`0.3.8`) and deliberately stays behind the v0.3.9 development line until
+version (`0.3.9`) and deliberately stays behind the v0.3.10 development line until
 its tagged Release exists. Adding it to the host-mounted CPA configuration avoids
 GitHub release-metadata lookup and stale public-store fallback versions:
 
@@ -463,7 +464,7 @@ checksums.txt
 plugin's fallback metadata version; CPA may resolve the latest GitHub Release
 separately, which is why the displayed version can depend on network/cache state.
 This repository `registry.json` is the explicit pinned-artifact fallback and is kept
-at the latest verified release (`0.3.8`); the next update to `0.3.9` belongs in the post-release
+at the latest verified release (`0.3.9`); the next update to `0.3.10` belongs in the post-release
 publication commit described in [Release process](RELEASE.md).
 
 ## Optional Management Center overlay

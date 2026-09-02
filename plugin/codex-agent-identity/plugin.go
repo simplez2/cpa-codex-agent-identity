@@ -52,7 +52,7 @@ const (
 	defaultSidecarHTTPPort        = 8787
 	defaultSidecarEmbedURL        = defaultSidecarURL + "?embed=cpamc"
 	maxForwardBodyBytes           = 1 << 20
-	minimumSidecarVersion         = "0.3.9"
+	minimumSidecarVersion         = "0.3.10"
 	readyMessageType              = "cpa-codex-agent-identity:ready"
 	themeMessageType              = "cpa-codex-agent-identity:theme"
 	managementKeyMessageType      = "cpa-codex-agent-identity:management-key"
@@ -66,7 +66,7 @@ const (
 )
 
 var (
-	pluginVersion = "0.3.9"
+	pluginVersion = "0.3.10"
 	stateMu       sync.RWMutex
 	state         = runtimeState{
 		sidecarURL:    defaultSidecarURL,

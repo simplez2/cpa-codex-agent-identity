@@ -6,12 +6,13 @@ integration is split into three independently replaceable parts:
 1. **CPA plugin control plane**: registers an AuthProvider under the private
    `codex-agent-identity` provider key and one authenticated Management API route.
    It recognizes only sidecar-owned auth files marked `auth_mode=agent_identity_sidecar`,
-   supplies their internal base URL and opaque cais_ key, and returns
+   preserves the upstream credential as native `access_token` metadata, maps the
+   separate opaque `sidecar_client_key` to the executor's `api_key`, and returns
    `AuthData.Provider=codex` so those records use CPA's first-class Codex executor.
    Native `type=codex` OAuth files keep CPA's built-in parser, login, refresh, and
-   executor path; the plugin never claims the native `codex` AuthProvider. It never
-   receives an original Agent Identity JWT or Personal Access Token. It exposes the
-   authenticated Management wrapper plus one safe resource wrapper for CPAMC plugin pages.
+   executor path; the plugin never claims the native `codex` AuthProvider. It exposes
+   the authenticated Management wrapper plus one safe resource wrapper for CPAMC
+   plugin pages and never returns either credential through those wrappers.
 2. **Sidecar management plane**: validates single or batch imports, stores
    credentials encrypted, and transactionally adds, disables, refreshes, or
    removes native Codex auth files through CPA's management API.
@@ -34,9 +35,9 @@ it. Tests exercise it only through a local httptest upstream.
 
 The plugin targets CPA dynamic plugin ABI v1 and is compiled with Go 1.26.6 or
 later against the current verified source baseline, CLIProxyAPI v7.2.145.
-The current source line is v0.3.9 and is built against CLIProxyAPI v7.2.145;
-the public registry and directly installable assets are v0.3.8, backed by the
-published and checksummed v0.3.8 GitHub Release archives. The CPA image remains an
+The current source line is v0.3.10 and is built against CLIProxyAPI v7.2.145;
+the published registry and directly installable assets are v0.3.9, backed by the
+published and checksummed v0.3.9 GitHub Release archives. The CPA image remains an
 environment variable and is never rebuilt or forked here.
 
 A CPA upgrade should follow this sequence:

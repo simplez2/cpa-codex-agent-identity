@@ -23,6 +23,7 @@ const (
 	RuntimeProvider           = "codex"
 	LegacyPluginProvider      = "codex" // legacy sidecar files emitted before provider separation
 	AuthMode                  = "agent_identity_sidecar"
+	SidecarClientKeyField     = "sidecar_client_key"
 	defaultRefreshInterval    = 24 * time.Hour
 	refreshLead               = 5 * time.Minute
 	managedAuthClassification = "oauth"
@@ -65,8 +66,16 @@ func Parse(provider, fileName string, raw []byte) (*Parsed, bool, error) {
 	if !validIdentityID(identityID) {
 		return nil, true, errors.New("agent identity id is invalid")
 	}
-	accessToken := strings.TrimSpace(stringValue(payload["access_token"]))
-	if !strings.HasPrefix(accessToken, "cais_") || len(accessToken) < len("cais_")+32 {
+	upstreamToken := strings.TrimSpace(stringValue(payload["access_token"]))
+	if upstreamToken == "" || strings.ContainsAny(upstreamToken, "\r\n") {
+		return nil, true, errors.New("upstream access token is invalid")
+	}
+	sidecarClientKey := strings.TrimSpace(stringValue(payload[SidecarClientKeyField]))
+	if sidecarClientKey == "" {
+		// Legacy auth files stored the sidecar key in access_token.
+		sidecarClientKey = upstreamToken
+	}
+	if !strings.HasPrefix(sidecarClientKey, "cais_") || len(sidecarClientKey) < len("cais_")+32 {
 		return nil, true, errors.New("sidecar client key is invalid")
 	}
 	baseURL, err := validateBaseURL(stringValue(payload["base_url"]))
@@ -120,6 +129,7 @@ func Parse(provider, fileName string, raw []byte) (*Parsed, bool, error) {
 	metadata := cloneMap(payload)
 	metadata["auth_kind"] = managedAuthClassification
 	attributes := map[string]string{
+		"api_key":      sidecarClientKey,
 		"base_url":     baseURL,
 		"auth_mode":    AuthMode,
 		"auth_kind":    managedAuthClassification,

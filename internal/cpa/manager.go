@@ -27,28 +27,33 @@ const (
 	legacyProviderID        = "codex" // legacy sidecar auth files emitted before provider separation
 	authFilePrefix          = "codex-agent-identity-"
 	managedAuthSuffix       = "-agent-identity"
+	sidecarClientKeyField   = "sidecar_client_key"
 	managementRetryAttempts = 4
 	managementRetryInitial  = 75 * time.Millisecond
 	managementRetryMaximum  = 500 * time.Millisecond
 	managementVerifyWindow  = 5 * time.Second
 )
 
-// Credential is the non-secret CPA-facing representation of an Agent Identity.
-// ClientKey is an opaque sidecar key; the original Agent Identity JWT never enters CPA.
+// Credential is the CPA-facing representation of one sidecar-managed Codex credential.
+// ClientKey is the opaque key used only for CPA runtime calls through the sidecar.
+// UpstreamToken is secret-bearing and is written to CPA's native access_token field
+// so stock management clients such as Keeper receive the same token semantics as
+// CPA-native Codex OAuth credentials. It must never be logged or returned by APIs.
 // ErrUnmanagedAuthFile indicates that CPA already owns the target filename
 // with a credential that was not created by this sidecar.
 var ErrUnmanagedAuthFile = errors.New("unmanaged CPA auth file")
 
 type Credential struct {
-	IdentityID string
-	ClientKey  string
-	Kind       string
-	AccountID  string
-	UserID     string
-	Email      string
-	PlanType   string
-	ExpiresAt  time.Time
-	FedRAMP    bool
+	IdentityID    string
+	ClientKey     string `json:"-"`
+	UpstreamToken string `json:"-"`
+	Kind          string
+	AccountID     string
+	UserID        string
+	Email         string
+	PlanType      string
+	ExpiresAt     time.Time
+	FedRAMP       bool
 }
 
 // Manager keeps sidecar identities synchronized with CPA's native Codex auth-file list.
@@ -591,17 +596,18 @@ func (m *Manager) credentialJSONWithDisabled(credential Credential, disabled boo
 		email = credential.IdentityID + "@agent-identity.local"
 	}
 	payload := map[string]any{
-		"type":              pluginProviderID,
-		"auth_mode":         authMode,
-		"auth_kind":         "oauth",
-		"email":             email,
-		"access_token":      credential.ClientKey,
-		"base_url":          m.sidecarBaseURL,
-		"websockets":        true,
-		"disabled":          disabled,
-		"runtime_only":      true,
-		"agent_identity_id": credential.IdentityID,
-		"note":              "Agent Identity via sidecar",
+		"type":                pluginProviderID,
+		"auth_mode":           authMode,
+		"auth_kind":           "oauth",
+		"email":               email,
+		"access_token":        credential.UpstreamToken,
+		sidecarClientKeyField: credential.ClientKey,
+		"base_url":            m.sidecarBaseURL,
+		"websockets":          true,
+		"disabled":            disabled,
+		"runtime_only":        true,
+		"agent_identity_id":   credential.IdentityID,
+		"note":                "Agent Identity via sidecar",
 	}
 	if credential.Kind != "" {
 		payload["credential_kind"] = credential.Kind
@@ -705,6 +711,7 @@ func nonNilContext(ctx context.Context) context.Context {
 func normalizeCredential(credential Credential) Credential {
 	credential.IdentityID = strings.TrimSpace(credential.IdentityID)
 	credential.ClientKey = strings.TrimSpace(credential.ClientKey)
+	credential.UpstreamToken = strings.TrimSpace(credential.UpstreamToken)
 	credential.Kind = strings.ToLower(strings.TrimSpace(credential.Kind))
 	credential.AccountID = strings.TrimSpace(credential.AccountID)
 	credential.UserID = strings.TrimSpace(credential.UserID)
@@ -720,13 +727,15 @@ func validateCredential(credential Credential) error {
 	if err := validateIdentityID(credential.IdentityID); err != nil {
 		return err
 	}
-	// CPA auth files carry only the opaque sidecar key. Keep the same minimum
-	// shape enforced by the plugin parser so a malformed value can never be
-	// installed and later misread as a native Codex OAuth token.
+	// Keep the same client-key shape enforced by the plugin parser so malformed
+	// runtime routing material can never be installed.
 	if len(credential.ClientKey) < len("cais_")+32 ||
 		!strings.HasPrefix(credential.ClientKey, "cais_") ||
 		strings.ContainsAny(credential.ClientKey, "\r\n") {
 		return errors.New("client key is invalid")
+	}
+	if credential.UpstreamToken == "" || strings.ContainsAny(credential.UpstreamToken, "\r\n") {
+		return errors.New("upstream token is invalid")
 	}
 	return nil
 }
@@ -969,7 +978,7 @@ func managedCredentialMatchScore(raw []byte, credential Credential) (int, bool) 
 	}
 	score := 1
 	if credential.ClientKey != "" {
-		if token := strings.TrimSpace(jsonStringValue(payload["access_token"])); token == credential.ClientKey {
+		if token := managedSidecarClientKey(payload); token == credential.ClientKey {
 			score += 1000
 		} else if token != "" {
 			// A client key can remain stable for the lifetime of an identity, but
@@ -1003,6 +1012,17 @@ func managedCredentialMatchScore(raw []byte, credential Credential) (int, bool) 
 		score += points
 	}
 	return score, true
+}
+
+func managedSidecarClientKey(payload map[string]any) string {
+	if len(payload) == 0 {
+		return ""
+	}
+	if key := strings.TrimSpace(jsonStringValue(payload[sidecarClientKeyField])); key != "" {
+		return key
+	}
+	// Legacy files stored the sidecar client key directly in access_token.
+	return strings.TrimSpace(jsonStringValue(payload["access_token"]))
 }
 
 func matchingStringField(payload map[string]any, key, want string, foldCase bool) (bool, int) {
@@ -1144,7 +1164,10 @@ func managedCredentialMatches(raw []byte, credential Credential, expectedRaw []b
 		strings.TrimSpace(jsonStringValue(actual["agent_identity_id"])) != credential.IdentityID {
 		return false
 	}
-	if credential.ClientKey != "" && strings.TrimSpace(jsonStringValue(actual["access_token"])) != credential.ClientKey {
+	if credential.ClientKey != "" && managedSidecarClientKey(actual) != credential.ClientKey {
+		return false
+	}
+	if credential.UpstreamToken != "" && strings.TrimSpace(jsonStringValue(actual["access_token"])) != credential.UpstreamToken {
 		return false
 	}
 	if !sameNormalizedString(actual, expected, "base_url", true) || !sameBoolean(actual, expected, "disabled") {

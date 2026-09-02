@@ -1,6 +1,7 @@
 package cpa
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -92,7 +93,7 @@ func TestManagerProbeReportsUnreachableWithoutSensitiveDetails(t *testing.T) {
 
 func TestValidateCredentialRequiresValidClientKey(t *testing.T) {
 	t.Parallel()
-	base := Credential{IdentityID: "agent-aabb0011"}
+	base := Credential{IdentityID: "agent-aabb0011", UpstreamToken: "upstream-token"}
 	cases := []struct {
 		name string
 		key  string
@@ -112,6 +113,51 @@ func TestValidateCredentialRequiresValidClientKey(t *testing.T) {
 			err := validateCredential(credential)
 			if (err == nil) != test.want {
 				t.Fatalf("validateCredential(%q) error=%v, want valid=%v", test.key, err, test.want)
+			}
+		})
+	}
+}
+
+func TestCredentialJSONMarshalOmitsSecrets(t *testing.T) {
+	t.Parallel()
+	const (
+		clientKey     = "cais_secret_0000000000000000000000000000"
+		upstreamToken = "upstream-secret-token"
+	)
+	raw, err := json.Marshal(Credential{
+		IdentityID:    "agent-aabb0011",
+		ClientKey:     clientKey,
+		UpstreamToken: upstreamToken,
+		Email:         "user@example.invalid",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(raw, []byte(clientKey)) || bytes.Contains(raw, []byte(upstreamToken)) || bytes.Contains(raw, []byte("ClientKey")) || bytes.Contains(raw, []byte("UpstreamToken")) {
+		t.Fatalf("credential JSON leaked secret-bearing fields: %s", raw)
+	}
+}
+
+func TestValidateCredentialRequiresSafeUpstreamToken(t *testing.T) {
+	t.Parallel()
+	base := Credential{IdentityID: "agent-aabb0011", ClientKey: "cais_test_0000000000000000000000000000"}
+	for _, test := range []struct {
+		name  string
+		token string
+		want  bool
+	}{
+		{name: "empty", token: "", want: false},
+		{name: "newline", token: "upstream\ntoken", want: false},
+		{name: "carriage return", token: "upstream\rtoken", want: false},
+		{name: "personal access token", token: "at-valid-team-token", want: true},
+		{name: "agent identity jwt", token: "header.payload.signature", want: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			credential := base
+			credential.UpstreamToken = test.token
+			err := validateCredential(credential)
+			if (err == nil) != test.want {
+				t.Fatalf("upstream token validation error=%v, want valid=%v", err, test.want)
 			}
 		})
 	}
@@ -246,13 +292,15 @@ func TestManagerUpsertStatusAndRemoveUsesNativeAuthFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	credential := Credential{
-		IdentityID: "agent-aabbccddeeff",
-		ClientKey:  "cais_secret_0000000000000000000000000000",
-		AccountID:  "account-test",
-		UserID:     "user-test",
-		Email:      "user@example.invalid",
-		PlanType:   "k12",
-		ExpiresAt:  time.Unix(2_000_000_000, 0),
+		IdentityID:    "agent-aabbccddeeff",
+		ClientKey:     "cais_secret_0000000000000000000000000000",
+		UpstreamToken: "agent.identity.jwt",
+		Kind:          "agent_identity",
+		AccountID:     "account-test",
+		UserID:        "user-test",
+		Email:         "user@example.invalid",
+		PlanType:      "k12",
+		ExpiresAt:     time.Unix(2_000_000_000, 0),
 	}
 	if err = manager.UpsertIdentity(context.Background(), credential); err != nil {
 		t.Fatal(err)
@@ -299,7 +347,7 @@ func TestManagerUpsertStatusAndRemoveUsesNativeAuthFiles(t *testing.T) {
 	if json.Unmarshal(raw, &payload) != nil {
 		t.Fatalf("invalid stored payload: %s", raw)
 	}
-	if payload["type"] != pluginProviderID || payload["auth_mode"] != authMode || payload["auth_kind"] != "oauth" || payload["access_token"] != credential.ClientKey || payload["base_url"] != "http://sidecar:8787/backend-api/codex" || payload["email"] != credential.Email || payload["plan_type"] != credential.PlanType || payload["disabled"] != false {
+	if payload["type"] != pluginProviderID || payload["auth_mode"] != authMode || payload["auth_kind"] != "oauth" || payload["access_token"] != credential.UpstreamToken || payload[sidecarClientKeyField] != credential.ClientKey || payload["base_url"] != "http://sidecar:8787/backend-api/codex" || payload["email"] != credential.Email || payload["plan_type"] != credential.PlanType || payload["disabled"] != false {
 		t.Fatalf("unexpected stored payload: %#v", payload)
 	}
 
@@ -387,32 +435,30 @@ func TestManagerForwardAPICallPreservesCPAResponse(t *testing.T) {
 	}
 }
 
-func TestCredentialJSONLabelsPersonalAccessTokenWithoutExposingIt(t *testing.T) {
+func TestCredentialJSONExposesPersonalAccessTokenOnlyToCPANativeAuthFile(t *testing.T) {
 	t.Parallel()
 	manager, err := NewManager("https://example.com/v0/management", "management-key", "http://sidecar:8787/backend-api/codex", http.DefaultClient)
 	if err != nil {
 		t.Fatal(err)
 	}
 	raw, err := manager.credentialJSON(Credential{
-		IdentityID: "agent-aabbccddeeff",
-		ClientKey:  "cais_opaque_0000000000000000000000000000",
-		Kind:       "personal_access_token",
-		AccountID:  "account-team",
-		UserID:     "user-team",
-		Email:      "team-user@example.invalid",
-		PlanType:   "team",
+		IdentityID:    "agent-aabbccddeeff",
+		ClientKey:     "cais_opaque_0000000000000000000000000000",
+		UpstreamToken: "at-team-personal-access-token",
+		Kind:          "personal_access_token",
+		AccountID:     "account-team",
+		UserID:        "user-team",
+		Email:         "team-user@example.invalid",
+		PlanType:      "team",
 	})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if strings.Contains(string(raw), "at-") {
-		t.Fatalf("CPA credential leaked personal access token: %s", raw)
 	}
 	var payload map[string]any
 	if json.Unmarshal(raw, &payload) != nil {
 		t.Fatalf("invalid credential JSON: %s", raw)
 	}
-	if payload["credential_kind"] != "personal_access_token" || payload["note"] != "Codex Access Token via sidecar" || payload["access_token"] != "cais_opaque_0000000000000000000000000000" || payload["account_id"] != "account-team" {
+	if payload["credential_kind"] != "personal_access_token" || payload["note"] != "Codex Access Token via sidecar" || payload["access_token"] != "at-team-personal-access-token" || payload[sidecarClientKeyField] != "cais_opaque_0000000000000000000000000000" || payload["account_id"] != "account-team" {
 		t.Fatalf("unexpected credential payload: %#v", payload)
 	}
 }
@@ -431,13 +477,13 @@ func TestManagerRefusesUnmanagedCollision(t *testing.T) {
 	}))
 	defer service.Close()
 	manager, _ := NewManager(service.URL+"/v0/management", "management-key", "http://sidecar:8787/backend-api/codex", service.Client())
-	err := manager.UpsertIdentity(context.Background(), Credential{IdentityID: "agent-aabbccddeeff", ClientKey: "cais_secret_0000000000000000000000000000", Email: "user@example.invalid", PlanType: "k12"})
+	err := manager.UpsertIdentity(context.Background(), Credential{IdentityID: "agent-aabbccddeeff", ClientKey: "cais_secret_0000000000000000000000000000", UpstreamToken: "upstream-token", Email: "user@example.invalid", PlanType: "k12"})
 	if err == nil || !strings.Contains(err.Error(), "unmanaged") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
-func TestManagerAllowsNativeOAuthWithSameTeamAndEmail(t *testing.T) {
+func TestManagerAllowsNativeOAuthAndMultipleTeamsWithSameEmail(t *testing.T) {
 	t.Parallel()
 	const nativeName = "codex-58732bd9-user@example.invalid-team.json"
 	files := map[string][]byte{
@@ -508,21 +554,39 @@ func TestManagerAllowsNativeOAuthWithSameTeamAndEmail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	credential := Credential{
-		IdentityID: "agent-aabb0011",
-		ClientKey:  "cais_secret_0000000000000000000000000000",
-		AccountID:  "workspace-one",
-		Email:      "user@example.invalid",
-		PlanType:   "team",
+	first := Credential{
+		IdentityID:    "agent-aabb0011",
+		ClientKey:     "cais_secret_0000000000000000000000000000",
+		UpstreamToken: "upstream-team-token",
+		Kind:          "personal_access_token",
+		AccountID:     "workspace-one",
+		Email:         "user@example.invalid",
+		PlanType:      "team",
 	}
-	managedName, err := authFileName(credential)
+	second := Credential{
+		IdentityID:    "agent-aabb0022",
+		ClientKey:     "cais_secret_1111111111111111111111111111",
+		UpstreamToken: first.UpstreamToken,
+		Kind:          first.Kind,
+		AccountID:     "workspace-two",
+		Email:         first.Email,
+		PlanType:      first.PlanType,
+	}
+	firstName, err := authFileName(first)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if managedName == nativeName {
-		t.Fatalf("managed filename still collides with native OAuth filename: %q", managedName)
+	secondName, err := authFileName(second)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if err = manager.UpsertIdentity(context.Background(), credential); err != nil {
+	if firstName == nativeName || secondName == nativeName || firstName == secondName {
+		t.Fatalf("managed filenames collided: native=%q first=%q second=%q", nativeName, firstName, secondName)
+	}
+	if err = manager.UpsertIdentity(context.Background(), first); err != nil {
+		t.Fatal(err)
+	}
+	if err = manager.UpsertIdentity(context.Background(), second); err != nil {
 		t.Fatal(err)
 	}
 
@@ -531,12 +595,24 @@ func TestManagerAllowsNativeOAuthWithSameTeamAndEmail(t *testing.T) {
 	if string(files[nativeName]) != `{"type":"codex","access_token":"native-oauth"}` {
 		t.Fatal("native OAuth credential was changed")
 	}
-	managedRaw, ok := files[managedName]
-	if !ok {
-		t.Fatalf("sidecar-managed file %q was not created", managedName)
-	}
-	if !isManagedCredential(managedRaw, credential.IdentityID) {
-		t.Fatalf("created file is not sidecar-managed: %s", managedRaw)
+	for _, item := range []struct {
+		name       string
+		credential Credential
+	}{
+		{name: firstName, credential: first},
+		{name: secondName, credential: second},
+	} {
+		managedRaw, ok := files[item.name]
+		if !ok {
+			t.Fatalf("sidecar-managed file %q was not created", item.name)
+		}
+		if !isManagedCredential(managedRaw, item.credential.IdentityID) {
+			t.Fatalf("created file %q is not sidecar-managed", item.name)
+		}
+		var payload map[string]any
+		if json.Unmarshal(managedRaw, &payload) != nil || payload["access_token"] != item.credential.UpstreamToken || payload[sidecarClientKeyField] != item.credential.ClientKey || payload["account_id"] != item.credential.AccountID {
+			t.Fatalf("created file %q did not preserve its Team-scoped credential mapping", item.name)
+		}
 	}
 }
 
@@ -657,11 +733,12 @@ func (transport *deleteCommitThenDisconnectTransport) RoundTrip(request *http.Re
 func TestUpsertMigrationRestoresOldFileWhenDeleteDisconnectsAfterCommit(t *testing.T) {
 	const managementKey = "management-key"
 	credential := Credential{
-		IdentityID: "agent-aabb0044",
-		ClientKey:  "cais_test_0000000000000000000000000000",
-		AccountID:  "workspace-rollback",
-		Email:      "rollback@example.invalid",
-		PlanType:   "team",
+		IdentityID:    "agent-aabb0044",
+		ClientKey:     "cais_test_0000000000000000000000000000",
+		UpstreamToken: "upstream-rollback-token",
+		AccountID:     "workspace-rollback",
+		Email:         "rollback@example.invalid",
+		PlanType:      "team",
 	}
 	oldName := "codex-rollback@example.invalid-team-agent-identity.json"
 	oldRaw := []byte(`{"type":"codex-agent-identity","auth_mode":"agent_identity_sidecar","agent_identity_id":"agent-aabb0044","access_token":"cais_old_0000000000000000000000000000","account_id":"workspace-rollback","email":"rollback@example.invalid","plan_type":"team"}`)
