@@ -78,7 +78,7 @@ Each sidecar-managed CPA auth file intentionally carries two secret fields. `acc
 
 - Original tokens are encrypted at rest in the sidecar store with AES-256-GCM.
 - For native Keeper compatibility, the same upstream credential is also present in the CPA auth file's `access_token`; protect the CPA auth directory as secret material.
-- The data and CPA auth directories are owner-only on POSIX systems and identity files use mode 0600.
+- The sidecar data directory is created with mode 0700 and its identity files with mode 0600 on POSIX systems. The sidecar only uploads and restores CPA auth files through CPA's Management API; operators must enforce an owner-only CPA auth directory and mode 0600 for those auth files.
 - The data encryption key is mounted separately from the encrypted data volume.
 - Management endpoints use constant-time management-key comparison.
 - The sidecar UI stores the management password only in the current tab's `sessionStorage`. The plugin wrapper can read CPAMC's own scoped, obfuscated auth state, but never copies the key into an iframe URL, Cookie, export, or sidecar `localStorage`.
