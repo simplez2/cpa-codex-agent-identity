@@ -4,15 +4,15 @@ All notable changes to `cpa-codex-agent-identity` are documented here.
 Published registry and release assets are updated only after the tagged release
 workflow has produced and checksummed the artifacts.
 
-## [Unreleased] - 0.3.12
+## [0.3.12] - 2026-09-02
 
 ### Changed
 
 - Build the CPA plugin against CLIProxyAPI/v7 v7.2.146 so the Store artifact carries
   the latest compatible auth lifecycle and Codex runtime fixes without claiming
   or replacing CPA's native OAuth provider.
-- Keep the release metadata lifecycle staged: registry.json and SIDECAR_IMAGE remain
-  on the published v0.3.11 line until the v0.3.12 assets are built and verified.
+- Publish registry.json and SIDECAR_IMAGE from the verified v0.3.12 release assets only
+  after the tagged workflow completes successfully.
 
 ## [0.3.11] - 2026-09-02
 
