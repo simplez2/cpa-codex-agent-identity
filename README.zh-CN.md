@@ -12,16 +12,16 @@
   <p>简体中文 · <a href="README.md">English</a></p>
 </div>
 
-> **版本边界：** 当前源码、直接安装 registry、GitHub Release 资产和 sidecar 镜像均为 **v0.3.11**，编译基线为 CLIProxyAPI **v7.2.145**。v0.3.11 让 Agent Identity / PAT 在运行时保持 CPA OAuth/file-backed Codex 分类，因此 CPA 原生 Header Defaults 和按认证身份重映射会继续生效。
+> **版本边界：** 当前源码开发线为 **v0.3.13**；最新已发布的 registry、GitHub Release 资产和 sidecar 镜像仍为 **v0.3.12**，直到 v0.3.13 的 Release workflow 完成。两条版本线都以 CLIProxyAPI **v7.2.146** 为 SDK 基线。v0.3.13 将 sidecar 管理的凭证保存为 CPA 原生 `codex` provider，同时保留明确的 `auth_mode: agent_identity_sidecar` 标记，因此 CPA 原生 Header Defaults、WebSocket 特性、按认证身份重映射以及 Keeper 的 Codex 额度路径都会继续生效。
 
 这是一个面向 CLIProxyAPI（CPA）的 Codex Agent Identity / Personal Access
 Token 集成项目。首个公开版本由两个部分组成：
 
-- codex-agent-identity.so：CPA 动态插件只声明私有的 `codex-agent-identity`
-  auth-file provider；它只接管带有 `auth_mode: agent_identity_sidecar` 的 sidecar
-  文件，然后把解析结果映射到 CPA 原生 `codex` runtime executor。原生 `type: codex`
-  OAuth 的解析、登录、刷新和执行路径仍由 CPA 自己处理。插件同时暴露受
-  Management key 保护的管理路由，以及供 CPAMC `plugin-pages` 使用的安全资源入口。
+- codex-agent-identity.so：CPA 动态插件声明管理/登录标识 `codex-agent-identity`，
+  只接管 `type: codex` 且带有 `auth_mode: agent_identity_sidecar` 的 sidecar 文件，
+  然后把解析结果交给 CPA 原生 `codex` runtime executor。没有该标记的原生
+  Codex OAuth 文件，以及 CPA 原生登录、刷新和执行路径，仍由 CPA 自己处理。插件
+  同时暴露受 Management key 保护的管理路由，以及供 CPAMC `plugin-pages` 使用的安全资源入口。
 - sidecar：负责官方凭证验证、AES-256-GCM 加密存储、AgentAssertion、PAT
   转发、批量导入、CPA auth 文件同步以及 HTTP/SOCKS 代理热加载。
 
@@ -52,7 +52,7 @@ Token 集成项目。首个公开版本由两个部分组成：
 
 ## 版本边界
 
-当前源码要求 Go 1.26.6 或更高补丁版本，并以 CLIProxyAPI v7.2.145 SDK 作为当前开发线的编译基线。版本状态由根目录的 VERSION、CHANGELOG.md、发布 workflow 和 registry 分阶段管理：源码可以先进入下一版本，但 registry 不得指向尚未发布的资产。
+当前源码要求 Go 1.26.6 或更高补丁版本，并以 CLIProxyAPI v7.2.146 SDK 作为当前开发线的编译基线。版本状态由根目录的 VERSION、CHANGELOG.md、发布 workflow 和 registry 分阶段管理：源码可以先进入下一版本，但 registry 不得指向尚未发布的资产。
 
 ### 当前 plugin-pages 入口
 
@@ -62,13 +62,13 @@ CPA 的 `/v0/resource/plugins/...` 资源路由不经过 Management key 认证�
 
 ### 关于 CPA 原生 OAuth
 
-插件保留 CPA 原生 Codex OAuth 文件的解析、刷新和执行归属，不冒充 CPA 的 codex OAuth provider。Agent Identity / PAT 文件使用独立的 codex-agent-identity 类型触发插件解析，然后映射到 CPA 的 Codex runtime executor。这样可避免接管现有官方 OAuth 账号；如果要让导入流程直接复用 CPA OAuth 页面，还需要 CPA host 提供“源 provider 与 runtime provider 分离”的登录保存契约，当前版本不伪造这一流程。
+插件不接管没有 sidecar 标记的 CPA 原生 Codex OAuth 文件，也不接管 CPA 原生 OAuth 登录和刷新。Agent Identity / PAT 文件在磁盘上使用原生 `type: codex`，但必须同时带有 `auth_mode: agent_identity_sidecar`；插件只识别这组明确标记，并把请求转到 sidecar，再由 CPA 原生 `codex` runtime executor 完成后续路由。这样既获得 Keeper 等 CPA 兼容客户端的原生 Codex 识别，又不会误接管官方 OAuth 账号。
 
 ## 从 CPAMC Plugin Store 安装
 
 公开 `router-for-me/CLIProxyAPI-Plugins-Store` 已包含本插件，但 registry 中的回退展示版本仍是 `0.3.3`。新版 CPA 通常会先查询最新 GitHub Release 再展示和安装；当该元数据查询失败或命中旧缓存时，页面就可能继续显示 `0.3.3`。
 
-本项目的 `registry.json` 是单独的 CPA schema v2 直接资产清单，固定了已发布 `0.3.11` 资产的大小和 SHA-256，不依赖 GitHub Release 元数据查询。可将它作为明确回退源加入 CPA 配置：
+本项目的 `registry.json` 是单独的 CPA schema v2 直接资产清单，固定了已发布 `0.3.12` 资产的大小和 SHA-256，不依赖 GitHub Release 元数据查询；当前源码开发线为 `0.3.13`，必须等 Release 资产真实生成并校验后才能更新 registry。可将它作为明确回退源加入 CPA 配置：
 
 ~~~yaml
 plugins:

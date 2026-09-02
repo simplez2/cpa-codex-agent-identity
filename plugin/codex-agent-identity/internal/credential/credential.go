@@ -15,13 +15,14 @@ import (
 )
 
 const (
-	// PluginProvider is the private provider identifier claimed by this plugin.
-	// RuntimeProvider is the first-class CPA provider that executes the parsed auth.
-	// Keeping these identifiers separate is essential: claiming "codex" would make
-	// CPA route its native Codex OAuth login and refresh through this plugin.
+	// PluginProvider is the management/login identifier claimed by this plugin.
+	// RuntimeProvider is CPA's first-class provider and is intentionally persisted
+	// in sidecar auth files so native Codex-compatible consumers can inspect them.
+	// AuthMode is the discriminator that keeps ordinary CPA Codex OAuth files out
+	// of this plugin's parser and leaves CPA's native login/refresh path untouched.
 	PluginProvider                      = "codex-agent-identity"
 	RuntimeProvider                     = "codex"
-	LegacyPluginProvider                = "codex" // legacy sidecar files emitted before provider separation
+	LegacyPluginProvider                = RuntimeProvider // compatibility name for the persisted sidecar provider
 	AuthMode                            = "agent_identity_sidecar"
 	SidecarClientKeyField               = "sidecar_client_key"
 	SidecarAuthorizationHeaderAttribute = "header:Authorization"
