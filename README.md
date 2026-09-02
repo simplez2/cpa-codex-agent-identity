@@ -12,7 +12,7 @@
   <p>English · <a href="README.zh-CN.md">简体中文</a></p>
 </div>
 
-> **Release boundary:** the current source line is **v0.3.13**; the latest published registry, GitHub Release assets, and sidecar image remain **v0.3.12** until the v0.3.13 release workflow completes. Both lines use the CLIProxyAPI **v7.2.146** SDK baseline. v0.3.13 stores sidecar-managed credentials under CPA's native `codex` provider namespace while retaining the explicit `auth_mode: agent_identity_sidecar` marker, so CPA-native Header Defaults, WebSocket features, identity remapping, and Keeper's Codex quota path remain active.
+> **Release boundary:** the current source, direct-install registry, GitHub Release assets, and sidecar image are **v0.3.13**, built against CLIProxyAPI **v7.2.146**. v0.3.13 stores sidecar-managed credentials under CPA's native `codex` provider namespace while retaining the explicit `auth_mode: agent_identity_sidecar` marker, so CPA-native Header Defaults, WebSocket features, identity remapping, and Keeper's Codex quota path remain active.
 
 CPA-native management and routing support for Codex Agent Identity JWTs and opaque Personal Access Tokens whose current prefix is at-.
 
@@ -106,7 +106,7 @@ Treat the management password, encryption key, CPA auth files, upstream credenti
 ## Requirements
 
 - A CPA build with dynamic plugin ABI v1, AuthProvider, Management API routes, and host auth-file management support.
-- CLIProxyAPI v7.2.146 is the verified SDK baseline for the v0.3.13 development line and the published v0.3.12 release. The plugin uses
+- CLIProxyAPI v7.2.146 is the verified SDK baseline for the v0.3.13 release. The plugin uses
   dynamic plugin ABI v1; always canary-test it against the exact CPA image you
   plan to deploy.
 - Linux amd64 or Linux arm64 for the released .so files.
@@ -171,7 +171,7 @@ resolve the latest GitHub Release before showing or installing it, but when that
 metadata lookup is unavailable or cached they can still display `0.3.3`. The
 checked-in `registry.json` in this repository is a separate CPA schema v2 direct
 source with pinned, checksummed artifacts; it tracks the latest verified **published**
-published direct version (`0.3.12`); the current source line is `0.3.13`. Adding the pinned source to the host-mounted CPA configuration avoids
+published direct version (`0.3.13`). Adding the pinned source to the host-mounted CPA configuration avoids
 GitHub release-metadata lookup and stale public-store fallback versions:
 
 ~~~yaml
@@ -464,7 +464,7 @@ checksums.txt
 plugin's fallback metadata version; CPA may resolve the latest GitHub Release
 separately, which is why the displayed version can depend on network/cache state.
 This repository `registry.json` is the explicit pinned-artifact fallback and is kept
-at the latest verified published release (`0.3.12`). Future registry updates must follow the
+at the latest verified published release (`0.3.13`). Future registry updates must follow the
 post-release publication sequence described in [Release process](RELEASE.md).
 
 ## Optional Management Center overlay
