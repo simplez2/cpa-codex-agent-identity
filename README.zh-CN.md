@@ -12,7 +12,7 @@
   <p>简体中文 · <a href="README.md">English</a></p>
 </div>
 
-> **版本边界：** 当前源码是 **v0.3.11** 开发线，编译基线为 CLIProxyAPI **v7.2.145**。本仓库已发布的 registry 和直接安装资产仍为 **v0.3.10**，必须等 v0.3.11 Release 资产构建、校验完成后才更新。v0.3.11 让 Agent Identity / PAT 在运行时保持 CPA OAuth/file-backed Codex 分类，因此 CPA 原生 Header Defaults 和按认证身份重映射会继续生效。
+> **版本边界：** 当前源码、直接安装 registry、GitHub Release 资产和 sidecar 镜像均为 **v0.3.11**，编译基线为 CLIProxyAPI **v7.2.145**。v0.3.11 让 Agent Identity / PAT 在运行时保持 CPA OAuth/file-backed Codex 分类，因此 CPA 原生 Header Defaults 和按认证身份重映射会继续生效。
 
 这是一个面向 CLIProxyAPI（CPA）的 Codex Agent Identity / Personal Access
 Token 集成项目。首个公开版本由两个部分组成：
@@ -68,7 +68,7 @@ CPA 的 `/v0/resource/plugins/...` 资源路由不经过 Management key 认证�
 
 公开 `router-for-me/CLIProxyAPI-Plugins-Store` 已包含本插件，但 registry 中的回退展示版本仍是 `0.3.3`。新版 CPA 通常会先查询最新 GitHub Release 再展示和安装；当该元数据查询失败或命中旧缓存时，页面就可能继续显示 `0.3.3`。
 
-本项目的 `registry.json` 是单独的 CPA schema v2 直接资产清单，固定了已发布 `0.3.10` 资产的大小和 SHA-256，不依赖 GitHub Release 元数据查询。可将它作为明确回退源加入 CPA 配置：
+本项目的 `registry.json` 是单独的 CPA schema v2 直接资产清单，固定了已发布 `0.3.11` 资产的大小和 SHA-256，不依赖 GitHub Release 元数据查询。可将它作为明确回退源加入 CPA 配置：
 
 ~~~yaml
 plugins:

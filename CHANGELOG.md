@@ -4,7 +4,7 @@ All notable changes to `cpa-codex-agent-identity` are documented here.
 Published registry and release assets are updated only after the tagged release
 workflow has produced and checksummed the artifacts.
 
-## [Unreleased] - 0.3.11
+## [0.3.11] - 2026-09-02
 
 ### Changed
 
