@@ -13,7 +13,7 @@
 | data-v3 | 加密 identity 文件 | 敏感备份。 |
 | data-encryption-key | 解密 data-v3 的 32-byte key | 最高敏感，单独备份。 |
 | management-key | sidecar 与 CPA 管理认证 | 最高敏感。 |
-| CPA auths | 含 cais_ key 的 native auth 文件 | 敏感。 |
+| CPA auths | 含上游 `access_token` 与 `sidecar_client_key` 的 native auth 文件 | 高敏感，按原生 OAuth auth 保护。 |
 | config.yaml | CPA/plugin 配置 | 可能含内部路径，不应公开。 |
 | management overlay | 可选前端补丁产物 | 非 secret，但必须与 CPA 前端版本对齐。 |
 
@@ -21,7 +21,7 @@
 
 ## 2. 版本边界
 
-当前源码开发线是 v0.3.9，pluginVersion 与根目录 VERSION 必须一致；公开 registry 和可直接安装资产仍是 v0.3.8。只有 Linux 资产、GitHub Release、checksums 和下载验证全部完成后，才能在单独的发布提交中把 registry 切换到 v0.3.9。
+当前源码开发线是 v0.3.10，pluginVersion 与根目录 VERSION 必须一致；已发布 registry 和可直接安装资产保持 v0.3.9。只有 Linux 资产、GitHub Release、checksums 和下载验证全部完成后，才能在单独的发布提交中把 registry 切换到 v0.3.10。
 
 发布新版本时必须同步：
 
@@ -70,7 +70,7 @@ deployment/
 5. 启用 codex-agent-identity 插件；新安装不要填写 sidecar_url，只有旧的自定义反向代理部署才保留它。
 6. 使用 deploy/docker-compose.canary.yml 先启动隔离 canary。
 7. 验证 plugin registration、/healthz、/agent-identity/ 登录和空 identity list。
-8. 预检一条测试凭据，再确认 CPA auth 文件只含 cais_ key。
+8. 预检一条测试凭据，再确认 CPA auth 文件的 `access_token` 是真实上游凭证、`sidecar_client_key` 是独立 `cais_`，且管理响应和日志都不回显二者。
 9. 验证 HTTP、SSE、WebSocket、图片、usage 与 proxy 热加载。
 10. 通过后固定 CPA/sidecar digest，再部署 production compose。
 
@@ -163,7 +163,7 @@ overlay 与官方 Management Center commit 绑定。每次 CPA 前端升级都�
 - sidecar 使用非 root、read-only、无 capabilities；
 - encrypted store 和 secret 权限保持 0700/0600；
 - summary 中 unsynced=0；
-- CPA auth files 的 base_url 和 cais_ key格式正确；
+- CPA auth files 的 `access_token`、`sidecar_client_key` 和 base_url 分工正确；
 - proxy reload 无持续错误；
 - `/v0/resource/plugins/codex-agent-identity/open` 返回 wrapper，且 wrapper 不包含 secret；
 - Management route 无 key 被拒绝；
@@ -182,7 +182,7 @@ overlay 与官方 Management Center commit 绑定。每次 CPA 前端升级都�
 
 ### 插件-pages 菜单不显示或资源入口返回 404
 
-当前插件不再依赖外挂卡片按钮。确认安装的是包含 ResourceRoute 的插件版本（源码开发线为 v0.3.9；公开 registry 在 v0.3.9 发布前仍可能提供 v0.3.8），CPA 的 `plugins.enabled` 和该插件配置的 `enabled` 都为 `true`，然后重启 CPA。CPA 资源入口是 `/v0/resource/plugins/codex-agent-identity/open`，正常应返回 HTML wrapper；若仍为 404，通常是插件没有注册成功、CPA 使用不支持资源路由的旧版本，或 CPAMC/CPA 仍在使用旧插件进程。直接入口 `/agent-identity/` 仍可作为回退。
+当前插件不再依赖外挂卡片按钮。确认安装的是包含 ResourceRoute 的插件版本（源码开发线为 v0.3.10；已发布 registry 保持 v0.3.9），CPA 的 `plugins.enabled` 和该插件配置的 `enabled` 都为 `true`，然后重启 CPA。CPA 资源入口是 `/v0/resource/plugins/codex-agent-identity/open`，正常应返回 HTML wrapper；若仍为 404，通常是插件没有注册成功、CPA 使用不支持资源路由的旧版本，或 CPAMC/CPA 仍在使用旧插件进程。直接入口 `/agent-identity/` 仍可作为回退。
 
 ### 401
 

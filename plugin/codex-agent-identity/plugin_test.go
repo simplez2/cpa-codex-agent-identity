@@ -47,7 +47,8 @@ func TestAuthParseMapsManagedCredentialToNativeCodexOAuthShape(t *testing.T) {
 		"auth_mode":"agent_identity_sidecar",
 		"auth_kind":"oauth",
 		"email":"agent@example.invalid",
-		"access_token":"cais_test_0000000000000000000000000000",
+		"access_token":"upstream.oauth.token",
+		"sidecar_client_key":"cais_test_0000000000000000000000000000",
 		"base_url":"http://codex-agent-identity-sidecar:8787/backend-api/codex",
 		"agent_identity_id":"agent-aabbccddeeff",
 		"account_id":"account-a",
@@ -75,8 +76,8 @@ func TestAuthParseMapsManagedCredentialToNativeCodexOAuthShape(t *testing.T) {
 	if auth.Attributes["auth_kind"] != "oauth" || auth.Attributes["runtime_only"] != "true" || auth.Attributes["plan_type"] != "free" || auth.Attributes["account_id"] != "account-a" || auth.Attributes["chatgpt_user_id"] != "user-a" {
 		t.Fatalf("native Codex routing attributes are incomplete: %#v", auth.Attributes)
 	}
-	if strings.TrimSpace(auth.Attributes["api_key"]) != "" || auth.Metadata["access_token"] != "cais_test_0000000000000000000000000000" {
-		t.Fatalf("managed auth was not kept on the OAuth-compatible executor path: metadata=%#v attributes=%#v", auth.Metadata, auth.Attributes)
+	if strings.TrimSpace(auth.Attributes["api_key"]) != "cais_test_0000000000000000000000000000" || auth.Metadata["access_token"] != "upstream.oauth.token" {
+		t.Fatalf("managed auth did not split native and sidecar tokens: metadata=%#v attributes=%#v", auth.Metadata, auth.Attributes)
 	}
 	if string(auth.StorageJSON) != string(storage) || auth.NextRefreshAfter.Before(time.Now().UTC()) {
 		t.Fatalf("provider storage or refresh schedule was lost: %#v", auth)

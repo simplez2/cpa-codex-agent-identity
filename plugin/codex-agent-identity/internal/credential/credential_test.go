@@ -9,21 +9,22 @@ import (
 
 func validFileFor(provider string) []byte {
 	raw, _ := json.Marshal(map[string]any{
-		"type":              provider,
-		"auth_mode":         AuthMode,
-		"auth_kind":         "oauth",
-		"email":             "agent-aabbccddeeff@invalid.example",
-		"access_token":      "cais_0123456789abcdef0123456789abcdef",
-		"base_url":          "http://codex-agent-identity-sidecar:8787/backend-api/codex",
-		"agent_identity_id": "agent-aabbccddeeff",
-		"account_id":        "account-a",
-		"chatgpt_user_id":   "user-a",
-		"plan_type":         "free",
-		"credential_kind":   "agent_identity",
-		"websockets":        true,
-		"fedramp":           false,
-		"disabled":          false,
-		"prefix":            "agenttest",
+		"type":                provider,
+		"auth_mode":           AuthMode,
+		"auth_kind":           "oauth",
+		"email":               "agent-aabbccddeeff@invalid.example",
+		"access_token":        "upstream.oauth.token",
+		SidecarClientKeyField: "cais_test_0000000000000000000000000000",
+		"base_url":            "http://codex-agent-identity-sidecar:8787/backend-api/codex",
+		"agent_identity_id":   "agent-aabbccddeeff",
+		"account_id":          "account-a",
+		"chatgpt_user_id":     "user-a",
+		"plan_type":           "free",
+		"credential_kind":     "agent_identity",
+		"websockets":          true,
+		"fedramp":             false,
+		"disabled":            false,
+		"prefix":              "agenttest",
 	})
 	return raw
 }
@@ -42,10 +43,10 @@ func TestParseManagedCredential(t *testing.T) {
 	if err != nil || !handled || parsed == nil {
 		t.Fatalf("handled=%v parsed=%#v err=%v", handled, parsed, err)
 	}
-	if _, exists := parsed.Attributes["api_key"]; exists {
-		t.Fatalf("managed credentials must not be classified as Codex API keys: %#v", parsed.Attributes)
+	if parsed.Attributes["api_key"] != "cais_test_0000000000000000000000000000" {
+		t.Fatalf("sidecar runtime key was not mapped to the Codex executor: %#v", parsed.Attributes)
 	}
-	if parsed.Metadata["access_token"] != "cais_0123456789abcdef0123456789abcdef" ||
+	if parsed.Metadata["access_token"] != "upstream.oauth.token" ||
 		parsed.Metadata["auth_kind"] != "oauth" ||
 		parsed.Attributes["base_url"] != "http://codex-agent-identity-sidecar:8787/backend-api/codex" ||
 		parsed.Attributes["auth_mode"] != AuthMode ||
@@ -62,17 +63,38 @@ func TestParseManagedCredential(t *testing.T) {
 	}
 }
 
-func TestParseManagedCredentialRetainsOAuthCompatibleHeaderClassification(t *testing.T) {
+func TestParseManagedCredentialSplitsNativeAndRuntimeTokens(t *testing.T) {
 	t.Parallel()
 	parsed, handled, err := Parse(PluginProvider, "codex-agent-identity-aabbccddeeff.json", validFile())
 	if err != nil || !handled || parsed == nil {
 		t.Fatalf("handled=%v parsed=%#v err=%v", handled, parsed, err)
 	}
-	if token, ok := parsed.Metadata["access_token"].(string); !ok || !strings.HasPrefix(token, "cais_") {
-		t.Fatalf("sidecar client key must remain available through OAuth-compatible metadata: %#v", parsed.Metadata)
+	if token, ok := parsed.Metadata["access_token"].(string); !ok || token != "upstream.oauth.token" {
+		t.Fatalf("CPA-native access token was not preserved for management api-call: %#v", parsed.Metadata)
 	}
-	if strings.TrimSpace(parsed.Attributes["api_key"]) != "" || parsed.Attributes["auth_kind"] != "oauth" || parsed.Attributes["runtime_only"] != "true" {
-		t.Fatalf("sidecar credentials must keep CPA Codex OAuth defaults: %#v", parsed.Attributes)
+	if strings.TrimSpace(parsed.Attributes["api_key"]) != "cais_test_0000000000000000000000000000" || parsed.Attributes["auth_kind"] != "oauth" || parsed.Attributes["runtime_only"] != "true" {
+		t.Fatalf("sidecar runtime routing was not preserved: %#v", parsed.Attributes)
+	}
+}
+
+func TestParseManagedCredentialAcceptsLegacyAccessTokenClientKey(t *testing.T) {
+	t.Parallel()
+	var payload map[string]any
+	if err := json.Unmarshal(validFile(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	delete(payload, SidecarClientKeyField)
+	payload["access_token"] = "cais_test_0000000000000000000000000000"
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, handled, err := Parse(PluginProvider, "legacy-client-key.json", raw)
+	if err != nil || !handled || parsed == nil {
+		t.Fatalf("handled=%v parsed=%#v err=%v", handled, parsed, err)
+	}
+	if parsed.Metadata["access_token"] != "cais_test_0000000000000000000000000000" || parsed.Attributes["api_key"] != "cais_test_0000000000000000000000000000" {
+		t.Fatalf("legacy client key mapping changed: metadata=%#v attributes=%#v", parsed.Metadata, parsed.Attributes)
 	}
 }
 
@@ -186,7 +208,9 @@ func TestParseRejectsUnsafeManagedCredential(t *testing.T) {
 	mutations := []func(map[string]any){
 		func(value map[string]any) { value["base_url"] = "http://127.0.0.1:18788/backend-api/codex" },
 		func(value map[string]any) { value["base_url"] = "https://unlisted.example/backend-api/codex" },
-		func(value map[string]any) { value["access_token"] = "not-a-sidecar-key" },
+		func(value map[string]any) { value[SidecarClientKeyField] = "not-a-sidecar-key" },
+		func(value map[string]any) { value["access_token"] = "" },
+		func(value map[string]any) { value["access_token"] = "token\r\ninjected" },
 		func(value map[string]any) { value["agent_identity_id"] = "agent-../../secret" },
 		func(value map[string]any) { value["websockets"] = "sometimes" },
 	}

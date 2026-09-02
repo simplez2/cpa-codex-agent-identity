@@ -12,7 +12,7 @@
   <p>简体中文 · <a href="README.md">English</a></p>
 </div>
 
-> **版本边界：** 当前源码开发线为 **v0.3.9**，编译基线为 CLIProxyAPI **v7.2.145**。本仓库已发布的 registry 和直接安装资产仍为 **v0.3.8**；公开 CPA Plugin Store 当前仍使用旧版回退展示元数据，在其切换前可使用本仓库的 direct registry。只有在 v0.3.9 完成测试、打包、Release、校验值和 registry 更新后，插件商店才会切换到 v0.3.9。
+> **版本边界：** 当前源码开发线为 **v0.3.10**，编译基线为 CLIProxyAPI **v7.2.145**。本仓库已发布的 registry 和直接安装资产为 **v0.3.9**。v0.3.10 专门修复 Keeper 通过 CPA 原生 `/v0/management/api-call` 查询额度时的 token 替换，同时保持模型请求继续走 CPA 原生 Codex executor 与 sidecar。
 
 这是一个面向 CLIProxyAPI（CPA）的 Codex Agent Identity / Personal Access
 Token 集成项目。首个公开版本由两个部分组成：
@@ -25,9 +25,7 @@ Token 集成项目。首个公开版本由两个部分组成：
 - sidecar：负责官方凭证验证、AES-256-GCM 加密存储、AgentAssertion、PAT
   转发、批量导入、CPA auth 文件同步以及 HTTP/SOCKS 代理热加载。
 
-CPA 只会看到随机生成的 cais_ 客户端密钥，不会保存原始 Agent Identity
-JWT 或 PAT。auth 文件使用 `type: codex-agent-identity` 触发插件解析，解析后
-runtime provider 仍为 `codex`，因此会进入 CPA 原生 Codex executor。现有官方 OAuth 和第三方 API 渠道不由本插件接管。
+每个 sidecar-managed CPA auth 文件会明确保存两个秘密字段：`access_token` 保存真实上游凭证，供 Keeper 等客户端通过 CPA 原生 `$TOKEN$` 替换查询额度；`sidecar_client_key` 保存随机 `cais_` 密钥，只用于 CPA Codex executor 调用 sidecar。插件保留前者到 metadata，并只把后者映射为 executor 的 `api_key`。因此 CPA auth 目录必须像原生 OAuth auth 目录一样按秘密数据保护。现有官方 OAuth 和第三方 API 渠道仍不由本插件接管。
 ## 文档导航
 
 - [运行逻辑与安全边界](RUNTIME_LOGIC.zh-CN.md)
@@ -70,7 +68,7 @@ CPA 的 `/v0/resource/plugins/...` 资源路由不经过 Management key 认证�
 
 公开 `router-for-me/CLIProxyAPI-Plugins-Store` 已包含本插件，但 registry 中的回退展示版本仍是 `0.3.3`。新版 CPA 通常会先查询最新 GitHub Release 再展示和安装；当该元数据查询失败或命中旧缓存时，页面就可能继续显示 `0.3.3`。
 
-本项目的 `registry.json` 是单独的 CPA schema v2 直接资产清单，固定了已发布 `0.3.8` 资产的大小和 SHA-256，不依赖 GitHub Release 元数据查询。可将它作为明确回退源加入 CPA 配置：
+本项目的 `registry.json` 是单独的 CPA schema v2 直接资产清单，固定了已发布 `0.3.9` 资产的大小和 SHA-256，不依赖 GitHub Release 元数据查询。可将它作为明确回退源加入 CPA 配置：
 
 ~~~yaml
 plugins:
@@ -216,7 +214,7 @@ checksums.txt、GitHub Release，以及 GHCR 的多架构 sidecar 镜像。
 
 ## 安全说明
 
-- 原始凭证使用 AES-256-GCM 加密，密钥必须与数据卷分开保存。
+- 原始凭证在 sidecar store 中使用 AES-256-GCM 加密；为兼容 Keeper 原生链路，同一上游凭证也会写入 CPA auth 文件的 `access_token`，CPA auth 目录必须按秘密数据保护。
 - .so 是 CPA 进程内受信任代码，安装前必须校验发布哈希。
 - 插件资源入口不得内置或持久化 token、Management key 或特权 API；只允许通过 source/origin/nonce 校验的 `postMessage` 复用 CPAMC 当前 scoped 登录状态，
   `/v0/resource/plugins/...` 和 iframe URL 都不得携带 secret，真正的身份操作必须继续由 sidecar Bearer 认证。

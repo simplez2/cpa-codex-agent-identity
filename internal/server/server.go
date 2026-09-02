@@ -571,7 +571,7 @@ func (s *Server) handleIdentity(writer http.ResponseWriter, request *http.Reques
 			writeJSON(writer, http.StatusInternalServerError, map[string]any{"error": "failed to update credential metadata"})
 			return
 		}
-		if err = s.channels.UpsertIdentity(request.Context(), cpaCredential(id, previous.ClientKey, credential)); err != nil {
+		if err = s.channels.UpsertIdentity(request.Context(), cpaCredential(id, previous.ClientKey, previous.Token, credential)); err != nil {
 			importErr := cpaSynchronizationImportError(err)
 			writeJSON(writer, importErr.StatusCode, map[string]any{"error": importErr.Message})
 			return

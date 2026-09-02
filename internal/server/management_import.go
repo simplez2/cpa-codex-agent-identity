@@ -55,7 +55,7 @@ func (s *Server) commitInspectedTokenLocked(ctx context.Context, token, accountI
 		return nil, &managementImportError{StatusCode: http.StatusInternalServerError, Code: "store_failed", Message: "failed to store identity"}
 	}
 	if s.channels != nil {
-		if err = s.channels.UpsertIdentity(ctx, cpaCredential(publicIdentity.ID, clientKey, credential)); err != nil {
+		if err = s.channels.UpsertIdentity(ctx, cpaCredential(publicIdentity.ID, clientKey, token, credential)); err != nil {
 			if hadPrevious {
 				_ = s.store.Restore(previous)
 			} else {
@@ -67,20 +67,21 @@ func (s *Server) commitInspectedTokenLocked(ctx context.Context, token, accountI
 	return &credentialImportResult{PublicIdentity: publicIdentity, Credential: credential, ClientKey: clientKey}, nil
 }
 
-func cpaCredential(identityID, clientKey string, credential *identity.CredentialInfo) cpa.Credential {
+func cpaCredential(identityID, clientKey, upstreamToken string, credential *identity.CredentialInfo) cpa.Credential {
 	if credential == nil {
-		return cpa.Credential{IdentityID: identityID, ClientKey: clientKey}
+		return cpa.Credential{IdentityID: identityID, ClientKey: clientKey, UpstreamToken: upstreamToken}
 	}
 	return cpa.Credential{
-		IdentityID: identityID,
-		ClientKey:  clientKey,
-		Kind:       string(credential.Kind),
-		AccountID:  credential.AccountID,
-		UserID:     credential.UserID,
-		Email:      credential.Email,
-		PlanType:   credential.PlanType,
-		ExpiresAt:  credential.ExpiresAt,
-		FedRAMP:    credential.FedRAMP,
+		IdentityID:    identityID,
+		ClientKey:     clientKey,
+		UpstreamToken: upstreamToken,
+		Kind:          string(credential.Kind),
+		AccountID:     credential.AccountID,
+		UserID:        credential.UserID,
+		Email:         credential.Email,
+		PlanType:      credential.PlanType,
+		ExpiresAt:     credential.ExpiresAt,
+		FedRAMP:       credential.FedRAMP,
 	}
 }
 
@@ -89,14 +90,15 @@ func cpaCredentialFromStored(stored *identitystore.Identity) cpa.Credential {
 		return cpa.Credential{}
 	}
 	return cpa.Credential{
-		IdentityID: stored.ID,
-		ClientKey:  stored.ClientKey,
-		Kind:       stored.Kind,
-		AccountID:  stored.AccountID,
-		Email:      stored.Email,
-		PlanType:   stored.PlanType,
-		ExpiresAt:  stored.ExpiresAt,
-		FedRAMP:    stored.FedRAMP,
+		IdentityID:    stored.ID,
+		ClientKey:     stored.ClientKey,
+		UpstreamToken: stored.Token,
+		Kind:          stored.Kind,
+		AccountID:     stored.AccountID,
+		Email:         stored.Email,
+		PlanType:      stored.PlanType,
+		ExpiresAt:     stored.ExpiresAt,
+		FedRAMP:       stored.FedRAMP,
 	}
 }
 
