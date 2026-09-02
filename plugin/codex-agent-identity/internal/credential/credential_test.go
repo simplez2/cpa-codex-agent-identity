@@ -235,6 +235,9 @@ func TestParseRejectsUnsafeManagedCredential(t *testing.T) {
 		func(value map[string]any) { value["base_url"] = "http://127.0.0.1:18788/backend-api/codex" },
 		func(value map[string]any) { value["base_url"] = "https://unlisted.example/backend-api/codex" },
 		func(value map[string]any) { value[SidecarClientKeyField] = "not-a-sidecar-key" },
+		func(value map[string]any) {
+			value[SidecarClientKeyField] = "cais_test_0000000000000000000000000000\r\nX-Test: injected"
+		},
 		func(value map[string]any) { value["access_token"] = "" },
 		func(value map[string]any) { value["access_token"] = "token\r\ninjected" },
 		func(value map[string]any) { value["agent_identity_id"] = "agent-../../secret" },
@@ -255,7 +258,6 @@ func TestParseRejectsUnsafeManagedCredential(t *testing.T) {
 func TestParseAllowsExplicitSidecarHost(t *testing.T) {
 	t.Setenv("CODEX_AGENT_IDENTITY_SIDECAR_HOSTS", "codex-sidecar.internal")
 	for _, endpoint := range []string{
-		"http://codex-sidecar.internal:8787/backend-api/codex",
 		"https://codex-sidecar.internal/backend-api/codex",
 		"https://codex-sidecar.internal:9443/backend-api/codex",
 	} {
@@ -267,6 +269,18 @@ func TestParseAllowsExplicitSidecarHost(t *testing.T) {
 		if err != nil || !handled || parsed == nil || parsed.Attributes["base_url"] != endpoint {
 			t.Fatalf("endpoint=%s handled=%v parsed=%#v err=%v", endpoint, handled, parsed, err)
 		}
+	}
+}
+
+func TestParseRejectsHTTPForExplicitSidecarHost(t *testing.T) {
+	t.Setenv("CODEX_AGENT_IDENTITY_SIDECAR_HOSTS", "codex-sidecar.internal")
+	var payload map[string]any
+	_ = json.Unmarshal(validFile(), &payload)
+	payload["base_url"] = "http://codex-sidecar.internal:8787/backend-api/codex"
+	raw, _ := json.Marshal(payload)
+	parsed, handled, err := Parse(PluginProvider, "managed.json", raw)
+	if !handled || err == nil || parsed != nil || !strings.Contains(err.Error(), "requires HTTPS") {
+		t.Fatalf("handled=%v parsed=%#v err=%v", handled, parsed, err)
 	}
 }
 
@@ -326,12 +340,11 @@ func TestParseKeepsHTTPPortAllowlistNarrow(t *testing.T) {
 	}
 }
 
-func TestParseAllowsExplicitSidecarHTTPPort(t *testing.T) {
-	t.Setenv("CODEX_AGENT_IDENTITY_SIDECAR_HOSTS", "codex-sidecar.internal")
-	t.Setenv("CODEX_AGENT_IDENTITY_SIDECAR_HTTP_PORTS", "18787")
+func TestParseAllowsExplicitLoopbackSidecarHTTPPort(t *testing.T) {
+	t.Setenv("CODEX_AGENT_IDENTITY_SIDECAR_HTTP_PORTS", "18789")
 	var payload map[string]any
 	_ = json.Unmarshal(validFile(), &payload)
-	payload["base_url"] = "http://codex-sidecar.internal:18787/backend-api/codex"
+	payload["base_url"] = "http://127.0.0.1:18789/backend-api/codex"
 	raw, _ := json.Marshal(payload)
 	parsed, handled, err := Parse(PluginProvider, "managed.json", raw)
 	if err != nil || !handled || parsed == nil {
