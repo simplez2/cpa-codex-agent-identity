@@ -19,14 +19,15 @@ const (
 	// RuntimeProvider is the first-class CPA provider that executes the parsed auth.
 	// Keeping these identifiers separate is essential: claiming "codex" would make
 	// CPA route its native Codex OAuth login and refresh through this plugin.
-	PluginProvider            = "codex-agent-identity"
-	RuntimeProvider           = "codex"
-	LegacyPluginProvider      = "codex" // legacy sidecar files emitted before provider separation
-	AuthMode                  = "agent_identity_sidecar"
-	SidecarClientKeyField     = "sidecar_client_key"
-	defaultRefreshInterval    = 24 * time.Hour
-	refreshLead               = 5 * time.Minute
-	managedAuthClassification = "oauth"
+	PluginProvider                      = "codex-agent-identity"
+	RuntimeProvider                     = "codex"
+	LegacyPluginProvider                = "codex" // legacy sidecar files emitted before provider separation
+	AuthMode                            = "agent_identity_sidecar"
+	SidecarClientKeyField               = "sidecar_client_key"
+	SidecarAuthorizationHeaderAttribute = "header:Authorization"
+	defaultRefreshInterval              = 24 * time.Hour
+	refreshLead                         = 5 * time.Minute
+	managedAuthClassification           = "oauth"
 )
 
 // Parsed is the safe routing material extracted from a sidecar-owned CPA auth file.
@@ -128,14 +129,20 @@ func Parse(provider, fileName string, raw []byte) (*Parsed, bool, error) {
 	// classification explicit for CPA versions that inspect metadata first.
 	metadata := cloneMap(payload)
 	metadata["auth_kind"] = managedAuthClassification
+	// Keep CPA's auth classification OAuth/file-backed so the native Codex
+	// executor continues to apply Codex Header Defaults and per-auth identity
+	// remapping. The executor initially reads metadata.access_token, then CPA's
+	// standard custom-header pass replaces only the sidecar-bound Authorization
+	// header with the opaque client key. The sidecar replaces it again with the
+	// real upstream authorization before forwarding to OpenAI.
 	attributes := map[string]string{
-		"api_key":      sidecarClientKey,
-		"base_url":     baseURL,
-		"auth_mode":    AuthMode,
-		"auth_kind":    managedAuthClassification,
-		"runtime_only": "true",
-		"websockets":   strconv.FormatBool(websockets),
-		"fedramp":      strconv.FormatBool(fedramp),
+		SidecarAuthorizationHeaderAttribute: "Bearer " + sidecarClientKey,
+		"base_url":                          baseURL,
+		"auth_mode":                         AuthMode,
+		"auth_kind":                         managedAuthClassification,
+		"runtime_only":                      "true",
+		"websockets":                        strconv.FormatBool(websockets),
+		"fedramp":                           strconv.FormatBool(fedramp),
 	}
 	setOptionalAttribute(attributes, "account_id", accountID)
 	setOptionalAttribute(attributes, "chatgpt_user_id", chatGPTUserID)

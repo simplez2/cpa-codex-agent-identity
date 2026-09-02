@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 )
 
 func validFileFor(provider string) []byte {
@@ -43,8 +45,11 @@ func TestParseManagedCredential(t *testing.T) {
 	if err != nil || !handled || parsed == nil {
 		t.Fatalf("handled=%v parsed=%#v err=%v", handled, parsed, err)
 	}
-	if parsed.Attributes["api_key"] != "cais_test_0000000000000000000000000000" {
+	if parsed.Attributes[SidecarAuthorizationHeaderAttribute] != "Bearer cais_test_0000000000000000000000000000" {
 		t.Fatalf("sidecar runtime key was not mapped to the Codex executor: %#v", parsed.Attributes)
+	}
+	if _, exists := parsed.Attributes["api_key"]; exists {
+		t.Fatalf("managed OAuth auth must not be classified as a Codex API key: %#v", parsed.Attributes)
 	}
 	if parsed.Metadata["access_token"] != "upstream.oauth.token" ||
 		parsed.Metadata["auth_kind"] != "oauth" ||
@@ -63,6 +68,24 @@ func TestParseManagedCredential(t *testing.T) {
 	}
 }
 
+func TestParseManagedCredentialPreservesCPAOAuthClassification(t *testing.T) {
+	t.Parallel()
+	parsed, handled, err := Parse(PluginProvider, "codex-agent-identity-aabbccddeeff.json", validFile())
+	if err != nil || !handled || parsed == nil {
+		t.Fatalf("handled=%v parsed=%#v err=%v", handled, parsed, err)
+	}
+	auth := &cliproxyauth.Auth{
+		Attributes: parsed.Attributes,
+		Metadata:   parsed.Metadata,
+	}
+	if got := auth.AuthKind(); got != cliproxyauth.AuthKindOAuth {
+		t.Fatalf("CPA auth kind = %q, want %q", got, cliproxyauth.AuthKindOAuth)
+	}
+	if _, exists := auth.Attributes[cliproxyauth.AttributeAPIKey]; exists {
+		t.Fatalf("CPA api_key attribute must be absent: %#v", auth.Attributes)
+	}
+}
+
 func TestParseManagedCredentialSplitsNativeAndRuntimeTokens(t *testing.T) {
 	t.Parallel()
 	parsed, handled, err := Parse(PluginProvider, "codex-agent-identity-aabbccddeeff.json", validFile())
@@ -72,8 +95,11 @@ func TestParseManagedCredentialSplitsNativeAndRuntimeTokens(t *testing.T) {
 	if token, ok := parsed.Metadata["access_token"].(string); !ok || token != "upstream.oauth.token" {
 		t.Fatalf("CPA-native access token was not preserved for management api-call: %#v", parsed.Metadata)
 	}
-	if strings.TrimSpace(parsed.Attributes["api_key"]) != "cais_test_0000000000000000000000000000" || parsed.Attributes["auth_kind"] != "oauth" || parsed.Attributes["runtime_only"] != "true" {
+	if strings.TrimSpace(parsed.Attributes[SidecarAuthorizationHeaderAttribute]) != "Bearer cais_test_0000000000000000000000000000" || parsed.Attributes["auth_kind"] != "oauth" || parsed.Attributes["runtime_only"] != "true" {
 		t.Fatalf("sidecar runtime routing was not preserved: %#v", parsed.Attributes)
+	}
+	if _, exists := parsed.Attributes["api_key"]; exists {
+		t.Fatalf("sidecar routing must preserve CPA OAuth/file-backed behavior: %#v", parsed.Attributes)
 	}
 }
 
@@ -93,7 +119,7 @@ func TestParseManagedCredentialAcceptsLegacyAccessTokenClientKey(t *testing.T) {
 	if err != nil || !handled || parsed == nil {
 		t.Fatalf("handled=%v parsed=%#v err=%v", handled, parsed, err)
 	}
-	if parsed.Metadata["access_token"] != "cais_test_0000000000000000000000000000" || parsed.Attributes["api_key"] != "cais_test_0000000000000000000000000000" {
+	if parsed.Metadata["access_token"] != "cais_test_0000000000000000000000000000" || parsed.Attributes[SidecarAuthorizationHeaderAttribute] != "Bearer cais_test_0000000000000000000000000000" {
 		t.Fatalf("legacy client key mapping changed: metadata=%#v attributes=%#v", parsed.Metadata, parsed.Attributes)
 	}
 }
