@@ -107,8 +107,8 @@ func TestProxyConfigSourceBacksOffManagementAuthFailures(t *testing.T) {
 	if _, err = source.current(t.Context()); err == nil {
 		t.Fatal("expected management authentication error")
 	}
-	if _, err = source.current(t.Context()); err != nil {
-		t.Fatalf("backoff check should use cached state, got %v", err)
+	if _, err = source.current(t.Context()); err == nil {
+		t.Fatal("backoff must preserve the routing failure instead of allowing cached direct")
 	}
 	if calls != 1 {
 		t.Fatalf("management endpoint was hammered during auth backoff: calls=%d", calls)

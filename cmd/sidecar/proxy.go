@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/simplez2/cpa-codex-agent-identity/internal/egress"
 	"io"
 	"log"
 	"net/http"
@@ -52,6 +53,7 @@ type proxyConfigSource struct {
 	nextCheck    time.Time
 	failureDelay time.Duration
 	effective    string
+	lastError    error
 }
 
 func newProxyConfigSource(initial, valueEnvironment, fileEnvironment, cpaConfigURL, cpaManagementKey string, cpaClient *http.Client, pollInterval time.Duration) (*proxyConfigSource, error) {
@@ -90,8 +92,9 @@ func (s *proxyConfigSource) current(ctx context.Context) (string, error) {
 	s.mu.Lock()
 	if now.Before(s.nextCheck) {
 		raw := s.effective
+		err := s.lastError
 		s.mu.Unlock()
-		return raw, nil
+		return raw, err
 	}
 	s.mu.Unlock()
 
@@ -101,8 +104,9 @@ func (s *proxyConfigSource) current(ctx context.Context) (string, error) {
 	now = time.Now()
 	if now.Before(s.nextCheck) {
 		raw := s.effective
+		err := s.lastError
 		s.mu.Unlock()
-		return raw, nil
+		return raw, err
 	}
 	s.nextCheck = now.Add(s.pollInterval)
 	effective := s.effective
@@ -149,6 +153,7 @@ func (s *proxyConfigSource) current(ctx context.Context) (string, error) {
 func (s *proxyConfigSource) markSuccess() {
 	s.mu.Lock()
 	s.failureDelay = 0
+	s.lastError = nil
 	s.nextCheck = time.Now().Add(s.pollInterval)
 	s.mu.Unlock()
 }
@@ -166,6 +171,7 @@ func (s *proxyConfigSource) rescheduleFailure(err error) {
 	}
 	s.mu.Lock()
 	delay := base
+	s.lastError = err
 	if s.failureDelay > 0 {
 		delay = s.failureDelay * 2
 		if delay < base {
@@ -222,12 +228,15 @@ func (s *proxyConfigSource) fetchCPAProxy(ctx context.Context) (string, error) {
 // transport's Proxy field is not safe to mutate after first use, so replacing
 // the instance also lets us close idle connections from the previous route.
 type hotReloadTransport struct {
-	source  *proxyConfigSource
-	current atomic.Pointer[http.Transport]
+	source     *proxyConfigSource
+	current    atomic.Pointer[http.Transport]
+	routeReady atomic.Bool
 
 	activeMu  sync.RWMutex
 	activeRaw string
 	refreshMu sync.Mutex
+	routesMu  sync.Mutex
+	routes    map[string]*http.Transport
 	logger    *log.Logger
 
 	logMu              sync.Mutex
@@ -242,12 +251,52 @@ func newHotReloadTransport(initial string, source *proxyConfigSource, logger *lo
 	}
 	result := &hotReloadTransport{source: source, activeRaw: strings.TrimSpace(initial), logger: logger}
 	result.current.Store(transport)
+	result.routeReady.Store(source == nil || source.cpaConfigURL == "")
 	return result, nil
 }
 
 func (t *hotReloadTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	if request == nil {
 		return nil, errors.New("nil HTTP request")
+	}
+	if raw := egress.Proxy(request.Context()); raw != "" {
+		t.routesMu.Lock()
+		transport := t.routes[raw]
+		if transport == nil {
+			var err error
+			transport, err = outboundTransport(raw)
+			if err != nil {
+				t.routesMu.Unlock()
+				return nil, errors.New("invalid credential proxy")
+			}
+			if t.routes == nil {
+				t.routes = make(map[string]*http.Transport)
+			}
+			if len(t.routes) >= 64 {
+				for key, old := range t.routes {
+					old.CloseIdleConnections()
+					delete(t.routes, key)
+				}
+			}
+			t.routes[raw] = transport
+		}
+		t.routesMu.Unlock()
+		return transport.RoundTrip(request)
+	}
+	// Re-check authoritative routing before new default-route requests. The
+	// background poll alone leaves a window after a direct -> proxy edit.
+	if t.source != nil {
+		t.source.mu.Lock()
+		if t.source.lastError == nil {
+			t.source.nextCheck = time.Time{}
+		}
+		t.source.mu.Unlock()
+		if err := t.refresh(request.Context()); err != nil {
+			return nil, errors.New("outbound proxy configuration unavailable")
+		}
+	}
+	if !t.routeReady.Load() {
+		return nil, errors.New("outbound proxy configuration unavailable")
 	}
 	transport := t.current.Load()
 	if transport == nil {
@@ -262,16 +311,20 @@ func (t *hotReloadTransport) refresh(ctx context.Context) error {
 	raw, sourceErr := t.source.current(ctx)
 	if sourceErr != nil {
 		t.logRefreshError(sourceErr)
+		t.routeReady.Store(false)
+		return sourceErr
 	}
 	t.activeMu.RLock()
 	unchanged := raw == t.activeRaw
 	t.activeMu.RUnlock()
 	if unchanged {
+		t.routeReady.Store(true)
 		return sourceErr
 	}
 	next, err := outboundTransport(raw)
 	if err != nil {
 		t.logRefreshError(err)
+		t.routeReady.Store(false)
 		return errors.Join(sourceErr, err)
 	}
 	t.activeMu.Lock()
@@ -281,6 +334,7 @@ func (t *hotReloadTransport) refresh(ctx context.Context) error {
 		return nil
 	}
 	old := t.current.Swap(next)
+	t.routeReady.Store(true)
 	t.activeRaw = raw
 	t.activeMu.Unlock()
 	if old != nil {

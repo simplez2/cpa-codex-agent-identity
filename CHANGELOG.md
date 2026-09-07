@@ -4,6 +4,14 @@ All notable changes to `cpa-codex-agent-identity` are documented here.
 Published registry and release assets are updated only after the tagged release
 workflow has produced and checksummed the artifacts.
 
+## [Unreleased] - 0.3.14
+
+### Fixed
+
+- Honor authenticated quota requests' `proxy_url` and resolve each managed identity's CPA proxy before quota, model, image, credential refresh and startup validation requests. Routing lookup failures stop outbound requests instead of assuming direct access.
+- Keep unavailable global proxy configuration blocked through retry backoff, reject unsupported proxy schemes, and recheck the default route before new outbound requests.
+- Preserve connection pooling for explicit credential proxies without falling back to direct on connection failures.
+
 ## [0.3.13] - 2026-09-02
 
 ### Fixed
