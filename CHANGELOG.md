@@ -4,9 +4,10 @@ All notable changes to `cpa-codex-agent-identity` are documented here.
 Published registry and release assets are updated only after the tagged release
 workflow has produced and checksummed the artifacts.
 
-## [Unreleased]
+## [Unreleased] - 0.3.18
 
-No new version has been assigned. Do not replace existing tags or release assets.
+Consolidated native PAT and WebSocket repair, assigned after runtime acceptance
+and explicit release approval. Do not replace existing tags or release assets.
 
 ### Fixed
 
