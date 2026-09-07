@@ -46,9 +46,10 @@ make verify-published-release
 3. **Create the tag.** Commit the source changes and create exactly one tag
    named `v<VERSION>`. Do not update `registry.json` before this tag's assets
    exist.
-4. **Let the release workflow publish assets.** The workflow re-checks the tag,
+4. **Let the release workflow stage assets as a prerelease.** The workflow re-checks the tag,
    source version, registry state, artifact naming, tests, and checksums before
-   publishing the GitHub Release and GHCR images.
+   publishing the GitHub prerelease and versioned GHCR images. It does not move
+   GitHub Latest or GHCR latest before the exact artifacts pass acceptance.
 5. **Verify downloads.** Download both Linux plugin archives from the release,
    verify `checksums.txt`, record the exact byte sizes and SHA-256 values, and
    confirm each archive contains `codex-agent-identity.so` at its root.
@@ -67,7 +68,12 @@ make verify-published-release
    `## [<VERSION>] - YYYY-MM-DD` section. Then run `jq -e -f
    .github/scripts/validate-registry.jq registry.json` and
    `make verify-published-release` before committing.
-7. **Do not pre-allocate the next release.** Open an unnumbered `Unreleased`
+7. **Promote only after acceptance and deployment.** Validate the exact downloaded
+   plugin and versioned image together on disposable stock CPA, deploy with a
+   rollback backup, and verify production. Once the registry commit is on main,
+   mark that existing prerelease stable/Latest (do not recreate its assets), then
+   run **Promote verified container** with its verified manifest digest.
+8. **Do not pre-allocate the next release.** Open an unnumbered `Unreleased`
    section for follow-up fixes. Advance the version only after the reported
    runtime workflow is reproduced and the candidate passes acceptance.
 
