@@ -77,6 +77,11 @@ make verify-published-release
   prerelease/withdrawn and remove it from `latest` recommendation.
 - Restore the registry and image example to the exact existing rollback assets;
   never publish a development build under a previously released version.
+- Tag builds publish only the versioned image, not `latest`. After registry and
+  runtime acceptance (or an accepted rollback), run **Promote verified container**
+  with the registry version and its verified multi-architecture SHA-256 digest.
+  It rejects prereleases, registry mismatches and changed digests, and moves only
+  `latest` without rebuilding or replacing any historical version tag.
 - Back up current deployment files, preserve current account/Team/proxy/status
   settings, and validate on a disposable stock-CPA instance before cutover.
 - Acceptance must cover file-backed controls, save/restart persistence, complete

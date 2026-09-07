@@ -40,6 +40,8 @@ jobs:
           grep -Eq '^[[:space:]]+BUILDX_METADATA_PROVENANCE:[[:space:]]+"disabled"[[:space:]]*$' "${workflow}"
           grep -Eq '^[[:space:]]+DOCKER_BUILD_RECORD_UPLOAD:[[:space:]]+"false"[[:space:]]*$' "${workflow}"
           grep -Eq '^[[:space:]]+DOCKER_BUILD_SUMMARY:[[:space:]]+"false"[[:space:]]*$' "${workflow}"
+          # An unaccepted tag build must not replace the stable container alias.
+          ! grep -Eq 'ghcr.io/.+:latest' "${workflow}"
 
   management-overlay:
     runs-on: ubuntu-24.04
