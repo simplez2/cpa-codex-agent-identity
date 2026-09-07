@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1210,7 +1211,9 @@ func managedCredentialMatches(raw []byte, credential Credential, expectedRaw []b
 		}
 	}
 	if expectedWebsockets, exists := expected["websockets"]; exists {
-		if actualWebsockets, actualExists := actual["websockets"]; actualExists && !jsonValuesEquivalent("websockets", actualWebsockets, expectedWebsockets) {
+		// A missing field is not a persisted setting: native CPA treats its
+		// absence as disabled, whereas legacy plugin projections defaulted on.
+		if actualWebsockets, actualExists := actual["websockets"]; !actualExists || !jsonValuesEquivalent("websockets", actualWebsockets, expectedWebsockets) {
 			return false
 		}
 	}
@@ -1299,10 +1302,29 @@ func jsonValuesEquivalent(key string, left, right any) bool {
 	if key == "expires_at" {
 		return strings.TrimSpace(jsonStringValue(left)) == strings.TrimSpace(jsonStringValue(right))
 	}
-	if key == "fedramp" || key == "websockets" {
+	if key == "websockets" {
+		leftValue, leftValid := nativeWebsocketsValue(left)
+		rightValue, rightValid := nativeWebsocketsValue(right)
+		return leftValid && rightValid && leftValue == rightValue
+	}
+	if key == "fedramp" {
 		return boolValue(left) == boolValue(right)
 	}
 	return reflect.DeepEqual(left, right) || strings.TrimSpace(jsonStringValue(left)) == strings.TrimSpace(jsonStringValue(right))
+}
+
+// Match CPA's Codex executor: booleans and strconv.ParseBool-compatible strings,
+// not the more permissive legacy disabled/fedramp coercion (numbers, "yes", etc.).
+func nativeWebsocketsValue(value any) (bool, bool) {
+	switch typed := value.(type) {
+	case bool:
+		return typed, true
+	case string:
+		parsed, err := strconv.ParseBool(strings.TrimSpace(typed))
+		return parsed, err == nil
+	default:
+		return false, false
+	}
 }
 
 func (m *Manager) restoreManagedFiles(files map[string][]byte) error {
