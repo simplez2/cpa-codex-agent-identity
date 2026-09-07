@@ -32,6 +32,7 @@ The first public release keeps the mature sidecar data plane instead of rewritin
 - [Security policy](SECURITY.md)
 - [Management Center overlay](management-overlay/README.md)
 - [Release process](RELEASE.md)
+- [Native WebSocket semantics and wire-level acceptance](docs/native-websockets.md)
 
 ## Highlights
 

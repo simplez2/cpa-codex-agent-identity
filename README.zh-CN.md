@@ -34,6 +34,7 @@ Token 集成项目。首个公开版本由两个部分组成：
 - [Security policy](SECURITY.md)
 - [Management Center overlay](management-overlay/README.md)
 - [发布与版本管理](RELEASE.md)
+- [原生 WebSocket 开关与真实传输验收](docs/native-websockets.md)
 
 ## 主要能力
 
@@ -62,7 +63,9 @@ CPA 的 `/v0/resource/plugins/...` 资源路由不经过 Management key 认证�
 
 ### 关于 CPA 原生 OAuth
 
-插件不接管没有 sidecar 标记的 CPA 原生 Codex OAuth 文件，也不接管 CPA 原生 OAuth 登录和刷新。Agent Identity / PAT 文件在磁盘上使用插件分派类型 `type: codex-agent-identity`，但必须同时带有 `auth_mode: agent_identity_sidecar`；插件只识别这组明确标记，并把请求转到 sidecar，再由 CPA 原生 `codex` runtime executor 完成后续路由。这样既获得 Keeper 等 CPA 兼容客户端的原生 Codex 识别，又不会误接管官方 OAuth 账号。
+插件不接管 CPA 原生 OAuth 登录和刷新。未发布主线已将 PAT 明确分离为原生 `type: codex` 文件，由 CPA 直接完成模型、额度、代理及 WebSocket 传输，不经 sidecar 数据面。只有仍需 AgentAssertion 的 JWT 文件使用 `type: codex-agent-identity` 加 `auth_mode: agent_identity_sidecar` 的插件分派路径；不能把这一路径说成与原生文件完全等价。线上当前仍是回档后的 v0.3.15 资产，已有 PAT 已恢复原生文件类型；源码修复和已部署资产须分开看待。
+
+原生 WebSocket 选项只在**客户端也用 WS、且实际选中的凭证开启**时选择上游 WS；普通 HTTP/SSE 请求不会因勾选该项而升级。已完成开/关真实上游传输、连接复用和重启持久化验收，详见[验收与尚未部署的同步保护](docs/native-websockets.md)。
 
 ## 从 CPAMC Plugin Store 安装
 
