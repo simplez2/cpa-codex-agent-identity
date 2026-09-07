@@ -355,6 +355,7 @@ func validateBaseURL(value string) (string, error) {
 
 func allowedSidecarHosts() map[string]struct{} {
 	result := map[string]struct{}{
+		"cpa-codex-agent-identity-sidecar":    {},
 		"codex-agent-identity-sidecar":        {},
 		"codex-agent-identity-sidecar-canary": {},
 		// `sidecar` is the conventional Docker Compose service alias used by
@@ -394,7 +395,7 @@ func allowedSidecarHTTPURL(hostname, port string) bool {
 	// shipped by this repository. User-configured hosts must use HTTPS so an
 	// environment override cannot authorize cleartext bearer-key transport.
 	switch hostname {
-	case "codex-agent-identity-sidecar", "codex-agent-identity-sidecar-canary", "sidecar":
+	case "cpa-codex-agent-identity-sidecar", "codex-agent-identity-sidecar", "codex-agent-identity-sidecar-canary", "sidecar":
 		return port == "8787"
 	default:
 		return false

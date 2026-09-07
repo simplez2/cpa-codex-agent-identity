@@ -19,6 +19,15 @@ func TestManagedCredentialRejectsResidualNativeExpiry(t *testing.T) {
 	if err := json.Unmarshal(expected, &stale); err != nil {
 		t.Fatal(err)
 	}
+	if stale["type"] != pluginProviderID {
+		t.Fatal("stored type must select the plugin, not bypass it")
+	}
+	stale["type"] = runtimeProviderID
+	legacy, _ := json.Marshal(stale)
+	if managedCredentialMatches(legacy, c, expected) {
+		t.Fatal("legacy native dispatch must require migration")
+	}
+	stale["type"] = pluginProviderID
 	stale["expired"] = "2020-01-01T00:00:00Z"
 	stale["proxy_url"] = "socks5://proxy.example:1080"
 	stale["priority"] = 7

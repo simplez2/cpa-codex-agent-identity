@@ -4,7 +4,16 @@ All notable changes to `cpa-codex-agent-identity` are documented here.
 Published registry and release assets are updated only after the tagged release
 workflow has produced and checksummed the artifacts.
 
-## [Unreleased] - 0.3.16
+## [Unreleased] - 0.3.17
+
+### Fixed
+
+- Persist the plugin dispatch type while returning native `codex` runtime auths. CPA selects parsers by file type; the previous native file type bypassed sidecar routing and expiry normalization. Synchronization now verifies the dispatch type and migrates explicitly managed legacy files without touching ordinary OAuth files.
+- Trust the deployed private Compose container alias `cpa-codex-agent-identity-sidecar` on port 8787, without expanding arbitrary plaintext host access.
+
+## [0.3.16] - 2026-09-08
+
+Pre-release only; production acceptance failed and registry publication was withheld.
 
 ### Fixed
 
