@@ -1,0 +1,59 @@
+name: Promote verified container
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Existing accepted release version, without v (must match registry)
+        required: true
+        type: string
+      expected_digest:
+        description: Verified multi-architecture manifest digest (sha256:...)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: promote-verified-container
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate accepted release and immutable digest
+        env:
+          VERSION: ${{ inputs.version }}
+          EXPECTED_DIGEST: ${{ inputs.expected_digest }}
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$EXPECTED_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          test "$(jq -r '.plugins[0].version' registry.json)" = "$VERSION"
+          test "$(gh release view "v$VERSION" --json isPrerelease --jq .isPrerelease)" = false
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Move only the mutable latest alias, without rebuilding
+        env:
+          VERSION: ${{ inputs.version }}
+          EXPECTED_DIGEST: ${{ inputs.expected_digest }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          actual=$(docker buildx imagetools inspect "$image:v$VERSION" --format '{{.Manifest.Digest}}')
+          test "$actual" = "$EXPECTED_DIGEST"
+          docker buildx imagetools create --tag "$image:latest" "$image@$EXPECTED_DIGEST"
+          test "$(docker buildx imagetools inspect "$image:latest" --format '{{.Manifest.Digest}}')" = "$EXPECTED_DIGEST"

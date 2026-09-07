@@ -13,6 +13,7 @@ No new version has been assigned. Do not replace existing tags or release assets
 - Import PATs as native file-backed `type: codex` credentials, with no sidecar base URL or `runtime_only` flag. CPA owns model execution, quota proxy routing, status/field persistence, headers, identity remapping and WebSockets. AgentAssertion credentials still require the sidecar and are not claimed to have full native parity.
 - Preserve the user's explicit WebSocket setting on token synchronization, including `false`.
 - Keep canonical native PATs out of the plugin's sidecar parser and reject stale sidecar fields during synchronization verification.
+- Stop updating the container `latest` alias at tag-build time. A separate registry/version/digest-checked promotion workflow moves it only after acceptance or a verified rollback.
 
 ### Rollback
 
