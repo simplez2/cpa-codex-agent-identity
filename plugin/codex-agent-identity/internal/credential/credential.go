@@ -128,9 +128,11 @@ func Parse(provider, fileName string, raw []byte) (*Parsed, bool, error) {
 	accountID := strings.TrimSpace(stringValue(payload["account_id"]))
 	chatGPTUserID := strings.TrimSpace(stringValue(payload["chatgpt_user_id"]))
 
-	// Keep the complete provider-owned JSON untouched, while making the runtime
-	// classification explicit for CPA versions that inspect metadata first.
+	// Keep StorageJSON untouched. The sidecar owns authorization renewal; a
+	// residual native OAuth expiry alias must not gate its runtime credential.
+	// The canonical expires_at field and explicit disabled flag remain intact.
 	metadata := cloneMap(payload)
+	delete(metadata, "expired")
 	metadata["auth_kind"] = managedAuthClassification
 	// Keep CPA's auth classification OAuth/file-backed so the native Codex
 	// executor continues to apply Codex Header Defaults and per-auth identity

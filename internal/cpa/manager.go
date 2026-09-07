@@ -1165,6 +1165,15 @@ func managedCredentialMatches(raw []byte, credential Credential, expectedRaw []b
 	if err != nil {
 		return false
 	}
+	// Native OAuth tooling can leave an expired alias in a sidecar-owned file.
+	// CPA may reject the credential before the sidecar can renew authorization.
+	// Do not accept such a stale snapshot as a successful canonical upload.
+	if actualExpiry, exists := actual["expired"]; exists {
+		expectedExpiry, wanted := expected["expired"]
+		if !wanted || !jsonValuesEquivalent("expires_at", actualExpiry, expectedExpiry) {
+			return false
+		}
+	}
 	if !strings.EqualFold(jsonStringValue(actual["auth_mode"]), authMode) ||
 		strings.TrimSpace(jsonStringValue(actual["agent_identity_id"])) != credential.IdentityID {
 		return false
