@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"github.com/simplez2/cpa-codex-agent-identity/internal/egress"
 	"log"
 	"net"
 	"net/http"
@@ -162,14 +163,15 @@ func run(logger *log.Logger) error {
 		}
 	}
 	handler, err := server.New(server.Config{
-		UpstreamOrigin:      upstreamOrigin,
-		PublicCPABaseURL:    publicCPABaseURL,
-		ManagementKey:       managementKey,
-		MaxReplayBodyBytes:  maxReplayBytes,
-		OutboundTransport:   transport,
-		Logger:              logger,
-		CPAChannels:         channelManager,
-		EmbedAllowedOrigins: strings.Split(os.Getenv("EMBED_ALLOWED_ORIGINS"), ","),
+		UpstreamOrigin:       upstreamOrigin,
+		PublicCPABaseURL:     publicCPABaseURL,
+		ManagementKey:        managementKey,
+		MaxReplayBodyBytes:   maxReplayBytes,
+		OutboundTransport:    transport,
+		Logger:               logger,
+		CPAChannels:          channelManager,
+		EnforceIdentityProxy: channelManager != nil,
+		EmbedAllowedOrigins:  strings.Split(os.Getenv("EMBED_ALLOWED_ORIGINS"), ","),
 	}, credentialStore, manager)
 	if err != nil {
 		return err
@@ -236,6 +238,13 @@ func reconcileStoredCredentials(logger *log.Logger, store *identitystore.Store, 
 		if identity.IsPersonalAccessToken(stored.Token) && stored.AccountScoped {
 			accountID = stored.AccountID
 		}
+		proxy, routeErr := channels.ProxyForIdentity(ctx, stored.ID)
+		if routeErr != nil {
+			cancel()
+			logger.Printf("CPA credential reconciliation skipped: routing unavailable")
+			continue
+		}
+		ctx = egress.WithProxy(ctx, proxy)
 		credential, err := manager.InspectForAccount(ctx, stored.Token, accountID)
 		if err == nil {
 			_ = store.UpdateMetadata(stored.ID, identitystore.CredentialMetadata{
@@ -282,6 +291,11 @@ func outboundTransport(rawProxyURL string) (*http.Transport, error) {
 	proxyURL, err := url.Parse(rawProxyURL)
 	if err != nil || proxyURL.Scheme == "" || proxyURL.Host == "" {
 		return nil, errors.New("OUTBOUND_PROXY is invalid")
+	}
+	switch proxyURL.Scheme {
+	case "http", "https", "socks5", "socks5h":
+	default:
+		return nil, errors.New("OUTBOUND_PROXY scheme is unsupported")
 	}
 	transport.Proxy = http.ProxyURL(proxyURL)
 	return transport, nil

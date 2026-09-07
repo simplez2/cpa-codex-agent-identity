@@ -51,15 +51,16 @@ type requestIdentityStateKey struct{}
 
 // Config configures the HTTP sidecar boundary.
 type Config struct {
-	UpstreamOrigin      *url.URL
-	PublicCPABaseURL    string
-	ManagementKey       string
-	MaxReplayBodyBytes  int64
-	OutboundTransport   http.RoundTripper
-	Logger              *log.Logger
-	CPAChannels         *cpa.Manager
-	BackupDir           string
-	EmbedAllowedOrigins []string
+	UpstreamOrigin       *url.URL
+	PublicCPABaseURL     string
+	ManagementKey        string
+	MaxReplayBodyBytes   int64
+	OutboundTransport    http.RoundTripper
+	Logger               *log.Logger
+	CPAChannels          *cpa.Manager
+	EnforceIdentityProxy bool
+	BackupDir            string
+	EmbedAllowedOrigins  []string
 }
 
 // Server exposes a management import API and an Agent Identity reverse proxy.
@@ -550,6 +551,12 @@ func (s *Server) handleIdentity(writer http.ResponseWriter, request *http.Reques
 			return
 		}
 	case "refresh":
+		var routeErr error
+		request, routeErr = s.withIdentityProxy(request, previous.ID, "")
+		if routeErr != nil {
+			writeJSON(writer, http.StatusBadGateway, map[string]any{"error": "credential proxy resolution failed"})
+			return
+		}
 		accountID := ""
 		if identity.IsPersonalAccessToken(previous.Token) && previous.AccountScoped {
 			accountID = previous.AccountID
@@ -611,6 +618,7 @@ func (s *Server) authorizeManagement(request *http.Request) bool {
 }
 
 type cpaAPICallRequest struct {
+	ProxyURL        string            `json:"proxy_url"`
 	AuthIndexSnake  *string           `json:"auth_index"`
 	AuthIndexCamel  *string           `json:"authIndex"`
 	AuthIndexPascal *string           `json:"AuthIndex"`
@@ -679,6 +687,11 @@ func (s *Server) handleCPAAPICall(writer http.ResponseWriter, request *http.Requ
 		return
 	}
 
+	request, err = s.withIdentityProxy(request, storedIdentity.ID, call.ProxyURL)
+	if err != nil {
+		writeJSON(writer, http.StatusBadGateway, map[string]any{"error": "credential proxy resolution failed"})
+		return
+	}
 	authorization, err := s.manager.AuthorizeForAccount(request.Context(), storedIdentity.ID, storedIdentity.Token, "quota", selectedAccountID(storedIdentity))
 	if err != nil {
 		writeJSON(writer, http.StatusBadGateway, map[string]any{"error": "codex credential authorization unavailable"})
@@ -834,6 +847,12 @@ func (s *Server) handleProxy(writer http.ResponseWriter, request *http.Request) 
 		return
 	}
 	sessionID := logicalSessionID(request.Header)
+	var err error
+	request, err = s.withIdentityProxy(request, storedIdentity.ID, "")
+	if err != nil {
+		writeJSON(writer, http.StatusBadGateway, map[string]any{"error": "credential proxy resolution failed"})
+		return
+	}
 	authorization, err := s.manager.AuthorizeForAccount(request.Context(), storedIdentity.ID, storedIdentity.Token, sessionID, selectedAccountID(storedIdentity))
 	if err != nil {
 		writeJSON(writer, http.StatusBadGateway, map[string]any{"error": "codex credential authorization unavailable"})
