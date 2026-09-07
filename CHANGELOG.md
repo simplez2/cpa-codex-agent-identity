@@ -4,6 +4,12 @@ All notable changes to `cpa-codex-agent-identity` are documented here.
 Published registry and release assets are updated only after the tagged release
 workflow has produced and checksummed the artifacts.
 
+## [Unreleased] - 0.3.15
+
+### Fixed
+
+- Preserve quota `proxy_url` through the custom CPA-compatible JSON decoder. Regression covers snake-case, camel-case and hyphenated field names plus invalid types; v0.3.14 protected stored per-identity routing but still dropped explicit request proxy overrides.
+
 ## [0.3.14] - 2026-09-08
 
 ### Fixed

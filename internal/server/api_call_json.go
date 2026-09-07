@@ -56,6 +56,12 @@ func (call *cpaAPICallRequest) UnmarshalJSON(data []byte) error {
 			return fmt.Errorf("url: %w", err)
 		}
 	}
+	if raw, ok := lookupAPICallJSONField(fields, "proxy_url"); ok {
+		call.ProxyURL, err = decodeAPICallString(raw)
+		if err != nil {
+			return fmt.Errorf("proxy_url: %w", err)
+		}
+	}
 	if raw, ok := lookupAPICallJSONField(fields, "header"); ok && !isJSONNull(raw) {
 		if err = json.Unmarshal(raw, &call.Header); err != nil {
 			return errors.New("header must be an object")
