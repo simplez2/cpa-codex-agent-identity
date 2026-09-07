@@ -12,7 +12,7 @@
   <p>English · <a href="README.zh-CN.md">简体中文</a></p>
 </div>
 
-> **Rollback / release hold:** v0.3.17 is withdrawn after runtime-only controls and proxy-hop regressions. The registry and image example are restored to the existing v0.3.15 artifacts; v0.3.16 remains withheld. Unreleased fixes import PATs through CPA's native file-backed `type: codex` path instead of projecting them through the sidecar. Agent Identity JWTs still require dynamic assertions; full native parity for that path is not claimed. The source version is frozen, no new tag is allocated, and historical assets will not be replaced. See [the incident and acceptance record](docs/incidents/2026-09-08-native-pat-rollback.md).
+> **v0.3.18 native PAT repair:** PATs now use CPA's file-backed `type: codex` path, retaining native settings through synchronization. Exact release assets passed isolated stock-CPA acceptance and production deployment checks; registry/image examples point to v0.3.18. v0.3.17 remains withdrawn and v0.3.16 withheld; historical assets are unchanged. Agent Identity JWTs still require dynamic assertions, and full native parity for that path is not claimed. See [release evidence](docs/releases/v0.3.18.md) and the [earlier incident](docs/incidents/2026-09-08-native-pat-rollback.md).
 
 CPA-native management and routing support for Codex Agent Identity JWTs and opaque Personal Access Tokens whose current prefix is at-.
 
@@ -21,7 +21,7 @@ The project combines two deliberately separate components:
 - A CPA dynamic plugin named codex-agent-identity.so. It claims the management/login identifier `codex-agent-identity`, recognizes `type: codex-agent-identity` files marked `auth_mode: agent_identity_sidecar`, and maps the resulting records to CPA's native `codex` runtime executor. Ordinary `type: codex` OAuth files without that marker and CPA's native login/refresh flow remain untouched. It exposes one authenticated Management API route and one safe CPAMC plugin-page resource.
 - A hardened sidecar. It validates credentials, encrypts original tokens, creates AgentAssertion headers, forwards Codex traffic, synchronizes native CPA auth files, and follows CPA proxy changes without a restart.
 
-The first public release keeps the mature sidecar data plane instead of rewriting streaming, image, quota, WebSocket, and AgentAssertion behavior inside the plugin. The CPA control plane is native today, while a future pure-plugin executor can be added without changing the encrypted data format.
+PAT model/quota requests use CPA's native executor directly; the sidecar manages encrypted storage, validation and synchronization, not PAT data-plane transport. Agent Identity JWTs still use the sidecar for AgentAssertion. File-backed PAT settings and runtime-only JWT projections are distinct; they must not be described as having identical native controls.
 
 ## Documentation map
 

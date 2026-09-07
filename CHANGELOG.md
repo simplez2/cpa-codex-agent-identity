@@ -4,7 +4,7 @@ All notable changes to `cpa-codex-agent-identity` are documented here.
 Published registry and release assets are updated only after the tagged release
 workflow has produced and checksummed the artifacts.
 
-## [Unreleased] - 0.3.18
+## [0.3.18] - 2026-09-08
 
 Consolidated native PAT and WebSocket repair, assigned after runtime acceptance
 and explicit release approval. Do not replace existing tags or release assets.
@@ -16,6 +16,12 @@ and explicit release approval. Do not replace existing tags or release assets.
 - Verify that WebSocket settings actually persist using CPA-native boolean semantics; reject missing, null or invalid fields instead of falsely reporting synchronization success. Cover token refresh, manager recreation and idempotent synchronization without resetting native controls.
 - Keep canonical native PATs out of the plugin's sidecar parser and reject stale sidecar fields during synchronization verification.
 - Stop updating the container `latest` alias at tag-build time. A separate registry/version/digest-checked promotion workflow moves it only after acceptance or a verified rollback.
+- Stage GitHub releases as prereleases, without moving Latest before exact-asset runtime acceptance and deployment.
+
+### Verified
+
+- Exact v0.3.18 plugin/image on stock CPA v7.2.152: fresh native PAT import; off/on, disabled/proxy/note persistence through refresh and restart; authenticated proxy quota/WS, upstream connection reuse, and fail-closed model/quota/cold validation with a refused proxy.
+- Production preserves all five PAT account/Team/proxy/status settings, leaves CPA/Keeper images unchanged, and passes complete default HTTP/WS streams plus native quota. See [release evidence](docs/releases/v0.3.18.md).
 
 ### Rollback
 

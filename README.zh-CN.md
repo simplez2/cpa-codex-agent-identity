@@ -12,7 +12,7 @@
   <p>简体中文 · <a href="README.md">English</a></p>
 </div>
 
-> **回档与暂停发布：** v0.3.17 因运行时凭据隐藏原生控件、代理错误作用于内网 sidecar 连接而撤回推荐；registry 和镜像示例恢复为已有 v0.3.15 资产，v0.3.16 继续暂缓。尚未发布的修复将 PAT 明确导入为 CPA 原生、可持久化的 `type: codex` 文件，不再经 sidecar 执行模型请求。Agent Identity JWT 仍需要动态签名，不能宣称该路径已经完全原生。源码版本暂时冻结，不分配新版本号，也不覆盖旧 tag 或资产。详见[事故与验收记录](docs/incidents/2026-09-08-native-pat-rollback.md)。
+> **v0.3.18 原生 PAT 修复：** PAT 已明确导入为 CPA 原生、可持久化的 `type: codex` 文件，刷新同步保留用户的原生设置。正式插件和镜像通过隔离验收及生产部署复验，registry/镜像示例已更新至 v0.3.18。v0.3.17 继续撤回、v0.3.16 继续暂缓，旧 tag 和资产没有覆盖。Agent Identity JWT 仍需要动态签名，不能宣称该路径已经完全原生。详见[本次发布验收](docs/releases/v0.3.18.md)与[此前事故记录](docs/incidents/2026-09-08-native-pat-rollback.md)。
 
 这是一个面向 CLIProxyAPI（CPA）的 Codex Agent Identity / Personal Access
 Token 集成项目。首个公开版本由两个部分组成：
@@ -22,10 +22,11 @@ Token 集成项目。首个公开版本由两个部分组成：
   然后把解析结果交给 CPA 原生 `codex` runtime executor。没有该标记的原生
   Codex OAuth 文件，以及 CPA 原生登录、刷新和执行路径，仍由 CPA 自己处理。插件
   同时暴露受 Management key 保护的管理路由，以及供 CPAMC `plugin-pages` 使用的安全资源入口。
-- sidecar：负责官方凭证验证、AES-256-GCM 加密存储、AgentAssertion、PAT
-  转发、批量导入、CPA auth 文件同步以及 HTTP/SOCKS 代理热加载。
+- sidecar：负责官方凭证验证、AES-256-GCM 加密存储、AgentAssertion、批量
+  导入、CPA auth 文件同步以及 HTTP/SOCKS 代理热加载；原生 PAT 的模型与
+  额度请求由 CPA 直接处理，不经 sidecar 数据面。
 
-每个 sidecar-managed CPA auth 文件会明确保存两个秘密字段：`access_token` 保存真实上游凭证，供 Keeper 等客户端通过 CPA 原生 `$TOKEN$` 替换查询额度；`sidecar_client_key` 保存随机 `cais_` 密钥，只用于 CPA Codex executor 调用 sidecar。插件保留前者到 metadata，并通过 CPA 标准静态 `header:Authorization` attribute 只把后者发送给 sidecar；它不会设置 `api_key`。这样 Agent Identity / PAT 会继续被 CPA 视为 OAuth/file-backed Codex auth，原生 User-Agent 默认值、WebSocket Beta Features 和按认证身份重映射均由 CPA 自己执行。CPA auth 目录必须像原生 OAuth auth 目录一样按秘密数据保护。现有官方 OAuth 和第三方 API 渠道仍不由本插件接管。
+托管 auth 文件的 `access_token` 保存真实上游凭证，供 CPA 原生执行和 Keeper 等客户端通过 `$TOKEN$` 替换查询额度。`sidecar_client_key` 是兼容管理/桥接路径保留的随机 `cais_` 密钥，原生 PAT 模型执行不使用它。只有 Agent Identity JWT 的 sidecar 路径通过静态 `header:Authorization` 传递桥接密钥；该运行时投影不能当作可持久化的原生 OAuth 文件。原生 PAT 的 User-Agent、WebSocket Beta Features 和身份重映射由 CPA 自己处理。auth 目录必须按秘密数据保护，现有官方 OAuth 和第三方 API 渠道不由本插件接管。
 ## 文档导航
 
 - [运行逻辑与安全边界](RUNTIME_LOGIC.zh-CN.md)
@@ -63,15 +64,15 @@ CPA 的 `/v0/resource/plugins/...` 资源路由不经过 Management key 认证�
 
 ### 关于 CPA 原生 OAuth
 
-插件不接管 CPA 原生 OAuth 登录和刷新。未发布主线已将 PAT 明确分离为原生 `type: codex` 文件，由 CPA 直接完成模型、额度、代理及 WebSocket 传输，不经 sidecar 数据面。只有仍需 AgentAssertion 的 JWT 文件使用 `type: codex-agent-identity` 加 `auth_mode: agent_identity_sidecar` 的插件分派路径；不能把这一路径说成与原生文件完全等价。线上当前仍是回档后的 v0.3.15 资产，已有 PAT 已恢复原生文件类型；源码修复和已部署资产须分开看待。
+插件不接管 CPA 原生 OAuth 登录和刷新。v0.3.18 将 PAT 明确分离为原生 `type: codex` 文件，由 CPA 直接完成模型、额度、代理及 WebSocket 传输，不经 sidecar 数据面。只有仍需 AgentAssertion 的 JWT 文件使用 `type: codex-agent-identity` 加 `auth_mode: agent_identity_sidecar` 的插件分派路径；不能把这一路径说成与原生文件完全等价。
 
-原生 WebSocket 选项只在**客户端也用 WS、且实际选中的凭证开启**时选择上游 WS；普通 HTTP/SSE 请求不会因勾选该项而升级。已完成开/关真实上游传输、连接复用和重启持久化验收，详见[验收与尚未部署的同步保护](docs/native-websockets.md)。
+原生 WebSocket 选项只在**客户端也用 WS、且实际选中的凭证开启**时选择上游 WS；普通 HTTP/SSE 请求不会因勾选该项而升级。已完成开/关真实上游传输、连接复用和重启持久化验收，详见[传输语义与同步保护](docs/native-websockets.md)。
 
 ## 从 CPAMC Plugin Store 安装
 
 公开 `router-for-me/CLIProxyAPI-Plugins-Store` 已包含本插件，但 registry 中的回退展示版本仍是 `0.3.3`。新版 CPA 通常会先查询最新 GitHub Release 再展示和安装；当该元数据查询失败或命中旧缓存时，页面就可能继续显示 `0.3.3`。
 
-本项目的 `registry.json` 是单独的 CPA schema v2 直接资产清单，目前回档固定已有 `0.3.15` 资产的大小和 SHA-256，不依赖 GitHub Release 元数据查询。可将它作为明确回退源加入 CPA 配置：
+本项目的 `registry.json` 是单独的 CPA schema v2 直接资产清单，固定已校验 `0.3.18` 资产的大小和 SHA-256，不依赖 GitHub Release 元数据查询。可将它作为明确安装源加入 CPA 配置：
 
 ~~~yaml
 plugins:
