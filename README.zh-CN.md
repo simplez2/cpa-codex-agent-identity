@@ -12,7 +12,7 @@
   <p>简体中文 · <a href="README.md">English</a></p>
 </div>
 
-> **版本边界：** 当前源码、直接安装 registry、GitHub Release 资产和 sidecar 镜像均为 **v0.3.13**，编译基线为 CLIProxyAPI **v7.2.146**。v0.3.13 将 sidecar 管理的凭证保存为 CPA 原生 `codex` provider，同时保留明确的 `auth_mode: agent_identity_sidecar` 标记，因此 CPA 原生 Header Defaults、WebSocket 特性、按认证身份重映射以及 Keeper 的 Codex 额度路径都会继续生效。
+> **版本边界：** 当前源码、直接安装 registry、GitHub Release 资产和 sidecar 镜像均为 **v0.3.14**，编译基线为 CLIProxyAPI **v7.2.146**。v0.3.14 将 sidecar 管理的凭证保存为 CPA 原生 `codex` provider，同时保留明确的 `auth_mode: agent_identity_sidecar` 标记，因此 CPA 原生 Header Defaults、WebSocket 特性、按认证身份重映射以及 Keeper 的 Codex 额度路径都会继续生效。
 
 这是一个面向 CLIProxyAPI（CPA）的 Codex Agent Identity / Personal Access
 Token 集成项目。首个公开版本由两个部分组成：
@@ -48,7 +48,7 @@ Token 集成项目。首个公开版本由两个部分组成：
 - 支持启用、停用、刷新同步和删除凭证。
 - 显示总数、启用、停用、Agent Identity、PAT、未同步统计。
 - 兼容 HTTP、SSE、WebSocket、图片、额度和 reset-credit 路径。
-- CPA 的全局 HTTP、HTTPS、SOCKS 代理变更可对新请求热生效。
+- 额度查询优先采用已认证请求的 `proxy_url`，其次使用该身份的 CPA 代理，最后使用全局路由；代理不可达或路由读取失败时返回错误，不回退直连。已建立的流连接继续使用原来的出口。
 
 ## 版本边界
 
@@ -68,7 +68,7 @@ CPA 的 `/v0/resource/plugins/...` 资源路由不经过 Management key 认证�
 
 公开 `router-for-me/CLIProxyAPI-Plugins-Store` 已包含本插件，但 registry 中的回退展示版本仍是 `0.3.3`。新版 CPA 通常会先查询最新 GitHub Release 再展示和安装；当该元数据查询失败或命中旧缓存时，页面就可能继续显示 `0.3.3`。
 
-本项目的 `registry.json` 是单独的 CPA schema v2 直接资产清单，固定了已发布 `0.3.13` 资产的大小和 SHA-256，不依赖 GitHub Release 元数据查询。可将它作为明确回退源加入 CPA 配置：
+本项目的 `registry.json` 是单独的 CPA schema v2 直接资产清单，固定了已发布 `0.3.14` 资产的大小和 SHA-256，不依赖 GitHub Release 元数据查询。可将它作为明确回退源加入 CPA 配置：
 
 ~~~yaml
 plugins:
