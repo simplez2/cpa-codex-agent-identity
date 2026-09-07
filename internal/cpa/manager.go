@@ -595,13 +595,12 @@ func (m *Manager) credentialJSONWithDisabled(credential Credential, disabled boo
 	if email == "" {
 		email = credential.IdentityID + "@agent-identity.local"
 	}
-	// Persist the auth file under CPA's native Codex provider namespace. The
-	// sidecar marker below keeps the plugin-owned parser scoped to these files,
-	// while the native provider name lets CPA-compatible consumers (including
-	// Keeper) select their normal Codex quota implementation instead of treating
-	// the credential as an unknown provider.
+	// CPA dispatches parsers by the stored type, not auth_mode. Persist the
+	// plugin identifier so its parser can register the native Codex runtime
+	// provider with the sidecar base URL and protected Authorization header.
+	// Runtime consumers (including Keeper) still see provider=codex.
 	payload := map[string]any{
-		"type":                runtimeProviderID,
+		"type":                pluginProviderID,
 		"auth_mode":           authMode,
 		"auth_kind":           "oauth",
 		"email":               email,
@@ -1174,7 +1173,8 @@ func managedCredentialMatches(raw []byte, credential Credential, expectedRaw []b
 			return false
 		}
 	}
-	if !strings.EqualFold(jsonStringValue(actual["auth_mode"]), authMode) ||
+	if jsonStringValue(actual["type"]) != pluginProviderID ||
+		!strings.EqualFold(jsonStringValue(actual["auth_mode"]), authMode) ||
 		strings.TrimSpace(jsonStringValue(actual["agent_identity_id"])) != credential.IdentityID {
 		return false
 	}

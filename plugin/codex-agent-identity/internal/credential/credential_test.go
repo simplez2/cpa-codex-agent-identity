@@ -71,6 +71,26 @@ func TestManagedRuntimeIgnoresResidualNativeExpiry(t *testing.T) {
 	}
 }
 
+func TestDeployedContainerAliasRemainsPrivate(t *testing.T) {
+	for _, tc := range []struct {
+		url string
+		ok  bool
+	}{
+		{"http://cpa-codex-agent-identity-sidecar:8787/backend-api/codex", true},
+		{"http://cpa-codex-agent-identity-sidecar:8888/backend-api/codex", false},
+		{"http://cpa-codex-agent-identity-sidecar.evil.example:8787/backend-api/codex", false},
+	} {
+		var p map[string]any
+		_ = json.Unmarshal(validFile(), &p)
+		p["base_url"] = tc.url
+		raw, _ := json.Marshal(p)
+		parsed, handled, err := Parse(PluginProvider, "managed.json", raw)
+		if (err == nil && handled && parsed != nil) != tc.ok {
+			t.Fatalf("unexpected routing validation for %s", tc.url)
+		}
+	}
+}
+
 func TestParseManagedCredential(t *testing.T) {
 	t.Parallel()
 	parsed, handled, err := Parse(PluginProvider, "codex-agent-identity-aabbccddeeff.json", validFile())
