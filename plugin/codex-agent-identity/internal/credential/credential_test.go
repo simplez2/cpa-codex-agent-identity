@@ -39,6 +39,38 @@ func legacyValidFile() []byte {
 	return validFileFor(LegacyPluginProvider)
 }
 
+func TestManagedRuntimeIgnoresResidualNativeExpiry(t *testing.T) {
+	for _, disabled := range []bool{false, true} {
+		var payload map[string]any
+		if err := json.Unmarshal(legacyValidFile(), &payload); err != nil {
+			t.Fatal(err)
+		}
+		payload["expired"] = "2020-01-01T00:00:00Z"
+		payload["expires_at"] = "2030-01-01T00:00:00Z"
+		payload["disabled"] = disabled
+		payload["proxy_url"] = "socks5://proxy.example:1080"
+		raw, _ := json.Marshal(payload)
+		parsed, handled, err := Parse(RuntimeProvider, "managed.json", raw)
+		if err != nil || !handled || parsed == nil {
+			t.Fatalf("parse failed: %v", err)
+		}
+		if _, exists := parsed.Metadata["expired"]; exists {
+			t.Fatal("native expiry alias leaked into managed runtime metadata")
+		}
+		if parsed.Metadata["expires_at"] != payload["expires_at"] || parsed.Disabled != disabled || parsed.ProxyURL != payload["proxy_url"] {
+			t.Fatal("canonical expiry, disabled state and proxy must be preserved")
+		}
+		if string(parsed.StorageJSON) != string(raw) {
+			t.Fatal("parser must not rewrite stored credentials")
+		}
+		delete(payload, "auth_mode")
+		native, _ := json.Marshal(payload)
+		if _, handled, err := Parse(RuntimeProvider, "native.json", native); err != nil || handled {
+			t.Fatal("ordinary OAuth must remain owned by the native parser")
+		}
+	}
+}
+
 func TestParseManagedCredential(t *testing.T) {
 	t.Parallel()
 	parsed, handled, err := Parse(PluginProvider, "codex-agent-identity-aabbccddeeff.json", validFile())

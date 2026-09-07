@@ -66,7 +66,7 @@ const (
 )
 
 var (
-	pluginVersion = "0.3.15"
+	pluginVersion = "0.3.16"
 	stateMu       sync.RWMutex
 	state         = runtimeState{
 		sidecarURL:    defaultSidecarURL,

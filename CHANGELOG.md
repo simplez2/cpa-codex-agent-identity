@@ -4,6 +4,13 @@ All notable changes to `cpa-codex-agent-identity` are documented here.
 Published registry and release assets are updated only after the tagged release
 workflow has produced and checksummed the artifacts.
 
+## [Unreleased] - 0.3.16
+
+### Fixed
+
+- Exclude residual native OAuth `expired` metadata from explicitly sidecar-managed runtime credentials. Preserve canonical `expires_at`, original storage JSON, disabled state, proxy routing, and ordinary native OAuth handling.
+- Reject stale `expired` aliases during CPA synchronization verification instead of reporting a canonical upload as successful. Regression tests cover cleanup and preservation of user routing settings.
+
 ## [0.3.15] - 2026-09-08
 
 ### Fixed
