@@ -29,6 +29,8 @@ jobs:
         run: jq -e -f .github/scripts/validate-registry.jq registry.json
       - name: Verify version lifecycle state
         run: go run ./.github/scripts/verify-release-state.go -root .
+      - name: Test release hold guard
+        run: go test .github/scripts/verify-release-state.go .github/scripts/verify-release-state_test.go
       - name: Enforce private release metadata
         shell: bash
         run: |

@@ -4,7 +4,24 @@ All notable changes to `cpa-codex-agent-identity` are documented here.
 Published registry and release assets are updated only after the tagged release
 workflow has produced and checksummed the artifacts.
 
+## [Unreleased]
+
+No new version has been assigned. Do not replace existing tags or release assets.
+
+### Fixed
+
+- Import PATs as native file-backed `type: codex` credentials, with no sidecar base URL or `runtime_only` flag. CPA owns model execution, quota proxy routing, status/field persistence, headers, identity remapping and WebSockets. AgentAssertion credentials still require the sidecar and are not claimed to have full native parity.
+- Preserve the user's explicit WebSocket setting on token synchronization, including `false`.
+- Keep canonical native PATs out of the plugin's sidecar parser and reject stale sidecar fields during synchronization verification.
+
+### Rollback
+
+- Withdraw v0.3.17 from the recommended registry and restore the existing v0.3.15 assets/image. The native runtime regression hid editing controls and caused account proxies to be used for the private CPA-to-sidecar hop.
+- Same-host isolated acceptance on stock CPA v7.2.152 verified file-backed controls, disabled/enabled persistence across restarts, saved proxy changes, failed model/quota requests with a refused proxy, native quota HTTP 200 and a complete PAT-backed luna stream. This does not make unreachable customer proxies usable or validate every AgentAssertion workflow.
+
 ## [0.3.17] - 2026-09-08
+
+Withdrawn after production regression; retained only as immutable historical assets.
 
 ### Fixed
 

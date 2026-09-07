@@ -3,6 +3,15 @@
 The project extends an otherwise unmodified CLIProxyAPI (CPA) deployment. The
 integration is split into three independently replaceable parts:
 
+**Unreleased correction:** PATs use CPA's native `type: codex` file parser and
+executor directly. They do not set a sidecar `base_url` or `runtime_only` flag.
+Their real Bearer token and account proxy are therefore used consistently by
+native model execution and native management quota calls; status and field
+patches persist through CPA's ordinary file store. Import/refresh remains owned
+by this project. The sidecar-projection description below applies to Agent
+Identity JWTs, not to the corrected native PAT path. Proxy-hop and file-persistence
+parity for AgentAssertion credentials remains an explicit open limitation.
+
 1. **CPA plugin control plane**: registers an AuthProvider under the private
    `codex-agent-identity` provider key and one authenticated Management API route.
    It recognizes only sidecar-owned auth files marked `auth_mode=agent_identity_sidecar`,
@@ -36,9 +45,10 @@ it. Tests exercise it only through a local httptest upstream.
 
 The plugin targets CPA dynamic plugin ABI v1 and is compiled with Go 1.26.6 or
 later against the current verified source baseline, CLIProxyAPI v7.2.146.
-The current source, published registry, directly installable assets, and sidecar
-image are v0.3.17 and are built against CLIProxyAPI v7.2.146. The published
-v0.3.17 GitHub Release archives are checksummed and pinned by size. The CPA image remains an
+The source baseline is frozen at v0.3.17 while unnumbered fixes are validated.
+The published registry and sidecar image example have been rolled back to existing
+v0.3.15 assets. v0.3.17 is withdrawn, not overwritten; no new release is promoted.
+The build SDK baseline remains CLIProxyAPI v7.2.146. The CPA image remains an
 environment variable and is never rebuilt or forked here.
 A CPA upgrade should follow this sequence:
 

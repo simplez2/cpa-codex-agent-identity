@@ -12,7 +12,7 @@
   <p>English · <a href="README.zh-CN.md">简体中文</a></p>
 </div>
 
-> **Release boundary:** v0.3.17 is published and verified; the registry pins its checksummed assets. v0.3.16 is a withheld prerelease. Managed files use `type: codex-agent-identity` to dispatch the plugin, which returns native `Provider: codex`. A native file type bypasses plugin routing on CPA v7.2.152. The SDK baseline remains v7.2.146.
+> **Rollback / release hold:** v0.3.17 is withdrawn after runtime-only controls and proxy-hop regressions. The registry and image example are restored to the existing v0.3.15 artifacts; v0.3.16 remains withheld. Unreleased fixes import PATs through CPA's native file-backed `type: codex` path instead of projecting them through the sidecar. Agent Identity JWTs still require dynamic assertions; full native parity for that path is not claimed. The source version is frozen, no new tag is allocated, and historical assets will not be replaced. See [the incident and acceptance record](docs/incidents/2026-09-08-native-pat-rollback.md).
 
 CPA-native management and routing support for Codex Agent Identity JWTs and opaque Personal Access Tokens whose current prefix is at-.
 
@@ -106,7 +106,7 @@ Treat the management password, encryption key, CPA auth files, upstream credenti
 ## Requirements
 
 - A CPA build with dynamic plugin ABI v1, AuthProvider, Management API routes, and host auth-file management support.
-- CLIProxyAPI v7.2.146 is the verified SDK baseline for the v0.3.17 release. The plugin uses
+- CLIProxyAPI v7.2.146 remains the build SDK baseline. The plugin uses
   dynamic plugin ABI v1; always canary-test it against the exact CPA image you
   plan to deploy.
 - Linux amd64 or Linux arm64 for the released .so files.
@@ -171,7 +171,7 @@ resolve the latest GitHub Release before showing or installing it, but when that
 metadata lookup is unavailable or cached they can still display `0.3.3`. The
 checked-in `registry.json` in this repository is a separate CPA schema v2 direct
 source with pinned, checksummed artifacts; it tracks the latest verified **published**
-published direct version (`0.3.17`). Adding the pinned source to the host-mounted CPA configuration avoids
+rollback direct version (`0.3.15`). Adding the pinned source to the host-mounted CPA configuration avoids
 GitHub release-metadata lookup and stale public-store fallback versions:
 
 ~~~yaml
@@ -464,7 +464,7 @@ checksums.txt
 plugin's fallback metadata version; CPA may resolve the latest GitHub Release
 separately, which is why the displayed version can depend on network/cache state.
 This repository `registry.json` is the explicit pinned-artifact fallback and is kept
-at the latest verified published release (`0.3.17`). Future registry updates must follow the
+at the rollback release (`0.3.15`). Future registry updates must follow the
 post-release publication sequence described in [Release process](RELEASE.md).
 
 ## Optional Management Center overlay

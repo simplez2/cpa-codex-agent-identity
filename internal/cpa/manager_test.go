@@ -458,8 +458,13 @@ func TestCredentialJSONExposesPersonalAccessTokenOnlyToCPANativeAuthFile(t *test
 	if json.Unmarshal(raw, &payload) != nil {
 		t.Fatalf("invalid credential JSON: %s", raw)
 	}
-	if payload["type"] != pluginProviderID || payload["credential_kind"] != "personal_access_token" || payload["note"] != "Codex Access Token via sidecar" || payload["access_token"] != "at-team-personal-access-token" || payload[sidecarClientKeyField] != "cais_opaque_0000000000000000000000000000" || payload["account_id"] != "account-team" {
+	if payload["type"] != runtimeProviderID || payload["credential_kind"] != "personal_access_token" || payload["note"] != "Codex Access Token (native CPA)" || payload["access_token"] != "at-team-personal-access-token" || payload[sidecarClientKeyField] != "cais_opaque_0000000000000000000000000000" || payload["account_id"] != "account-team" {
 		t.Fatalf("unexpected credential payload: %#v", payload)
+	}
+	for _, field := range []string{"runtime_only", "base_url", "api_key", "expired", "refresh_token"} {
+		if _, exists := payload[field]; exists {
+			t.Fatalf("native PAT must not contain %s", field)
+		}
 	}
 }
 
