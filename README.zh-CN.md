@@ -12,7 +12,7 @@
   <p>简体中文 · <a href="README.md">English</a></p>
 </div>
 
-> **版本边界：** v0.3.17 已发布并验收，registry 固定该版本的已校验资产，v0.3.16 为未上线预发布。文件使用 `type: codex-agent-identity` 触发插件，插件返回原生 `Provider: codex`。CPA v7.2.152 按文件类型分派解析器，不能只靠 auth_mode 触发插件。SDK 基线仍为 v7.2.146。
+> **回档与暂停发布：** v0.3.17 因运行时凭据隐藏原生控件、代理错误作用于内网 sidecar 连接而撤回推荐；registry 和镜像示例恢复为已有 v0.3.15 资产，v0.3.16 继续暂缓。尚未发布的修复将 PAT 明确导入为 CPA 原生、可持久化的 `type: codex` 文件，不再经 sidecar 执行模型请求。Agent Identity JWT 仍需要动态签名，不能宣称该路径已经完全原生。源码版本暂时冻结，不分配新版本号，也不覆盖旧 tag 或资产。详见[事故与验收记录](docs/incidents/2026-09-08-native-pat-rollback.md)。
 
 这是一个面向 CLIProxyAPI（CPA）的 Codex Agent Identity / Personal Access
 Token 集成项目。首个公开版本由两个部分组成：
@@ -68,7 +68,7 @@ CPA 的 `/v0/resource/plugins/...` 资源路由不经过 Management key 认证�
 
 公开 `router-for-me/CLIProxyAPI-Plugins-Store` 已包含本插件，但 registry 中的回退展示版本仍是 `0.3.3`。新版 CPA 通常会先查询最新 GitHub Release 再展示和安装；当该元数据查询失败或命中旧缓存时，页面就可能继续显示 `0.3.3`。
 
-本项目的 `registry.json` 是单独的 CPA schema v2 直接资产清单，固定了已发布 `0.3.17` 资产的大小和 SHA-256，不依赖 GitHub Release 元数据查询。可将它作为明确回退源加入 CPA 配置：
+本项目的 `registry.json` 是单独的 CPA schema v2 直接资产清单，目前回档固定已有 `0.3.15` 资产的大小和 SHA-256，不依赖 GitHub Release 元数据查询。可将它作为明确回退源加入 CPA 配置：
 
 ~~~yaml
 plugins:

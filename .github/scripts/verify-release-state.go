@@ -132,6 +132,10 @@ func verify(root, tag string, requireRegistryMatch bool) error {
 		if !releasedHeading.MatchString(changelog) {
 			return fmt.Errorf("CHANGELOG.md has no dated release section for published version %s", sourceText)
 		}
+	} else if tag == "" && regexp.MustCompile(`(?m)^## \[Unreleased\]\r?$`).MatchString(changelog) {
+		// During a withdrawal/rollback keep the released source baseline frozen.
+		// Fixes can remain unnumbered until runtime acceptance passes. A tag build
+		// still requires an explicitly assigned development version below.
 	} else if !strings.Contains(changelog, unreleasedHeading) {
 		return fmt.Errorf("CHANGELOG.md has no Unreleased section for development version %s", sourceText)
 	}

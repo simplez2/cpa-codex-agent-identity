@@ -63,6 +63,14 @@ func Parse(provider, fileName string, raw []byte) (*Parsed, bool, error) {
 	if !isManagedProvider(provider) || !isManagedPayloadType(payloadType) || !strings.EqualFold(stringValue(payload["auth_mode"]), AuthMode) {
 		return nil, false, nil
 	}
+	// Canonical PAT files belong to CPA's native file parser, including when a
+	// future host offers them to every plugin. Never turn them back into a
+	// runtime-only sidecar projection. AgentAssertion files still use the bridge.
+	if payloadType == RuntimeProvider &&
+		strings.EqualFold(strings.TrimSpace(stringValue(payload["credential_kind"])), "personal_access_token") &&
+		strings.HasPrefix(strings.TrimSpace(stringValue(payload["access_token"])), "at-") {
+		return nil, false, nil
+	}
 
 	identityID := strings.TrimSpace(stringValue(payload["agent_identity_id"]))
 	if !validIdentityID(identityID) {

@@ -595,10 +595,10 @@ func (m *Manager) credentialJSONWithDisabled(credential Credential, disabled boo
 	if email == "" {
 		email = credential.IdentityID + "@agent-identity.local"
 	}
-	// CPA dispatches parsers by the stored type, not auth_mode. Persist the
-	// plugin identifier so its parser can register the native Codex runtime
-	// provider with the sidecar base URL and protected Authorization header.
-	// Runtime consumers (including Keeper) still see provider=codex.
+	// AgentAssertion credentials need the sidecar data plane. PATs do not:
+	// CPA already accepts their Bearer token through its native Codex executor.
+	// A PAT must be file-backed, otherwise native status/field patches are not
+	// persisted and its account proxy is incorrectly used for the private hop.
 	payload := map[string]any{
 		"type":                pluginProviderID,
 		"auth_mode":           authMode,
@@ -617,7 +617,10 @@ func (m *Manager) credentialJSONWithDisabled(credential Credential, disabled boo
 		payload["credential_kind"] = credential.Kind
 	}
 	if credential.Kind == "personal_access_token" {
-		payload["note"] = "Codex Access Token via sidecar"
+		payload["type"] = runtimeProviderID
+		payload["note"] = "Codex Access Token (native CPA)"
+		delete(payload, "base_url")
+		delete(payload, "runtime_only")
 	}
 	if credential.AccountID != "" {
 		payload["account_id"] = credential.AccountID
@@ -1104,6 +1107,7 @@ func snapshotsForCredential(files map[string]managedAuthFile, credential Credent
 var managedCPAFieldKeys = map[string]struct{}{
 	"priority":              {},
 	"weight":                {},
+	"websockets":            {},
 	"proxy_url":             {},
 	"proxy-url":             {},
 	"headers":               {},
@@ -1145,9 +1149,9 @@ func mergeManagedAuthFields(nextRaw, priorRaw []byte) ([]byte, error) {
 			}
 			continue
 		}
-		if _, exists := next[key]; !exists {
-			next[key] = value
-		}
+		// These fields belong to the CPA user, not to token synchronization.
+		// In particular, websockets=false must beat the import default of true.
+		next[key] = value
 	}
 	return json.MarshalIndent(next, "", "  ")
 }
@@ -1173,7 +1177,7 @@ func managedCredentialMatches(raw []byte, credential Credential, expectedRaw []b
 			return false
 		}
 	}
-	if jsonStringValue(actual["type"]) != pluginProviderID ||
+	if jsonStringValue(actual["type"]) != jsonStringValue(expected["type"]) ||
 		!strings.EqualFold(jsonStringValue(actual["auth_mode"]), authMode) ||
 		strings.TrimSpace(jsonStringValue(actual["agent_identity_id"])) != credential.IdentityID {
 		return false
@@ -1187,8 +1191,15 @@ func managedCredentialMatches(raw []byte, credential Credential, expectedRaw []b
 	if !sameNormalizedString(actual, expected, "base_url", true) || !sameBoolean(actual, expected, "disabled") {
 		return false
 	}
-	if runtimeOnly, exists := actual["runtime_only"]; exists && !boolValue(runtimeOnly) {
-		return false
+	if credential.Kind == "personal_access_token" {
+		// Do not accept a stale sidecar projection as a canonical native PAT.
+		if boolValue(actual["runtime_only"]) || strings.TrimSpace(jsonStringValue(actual["base_url"])) != "" {
+			return false
+		}
+	} else {
+		if runtimeOnly, exists := actual["runtime_only"]; exists && !boolValue(runtimeOnly) {
+			return false
+		}
 	}
 	for _, key := range []string{"email", "account_id", "chatgpt_user_id", "plan_type", "credential_kind", "expires_at", "fedramp"} {
 		if expectedValue, exists := expected[key]; exists {

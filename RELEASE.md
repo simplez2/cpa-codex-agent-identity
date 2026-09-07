@@ -11,6 +11,10 @@ archive that has not been built and verified.
 - `CHANGELOG.md` must contain `## [Unreleased] - <VERSION>` while a version is
   under development. Once `registry.json` catches up to `VERSION`, it must contain
   a dated `## [<VERSION>] - YYYY-MM-DD` release section instead.
+- During a release hold, an unnumbered `## [Unreleased]` section is allowed for
+  ordinary CI while `VERSION` stays at its historical source baseline. This is
+  not permission to re-release that tag: tag verification still requires an
+  explicitly numbered development section when the registry lags the source.
 - `registry.json` describes the latest **published** plugin version. It may lag
   `VERSION`, but it must never be ahead of it.
 - `.env.example` pins the latest published sidecar image and therefore normally
@@ -31,9 +35,10 @@ make verify-published-release
 
 ## Normal release sequence
 
-1. **Start the development line.** Update `VERSION`, the matching
-   `pluginVersion`, and the `Unreleased` section in `CHANGELOG.md`. Keep
-   `registry.json` and `SIDECAR_IMAGE` at the latest published version.
+1. **Fix and reproduce first.** Keep changes unnumbered during investigation.
+   After native runtime acceptance passes, assign `VERSION`, the matching
+   `pluginVersion`, and a numbered `Unreleased` section. Keep `registry.json`
+   and `SIDECAR_IMAGE` at the accepted published or rollback version.
 2. **Validate locally.** Run `make verify-release-state`, then `make test`,
    `make race`, `make vet`, and the portable Linux plugin builds for amd64 and
    arm64. Portable builds require Docker and use the manylinux2014 GLIBC 2.17
@@ -62,9 +67,21 @@ make verify-published-release
    `## [<VERSION>] - YYYY-MM-DD` section. Then run `jq -e -f
    .github/scripts/validate-registry.jq registry.json` and
    `make verify-published-release` before committing.
-7. **Begin the next development line.** For example, after publishing `0.3.10`,
-   bump `VERSION` and the `Unreleased` heading to `0.3.11`, while leaving
-   `registry.json` and `.env.example` at `0.3.10` until the next release.
+7. **Do not pre-allocate the next release.** Open an unnumbered `Unreleased`
+   section for follow-up fixes. Advance the version only after the reported
+   runtime workflow is reproduced and the candidate passes acceptance.
+
+## Withdrawals and rollback
+
+- Preserve existing tags, checksums and assets. Mark a failed release as a
+  prerelease/withdrawn and remove it from `latest` recommendation.
+- Restore the registry and image example to the exact existing rollback assets;
+  never publish a development build under a previously released version.
+- Back up current deployment files, preserve current account/Team/proxy/status
+  settings, and validate on a disposable stock-CPA instance before cutover.
+- Acceptance must cover file-backed controls, save/restart persistence, complete
+  model streams, native quota calls, a usable proxy and a broken proxy. A sidecar
+  health response or `Provider: codex` alone is not native compatibility evidence.
 
 ## Invariants enforced by CI
 
