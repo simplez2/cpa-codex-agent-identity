@@ -115,7 +115,7 @@ jobs:
         with:
           path: dist/release-assets
           merge-multiple: true
-      - name: Publish GitHub release
+      - name: Stage GitHub release for runtime acceptance
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -126,6 +126,8 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --verify-tag \
             --title "${GITHUB_REF_NAME}" \
+            --prerelease \
+            --latest=false \
             --generate-notes
 
   container:
