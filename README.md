@@ -12,13 +12,13 @@
   <p>English · <a href="README.zh-CN.md">简体中文</a></p>
 </div>
 
-> **Release boundary:** the current source, direct-install registry, GitHub Release assets, and sidecar image are **v0.3.15**, built against CLIProxyAPI **v7.2.146**. v0.3.15 stores sidecar-managed credentials under CPA's native `codex` provider namespace while retaining the explicit `auth_mode: agent_identity_sidecar` marker, so CPA-native Header Defaults, WebSocket features, identity remapping, and Keeper's Codex quota path remain active.
+> **Release boundary:** v0.3.17 is under validation; the registry remains v0.3.15. v0.3.16 is a withheld prerelease. Managed files use `type: codex-agent-identity` to dispatch the plugin, which returns native `Provider: codex`. A native file type bypasses plugin routing on CPA v7.2.152. The SDK baseline remains v7.2.146.
 
 CPA-native management and routing support for Codex Agent Identity JWTs and opaque Personal Access Tokens whose current prefix is at-.
 
 The project combines two deliberately separate components:
 
-- A CPA dynamic plugin named codex-agent-identity.so. It claims the management/login identifier `codex-agent-identity`, recognizes only `type: codex` files marked `auth_mode: agent_identity_sidecar`, and maps the resulting records to CPA's native `codex` runtime executor. Ordinary `type: codex` OAuth files without that marker and CPA's native login/refresh flow remain untouched. It exposes one authenticated Management API route and one safe CPAMC plugin-page resource.
+- A CPA dynamic plugin named codex-agent-identity.so. It claims the management/login identifier `codex-agent-identity`, recognizes `type: codex-agent-identity` files marked `auth_mode: agent_identity_sidecar`, and maps the resulting records to CPA's native `codex` runtime executor. Ordinary `type: codex` OAuth files without that marker and CPA's native login/refresh flow remain untouched. It exposes one authenticated Management API route and one safe CPAMC plugin-page resource.
 - A hardened sidecar. It validates credentials, encrypts original tokens, creates AgentAssertion headers, forwards Codex traffic, synchronizes native CPA auth files, and follows CPA proxy changes without a restart.
 
 The first public release keeps the mature sidecar data plane instead of rewriting streaming, image, quota, WebSocket, and AgentAssertion behavior inside the plugin. The CPA control plane is native today, while a future pure-plugin executor can be added without changing the encrypted data format.
