@@ -12,7 +12,8 @@ workflow has produced and checksummed the artifacts.
   PAT/JWT compatibility matrix, support channels and a public roadmap.
 - Add structured, secret-safe issue forms, a PR checklist, contribution guidance,
   managed labels and curated release-note categories.
-- Validate community metadata/local documentation links in CI and group weekly
+- Validate community metadata/local documentation links and recommended-version
+  consistency in CI, remove stale rollback/runtime guidance, and group weekly
   dependency version updates without enabling automatic merges or ignoring security updates.
 - Clarify that exact-artifact acceptance precedes registry publication and that
   merged fixes, published releases and deployments are separate states.

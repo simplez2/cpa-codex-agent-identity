@@ -18,6 +18,13 @@ class CommunityChecks(unittest.TestCase):
     def test_repository(self):
         self.assertEqual(community.check(), [])
 
+    def test_recommended_version_drift_and_missing_marker_fail(self):
+        pattern = community.RECOMMENDATION_PATTERNS["README.md"]
+        self.assertEqual(community.recommended_version_errors("Recommended: [v0.3.18]", pattern, "0.3.18"), [])
+        self.assertTrue(community.recommended_version_errors("Recommended: [v0.3.15]", pattern, "0.3.18"))
+        self.assertTrue(community.recommended_version_errors("No recommendation", pattern, "0.3.18"))
+        self.assertTrue(community.recommended_version_errors("Recommended: [v0.3.18] Recommended: [v0.3.18]", pattern, "0.3.18"))
+
     def test_duplicate_and_invalid_labels(self):
         label = {"name": "bug", "color": "bad-color", "description": "Example"}
         errors = community.validate_labels([label, label])

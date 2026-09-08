@@ -9,7 +9,8 @@ Release baseline: CLIProxyAPI v7.2.146；v0.3.17 的 registry、Release 资产�
 flowchart LR
     U[Codex client] --> CPA[Stock CLIProxyAPI]
     P[CPA dynamic plugin] --> CPA
-    CPA -->|Bearer cais_random| D[Sidecar data plane]
+    CPA -->|PAT native execution and credential proxy| O[Fixed Codex upstream]
+    CPA -->|JWT projection: Bearer cais_random| D[Sidecar data plane]
     D --> O[Fixed Codex upstream]
     B[Browser] --> M[Sidecar management plane]
     M --> S[(Encrypted identity store)]
@@ -37,7 +38,7 @@ flowchart LR
 - 根据 cais_ key 找到一个加密 identity；
 - 解密只在内存中进行；
 - Agent Identity JWT 生成 AgentAssertion；
-- PAT 使用原 token 作为 Bearer；
+- PAT 的验证与兼容管理请求可使用原 token 作为 Bearer；原生 PAT 模型请求不经过此数据面；
 - 代理 HTTP、SSE、WebSocket、图片与配额请求到固定上游。
 
 ## 2. 凭据导入生命周期
@@ -84,7 +85,12 @@ ALLOW_PLAINTEXT_STORE=true 只用于本地迁移/测试，生产必须关闭。�
 
 ## 4. CPA auth 文件同步
 
-每个已导入 identity 在 CPA 中对应一个原生 Codex auth 文件，核心字段包括：
+同步后的文件需要区分类型。PAT 使用 CPA 原生 `type: codex`，没有 sidecar
+`base_url`、`runtime_only` 或覆盖模型 Authorization 的静态桥接 header；
+启停、代理、WS、备注与优先级通过 CPA 原生字段持久化。
+
+只有需要 AgentAssertion 的 JWT 采用下列插件投影结构；不能把它当作与
+原生文件完全等价的管理对象。以下是结构示例，不包含真实凭证：
 
 ~~~json
 {
@@ -103,7 +109,7 @@ The plugin parser only claims `type=codex-agent-identity` files carrying `auth_m
 
 ### 同邮箱多个 Team workspace
 
-只用 email 和 plan type 会让同一登录邮箱的多个 Team workspace 文件名冲突。当前 PR 在存在 account_id 时计算 SHA-256，并取前 8 个十六进制字符作为不直接暴露完整 account ID 的稳定短摘要：
+只用 email 和 plan type 会让同一登录邮箱的多个 Team workspace 文件名冲突。当前实现会在存在 account_id 时计算 SHA-256，并取前 8 个十六进制字符作为不直接暴露完整 account ID 的稳定短摘要：
 
 ~~~text
 codex-<workspace-hash>-<sanitized-email>-<plan>-agent-identity.json
@@ -127,12 +133,16 @@ codex-<workspace-hash>-<sanitized-email>-<plan>-agent-identity.json
 ## 6. PAT 请求路径
 
 1. 导入时通过 PAT whoami/验证接口确认凭据；
-2. CPA auth 文件同时保存 PAT 于 `access_token` 和独立的 `sidecar_client_key`；模型请求只使用后者调用 sidecar；
-3. sidecar 解密 PAT 并以 Authorization: Bearer 转发；
-4. 保留需要的 ChatGPT-Account-ID 等安全路由元数据；
-5. PAT 401 直接返回，不进入无效的 Agent Identity task 重建流程。
+2. 同步为原生 `type: codex` 文件，`access_token` 保存上游 PAT；独立的 `sidecar_client_key` 仅为兼容路径保留，不用于原生 PAT 模型调用；
+3. CPA 原生 Codex executor 使用真实 Bearer、所选 Team 和当前凭证代理直接调用上游；
+4. CPA 自己处理原生 Header Defaults、身份重映射、HTTP/WS 传输与运行时错误策略；
+5. PAT 不进入 Agent Identity task 注册/重建流程；sidecar 负责导入、验证和同步，而非模型转发。
 
-Keeper 等客户端调用 stock CPA `/v0/management/api-call` 时，CPA 从 metadata `access_token` 替换 `$TOKEN$`，因此 PAT 额度请求使用真实 Bearer token；Codex executor 先按 OAuth 语义读取该 metadata token，再由 CPA 标准静态 `header:Authorization` attribute 把仅发往 sidecar 的 Authorization 覆盖为 `Bearer cais_...`。由于 attributes 中不存在 `api_key`，CPA 原生 Codex Header Defaults、WebSocket `x-codex-beta-features` 和 `identity-confuse` 路径不会被 API-key 分类短路。原版 OAuth auth 文件不属于 sidecar-managed identity，不会被插件误接管。
+Keeper 等客户端调用 stock CPA `/v0/management/api-call` 时，CPA 从 metadata
+`access_token` 替换 `$TOKEN$`，PAT 额度查询遵循当前凭证代理。原生 PAT 模型
+调用不会再用静态 Authorization 把请求改向 sidecar。原版 OAuth 文件不属于
+sidecar-managed identity，不会被插件接管。WS 需要客户端和所选凭证共同允许；
+详见[传输语义](docs/native-websockets.md)与[当前兼容边界](docs/compatibility.md)。
 
 ## 7. Management 与浏览器边界
 

@@ -3,7 +3,7 @@
 The project extends an otherwise unmodified CLIProxyAPI (CPA) deployment. The
 integration is split into three independently replaceable parts:
 
-**Unreleased correction:** PATs use CPA's native `type: codex` file parser and
+**Current native PAT path:** PATs use CPA's native `type: codex` file parser and
 executor directly. They do not set a sidecar `base_url` or `runtime_only` flag.
 Their real Bearer token and account proxy are therefore used consistently by
 native model execution and native management quota calls; status and field
@@ -27,14 +27,14 @@ parity for AgentAssertion credentials remains an explicit open limitation.
    credentials encrypted, and transactionally adds, disables, refreshes, or
    removes native Codex auth files through CPA's management API.
 3. **Sidecar data plane**: maps a cais_ key to one encrypted credential,
-   creates AgentAssertion for Agent Identity JWTs or uses a verified opaque
-   Personal Access Token, and forwards the request to fixed OpenAI origins.
+   creates AgentAssertion for Agent Identity JWTs and forwards requests to fixed
+   OpenAI origins. PAT authorization remains available to compatibility management
+   routes, but canonical PAT model execution does not pass through this data plane.
 
-The first public release deliberately keeps the mature data plane in the
-sidecar. Rewriting AgentAssertion, PAT validation, images, quota/reset-credit,
-SSE, WebSocket, and proxy hot reload inside an in-process plugin would add risk
-without improving CPA management integration. A future Executor capability can
-replace the data plane without changing the encrypted store format.
+The sidecar retains the dynamic assertion and compatibility implementation rather
+than embedding it into CPA. Native PATs and JWT projections are deliberately
+separate. See the [current capability matrix](docs/compatibility.md); do not infer
+full JWT parity from the accepted PAT workflow.
 
 The quota compatibility module accepts only the exact supported ChatGPT paths
 and methods. The reset-credit consume route is preserved for CPA compatibility,
@@ -45,9 +45,10 @@ it. Tests exercise it only through a local httptest upstream.
 
 The plugin targets CPA dynamic plugin ABI v1 and is compiled with Go 1.26.6 or
 later against the current verified source baseline, CLIProxyAPI v7.2.146.
-The source baseline is frozen at v0.3.17 while unnumbered fixes are validated.
-The published registry and sidecar image example have been rolled back to existing
-v0.3.15 assets. v0.3.17 is withdrawn, not overwritten; no new release is promoted.
+Source and published version state are tracked by `VERSION`, `registry.json` and
+[the release process](RELEASE.md), not a second hard-coded operational version.
+See [the version map](docs/compatibility.md#version-map) for the accepted pair and
+historical withdrawals. Merged work does not automatically change that recommendation.
 The build SDK baseline remains CLIProxyAPI v7.2.146. The CPA image remains an
 environment variable and is never rebuilt or forked here.
 A CPA upgrade should follow this sequence:
@@ -102,7 +103,8 @@ CPAMC plugin page -> CPA /v0/resource/plugins/codex-agent-identity/open
                               |
                               +-> same wrapper; no secret in resource response
 
-client -> CPA stock executor -> sidecar data plane -> fixed OpenAI origins
+PAT client -> CPA native Codex executor -> credential proxy -> OpenAI origins
+JWT client -> CPA stock executor -> sidecar data plane -> fixed OpenAI origins
                                      |
                                      +-> encrypted owner-only identity store
 ~~~

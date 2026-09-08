@@ -124,6 +124,8 @@ make verify-published-release
 - Registry SHA-256 values must be lowercase 64-character digests and sizes must
   be positive.
 - The registry and sidecar image may not be ahead of the source line.
+- Community checks keep the README, roadmap and compatibility/release guide's
+  recommended version aligned with the published registry, not an unreleased source.
 - Published metadata is not silently replaced by a development build.
 - Linux plugin artifacts must remain compatible with GLIBC 2.17 and export the
   complete CPA dynamic-plugin ABI entrypoint set.
