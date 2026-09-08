@@ -11,6 +11,13 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
+RECOMMENDATION_PATTERNS = {
+    "README.md": r"Recommended: \[v([0-9]+\.[0-9]+\.[0-9]+)\]",
+    "README.zh-CN.md": r"推荐版本：\[v([0-9]+\.[0-9]+\.[0-9]+)\]",
+    "ROADMAP.md": r"current recommended release is \*\*v([0-9]+\.[0-9]+\.[0-9]+)\*\*",
+    "RELEASE.md": r"Currently \*\*v([0-9]+\.[0-9]+\.[0-9]+)\*\* is recommended",
+    "docs/compatibility.md": r"Recommended plugin and sidecar \| v([0-9]+\.[0-9]+\.[0-9]+) \|",
+}
 
 
 def validate_labels(labels):
@@ -79,11 +86,23 @@ def broken_local_links(root, document):
     return errors
 
 
+def recommended_version_errors(text, pattern, expected):
+    versions = re.findall(pattern, text)
+    if versions != [expected]:
+        return [f"recommended version must occur once and match registry {expected}; found {versions}"]
+    return []
+
+
 def check(root=ROOT):
     errors = []
     labels = json.loads((root / ".github/labels.json").read_text(encoding="utf-8"))
     errors.extend(validate_labels(labels))
     names = {label["name"] for label in labels}
+    registry = json.loads((root / "registry.json").read_text(encoding="utf-8"))
+    recommended = registry["plugins"][0]["version"]
+    for name, pattern in RECOMMENDATION_PATTERNS.items():
+        text = (root / name).read_text(encoding="utf-8")
+        errors.extend(f"{name}: {error}" for error in recommended_version_errors(text, pattern, recommended))
     forms = root / ".github/ISSUE_TEMPLATE"
     for path in sorted(forms.glob("*.yml")):
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -127,4 +146,4 @@ if __name__ == "__main__":
         print(f"community: {failure}", file=sys.stderr)
     if failures:
         sys.exit(1)
-    print("community: labels, forms, release categories, dependency policy and local links are valid")
+    print("community: labels, forms, release categories, dependency policy, recommended versions and local links are valid")
