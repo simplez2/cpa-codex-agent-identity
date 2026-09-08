@@ -20,3 +20,5 @@ coverage.html
 /.gocache/
 /management-overlay/out/
 *.log
+__pycache__/
+*.py[cod]

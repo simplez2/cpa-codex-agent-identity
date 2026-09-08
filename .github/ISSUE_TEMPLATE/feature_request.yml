@@ -1,0 +1,39 @@
+name: Feature request / 功能建议
+description: Describe a user problem and a verifiable improvement, not just a new switch.
+title: "[Feature]: "
+labels: [enhancement, "status:needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        English / 简体中文均可。Please check the roadmap and compatibility boundaries.
+        Do not include credentials or private account/server data. Suggestions do
+        not authorize spending reset credits, changing proxies or deploying.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Before submitting / 提交前确认
+      options:
+        - label: I checked existing requests and removed all secrets and private identifiers.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem / 使用中遇到的问题
+      description: What task is hard today? Which credential kind or installation path is affected?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior / 希望的行为
+      description: Prefer CPA-native behavior. Explain alternatives and any upstream permission requirements.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria / 如何判断完成
+      description: Concrete, safe checks. Do not require real reset-credit consumption or claim unsupported upstream behavior.
+    validations:
+      required: true

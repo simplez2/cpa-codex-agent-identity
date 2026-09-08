@@ -1,0 +1,20 @@
+[
+  {"name": "bug", "color": "d73a4a", "description": "Reproducible incorrect behavior"},
+  {"name": "enhancement", "color": "a2eeef", "description": "A proposed capability or UX improvement"},
+  {"name": "documentation", "color": "0075ca", "description": "Guides, examples and public documentation"},
+  {"name": "dependencies", "color": "0366d6", "description": "Dependency updates; never an automatic merge approval"},
+  {"name": "question", "color": "d876e3", "description": "Usage or configuration question"},
+  {"name": "area:installation", "color": "1d76db", "description": "Plugin Store, bootstrap, Compose and first-run experience"},
+  {"name": "area:compatibility", "color": "5319e7", "description": "CPA native behavior, credentials and transport compatibility"},
+  {"name": "area:quota", "color": "006b75", "description": "Read-only quota and reset-credit visibility or bridge behavior"},
+  {"name": "area:release", "color": "0e8a16", "description": "Version lifecycle, registry, artifacts and release acceptance"},
+  {"name": "area:build", "color": "bfd4f2", "description": "CI, toolchains, containers and portable builds"},
+  {"name": "status:needs-triage", "color": "ededed", "description": "Awaiting scope, reproduction and impact assessment"},
+  {"name": "status:confirmed", "color": "fbca04", "description": "Observed with evidence; not necessarily fixed"},
+  {"name": "status:needs-validation", "color": "fef2c0", "description": "Needs current-base checks or runtime acceptance before merge/release"},
+  {"name": "status:blocked", "color": "e99695", "description": "An explicit dependency or upstream constraint prevents completion"},
+  {"name": "help wanted", "color": "008672", "description": "A scoped contribution would be useful"},
+  {"name": "good first issue", "color": "7057ff", "description": "Maintainer-reviewed, small and well-scoped newcomer work"},
+  {"name": "release:breaking", "color": "b60205", "description": "A user-visible migration or compatibility break"},
+  {"name": "release:internal", "color": "c5def5", "description": "Internal-only work excluded from generated release-note suggestions"}
+]

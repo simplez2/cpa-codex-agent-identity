@@ -1,0 +1,67 @@
+name: Bug report / 故障反馈
+description: Report a reproducible problem with redacted evidence. 提交可复现、已脱敏的问题。
+title: "[Bug]: "
+labels: [bug, "status:needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        English / 简体中文均可。Do not paste tokens, auth files, keys, cookies,
+        reset-credit IDs, private emails/Team IDs or proxy URLs. Security reports
+        belong in a private advisory. Never spend a reset credit to reproduce a bug.
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Before submitting / 提交前确认
+      options:
+        - label: I searched existing issues and checked the compatibility/support guides.
+          required: true
+        - label: My report contains no secrets or private account/server identifiers.
+          required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Installed versions / 实际安装版本
+      description: Plugin version, sidecar tag/digest and exact CPA image. Do not paste docker inspect or full config.
+      placeholder: "plugin vX.Y.Z; sidecar vX.Y.Z; CPA vX.Y.Z"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment / 运行环境
+      placeholder: "Linux amd64; Docker Compose or 1Panel; HTTP/SSE or WebSocket; proxy configured yes/no"
+    validations:
+      required: true
+  - type: dropdown
+    id: credential_kind
+    attributes:
+      label: Credential kind / 凭证类型（不要填值）
+      options:
+        - Personal Access Token (PAT)
+        - Agent Identity JWT
+        - Native CPA OAuth (not managed by this plugin)
+        - Not credential-specific / unsure
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction / 最小复现步骤
+      description: Include save/refresh/restart steps if settings are involved. Use synthetic account-A/team-1 labels.
+      placeholder: "1. ...\n2. ...\n3. ..."
+    validations:
+      required: true
+  - type: textarea
+    id: expected_actual
+    attributes:
+      label: Expected vs actual / 预期与实际
+      description: Distinguish a successful status from completed output and persisted settings.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted evidence / 脱敏证据（可选）
+      description: A short error, timestamp with timezone and request transport. No full logs, headers or config archives.
+      render: text

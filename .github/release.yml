@@ -1,0 +1,20 @@
+# Categories for GitHub-generated note suggestions, not an automatic release trigger.
+# The maintainer still writes acceptance scope, upgrade instructions and known limits.
+changelog:
+  exclude:
+    labels: ["release:internal"]
+  categories:
+    - title: Breaking changes / 升级注意
+      labels: ["release:breaking"]
+    - title: Fixes / 问题修复
+      labels: [bug]
+    - title: Improvements / 功能改进
+      labels: [enhancement]
+    - title: Documentation / 文档
+      labels: [documentation]
+    - title: Dependencies and build / 依赖与构建
+      labels: [dependencies, "area:build"]
+    - title: Release engineering / 发布管理
+      labels: ["area:release"]
+    - title: Other changes / 其他变更
+      labels: ["*"]

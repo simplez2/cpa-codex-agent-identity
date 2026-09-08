@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report / 私密安全报告
+    url: https://github.com/simplez2/cpa-codex-agent-identity/security/advisories/new
+    about: Do not publish tokens, auth files, keys or proxy credentials. 安全问题请私密提交。
+  - name: Installation and support / 安装与排障
+    url: https://github.com/simplez2/cpa-codex-agent-identity/blob/main/SUPPORT.md
+    about: Check prerequisites, compatibility and common symptoms before filing a report.

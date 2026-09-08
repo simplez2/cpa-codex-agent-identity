@@ -4,6 +4,22 @@ All notable changes to `cpa-codex-agent-identity` are documented here.
 Published registry and release assets are updated only after the tagged release
 workflow has produced and checksummed the artifacts.
 
+## [Unreleased]
+
+### Documentation and maintenance
+
+- Refresh the bilingual project entry points with an installation guide, explicit
+  PAT/JWT compatibility matrix, support channels and a public roadmap.
+- Add structured, secret-safe issue forms, a PR checklist, contribution guidance,
+  managed labels and curated release-note categories.
+- Validate community metadata/local documentation links in CI and group weekly
+  dependency version updates without enabling automatic merges or ignoring security updates.
+- Clarify that exact-artifact acceptance precedes registry publication and that
+  merged fixes, published releases and deployments are separate states.
+
+This maintenance does not change runtime code, assign a new version, replace
+published assets, deploy services or resolve the tracked quota limitations.
+
 ## [0.3.18] - 2026-09-08
 
 Consolidated native PAT and WebSocket repair, assigned after runtime acceptance

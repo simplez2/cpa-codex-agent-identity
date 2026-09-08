@@ -1,7 +1,7 @@
 <div align="center">
   <img src="assets/logo.svg" width="96" alt="CPA Codex Agent Identity 标志">
   <h1>CPA Codex Agent Identity</h1>
-  <p><strong>为原版 CLIProxyAPI 提供加密的 Agent Identity 与 PAT 管理、原生 auth 文件接入和可靠 sidecar 数据面。</strong></p>
+  <p><strong>把 Codex PAT 接入 CPA 原生工作流，让账号、代理与升级更可控。</strong></p>
   <p>
     <a href="https://github.com/simplez2/cpa-codex-agent-identity/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/simplez2/cpa-codex-agent-identity/ci.yml?branch=main&amp;style=flat-square&amp;label=CI"></a>
     <a href="https://github.com/simplez2/cpa-codex-agent-identity/releases"><img alt="Release" src="https://img.shields.io/github/v/release/simplez2/cpa-codex-agent-identity?style=flat-square"></a>
@@ -12,45 +12,61 @@
   <p>简体中文 · <a href="README.md">English</a></p>
 </div>
 
-> **v0.3.18 原生 PAT 修复：** PAT 已明确导入为 CPA 原生、可持久化的 `type: codex` 文件，刷新同步保留用户的原生设置。正式插件和镜像通过隔离验收及生产部署复验，registry/镜像示例已更新至 v0.3.18。v0.3.17 继续撤回、v0.3.16 继续暂缓，旧 tag 和资产没有覆盖。Agent Identity JWT 仍需要动态签名，不能宣称该路径已经完全原生。详见[本次发布验收](docs/releases/v0.3.18.md)与[此前事故记录](docs/incidents/2026-09-08-native-pat-rollback.md)。
+> **推荐版本：[v0.3.18](https://github.com/simplez2/cpa-codex-agent-identity/releases/tag/v0.3.18)** · Linux amd64 / arm64 · [验收证据](docs/releases/v0.3.18.md) · [兼容边界](docs/compatibility.md)
+>
+> 商店安装的是插件，**不包含 sidecar 的自动部署**。PAT 走 CPA 原生执行；
+> Agent Identity JWT 仍需动态签名桥接。本项目独立维护，非 OpenAI / CPA 官方产品。
 
-这是一个面向 CLIProxyAPI（CPA）的 Codex Agent Identity / Personal Access
-Token 集成项目。首个公开版本由两个部分组成：
+## 自己的凭证，熟悉的 CPA 操作
 
-- codex-agent-identity.so：CPA 动态插件声明管理/登录标识 `codex-agent-identity`，
-  只接管 `type: codex-agent-identity` 且带有 `auth_mode: agent_identity_sidecar` 的 sidecar 文件，
-  然后把解析结果交给 CPA 原生 `codex` runtime executor。没有该标记的原生
-  Codex OAuth 文件，以及 CPA 原生登录、刷新和执行路径，仍由 CPA 自己处理。插件
-  同时暴露受 Management key 保护的管理路由，以及供 CPAMC `plugin-pages` 使用的安全资源入口。
-- sidecar：负责官方凭证验证、AES-256-GCM 加密存储、AgentAssertion、批量
-  导入、CPA auth 文件同步以及 HTTP/SOCKS 代理热加载；原生 PAT 的模型与
-  额度请求由 CPA 直接处理，不经 sidecar 数据面。
+不替换 CPA 镜像、不接管已有 OAuth 登录，让自己的 Codex PAT 与 Agent Identity
+凭证在 CPA 中更容易导入、管理和升级。
 
-托管 auth 文件的 `access_token` 保存真实上游凭证，供 CPA 原生执行和 Keeper 等客户端通过 `$TOKEN$` 替换查询额度。`sidecar_client_key` 是兼容管理/桥接路径保留的随机 `cais_` 密钥，原生 PAT 模型执行不使用它。只有 Agent Identity JWT 的 sidecar 路径通过静态 `header:Authorization` 传递桥接密钥；该运行时投影不能当作可持久化的原生 OAuth 文件。原生 PAT 的 User-Agent、WebSocket Beta Features 和身份重映射由 CPA 自己处理。auth 目录必须按秘密数据保护，现有官方 OAuth 和第三方 API 渠道不由本插件接管。
+| 你关心的事 | 当前提供的能力 |
+| --- | --- |
+| 原生管理体验 | PAT 为可持久化原生文件，刷新同步保留启停、代理、备注、优先级与 WS 设置。 |
+| 批量导入不混乱 | TXT / JSON / JSONL 先预检、按身份与 Team 区分、去重，默认原子导入并支持失败回滚。 |
+| 出口可控 | 遵循当前凭证代理；代理不可达或路由读取失败时停止请求，不悄悄回退直连。 |
+| 运维有据可查 | 原生 plugin-pages 入口，插件/sidecar/存储独立，正式资产校验及回滚记录可追溯。 |
+
+**[开始安装](docs/getting-started.md)** · **[兼容性与限制](docs/compatibility.md)** ·
+**[获取帮助](SUPPORT.md)** · **[路线图](ROADMAP.md)** · **[参与贡献](CONTRIBUTING.md)**
+
+## 先选你的安装场景
+
+- **已有 CPA / 1Panel：** [增量接入](docs/getting-started.md#existing-cpa)，保留原配置、账号和其他插件。
+- **全新 Linux 部署：** [准备 sidecar、密钥与私有网络](docs/getting-started.md#fresh-linux-deployment)，再从商店装插件。
+- **已有版本升级：** [核对资产并保留回滚](docs/getting-started.md#upgrade-safety)；不推荐已撤回的 v0.3.17 或未通过验收的 v0.3.16。
+
+本仓库维护的已验证直连安装源：
+
+```text
+https://raw.githubusercontent.com/simplez2/cpa-codex-agent-identity/main/registry.json
+```
+
+## 原生路径与桥接路径分开说明
+
+```text
+导入面板 -> sidecar 加密存储 -> 同步 CPA 认证文件
+PAT 模型调用 -> CPA 原生 Codex executor -> 当前凭证代理 -> 上游
+JWT 模型调用 -> CPA 插件投影 -> 私有 sidecar 动态 AgentAssertion -> 上游
+已有 OAuth -> CPA 原有登录、刷新与执行路径（本插件不接管）
+```
+
+PAT 不经 sidecar 模型数据面；JWT 仍需要桥接，不能宣传为两类凭证都完全原生。
+sidecar 存储虽然加密，CPA auth 文件的 `access_token` 仍含上游凭证，必须按秘密
+数据保护。准确范围见[凭证能力表](docs/compatibility.md#credential-paths)。
+
 ## 文档导航
 
-- [运行逻辑与安全边界](RUNTIME_LOGIC.zh-CN.md)
-- [生产交接与运维手册](HANDOFF.zh-CN.md)
-- [Architecture](ARCHITECTURE.md)
-- [Security policy](SECURITY.md)
-- [Management Center overlay](management-overlay/README.md)
-- [发布与版本管理](RELEASE.md)
-- [原生 WebSocket 开关与真实传输验收](docs/native-websockets.md)
-
-## 主要能力
-
-- 通过 CPA 插件资源路由提供 CPAMC `plugin-pages` 的安全 HTML 包装器；动态身份操作仍由 sidecar 自己认证。
-- 管理面板直接使用 `/agent-identity/`；所有身份操作仍必须验证管理密码。
-- 支持 Agent Identity JWT 和当前以 at- 开头的 Personal Access Token。
-- 支持粘贴或上传 TXT、JSON、JSONL，单批最多 200 条、4 MiB。
-- 强制先预检后导入；预检验证官方信息，但不会写入磁盘或 CPA。
-- 对本批输入和已导入凭证去重。
-- 默认原子导入，失败时自动回滚并明确显示回滚失败项。
-- 导出脱敏 JSON / CSV 结果，不回显原始 token。
-- 支持启用、停用、刷新同步和删除凭证。
-- 显示总数、启用、停用、Agent Identity、PAT、未同步统计。
-- 兼容 HTTP、SSE、WebSocket、图片、额度和 reset-credit 路径。
-- 额度查询优先采用已认证请求的 `proxy_url`，其次使用该身份的 CPA 代理，最后使用全局路由；代理不可达或路由读取失败时返回错误，不回退直连。已建立的流连接继续使用原来的出口。
+| 场景 | 文档 |
+| --- | --- |
+| 安装与排障 | [开始使用](docs/getting-started.md) · [支持指南](SUPPORT.md) |
+| 当前支持范围 | [兼容性](docs/compatibility.md) · [WebSocket 真实传输](docs/native-websockets.md) |
+| 架构与运行 | [Architecture](ARCHITECTURE.md) · [运行逻辑](RUNTIME_LOGIC.zh-CN.md) |
+| 运维与安全 | [生产运维](HANDOFF.zh-CN.md) · [Security policy](SECURITY.md) |
+| 可选额度面板 | [Management overlay](management-overlay/README.md) |
+| 开发与版本 | [贡献指南](CONTRIBUTING.md) · [维护规则](docs/maintenance.md) · [发布流程](RELEASE.md) · [变更日志](CHANGELOG.md) |
 
 ## 版本边界
 
@@ -70,7 +86,7 @@ CPA 的 `/v0/resource/plugins/...` 资源路由不经过 Management key 认证�
 
 ## 从 CPAMC Plugin Store 安装
 
-公开 `router-for-me/CLIProxyAPI-Plugins-Store` 已包含本插件，但 registry 中的回退展示版本仍是 `0.3.3`。新版 CPA 通常会先查询最新 GitHub Release 再展示和安装；当该元数据查询失败或命中旧缓存时，页面就可能继续显示 `0.3.3`。
+外部商店索引和 GitHub 元数据缓存可能落后于正式发布。为明确安装版本，推荐使用本仓库维护的已校验直连源；无需改动官方商店仓库。
 
 本项目的 `registry.json` 是单独的 CPA schema v2 直接资产清单，固定已校验 `0.3.18` 资产的大小和 SHA-256，不依赖 GitHub Release 元数据查询。可将它作为明确安装源加入 CPA 配置：
 
@@ -117,10 +133,10 @@ Docker 部署中，`sidecar_api_url` 留空时插件会自动读取 `CODEX_AGENT
 全新 checkout 推荐使用 bootstrap helper。它会创建 runtime 目录和两份独立密钥，生成已启用插件的 CPA 配置、随机 CPA API key 和外部 Docker network，并可直接启动官方 CPA 与 sidecar：
 
 ~~~bash
-sudo sh deploy/bootstrap-runtime.sh --start
+sudo sh deploy/bootstrap-runtime.sh --sidecar-url /agent-identity/ --start
 ~~~
 
-管理页默认使用与 CPA 同源的 <code>/agent-identity/</code> 访问 sidecar。若是没有反向代理的直接宿主机安装，请显式传入本机地址；若 CPA 通过反向代理发布，推荐使用同源路径：
+远程浏览器应像上面一样显式选择同源路径，并单独配置反向代理。bootstrap helper 本身默认使用 loopback 地址，仅适用于浏览器就在同一宿主机的情况：
 
 ~~~bash
 sudo sh deploy/bootstrap-runtime.sh --sidecar-url http://127.0.0.1:18787/agent-identity/ --start
@@ -130,7 +146,7 @@ sudo sh deploy/bootstrap-runtime.sh --sidecar-url http://127.0.0.1:18787/agent-i
 
 ~~~bash
 sudo sh deploy/init-runtime.sh ./runtime
-cp .env.example .env
+[ -e .env ] || cp .env.example .env
 docker network inspect agent-identity >/dev/null 2>&1 || docker network create agent-identity
 docker compose --project-directory . --env-file .env -f deploy/docker-compose.production.yml up -d
 ~~~

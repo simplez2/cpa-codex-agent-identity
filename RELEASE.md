@@ -3,6 +3,20 @@
 This project uses a staged release model so the Plugin Store never points at an
 archive that has not been built and verified.
 
+## Reader's version map
+
+| State | Meaning | Recommended for users? |
+| --- | --- | --- |
+| `main` / unnumbered `Unreleased` | Merged work, not a new released binary | No automatic upgrade |
+| Tagged prerelease | Immutable candidate assets exist; acceptance pending | No |
+| Accepted stable release | Exact assets validated; registry and image recommendation match | Yes, within its documented scope |
+| Withdrawn / withheld | Historical assets retained with an explicit warning | No |
+
+Currently **v0.3.18** is recommended, **v0.3.17** is withdrawn and **v0.3.16**
+remains unaccepted. See [compatibility](docs/compatibility.md) and the
+[v0.3.18 acceptance record](docs/releases/v0.3.18.md). Do not hide withdrawal
+history or describe a merged fix as deployed.
+
 ## Version authority
 
 - `VERSION` is the single source of truth for the development version.
@@ -53,7 +67,14 @@ make verify-published-release
 5. **Verify downloads.** Download both Linux plugin archives from the release,
    verify `checksums.txt`, record the exact byte sizes and SHA-256 values, and
    confirm each archive contains `codex-agent-identity.so` at its root.
-6. **Publish the registry in a separate commit.** Download the two release
+6. **Accept the exact assets before advertising them.** Validate the downloaded
+   plugin and versioned image together on disposable stock CPA. Record checksums,
+   runtime versions, settings persistence, complete streams, quota and proxy
+   checks. Perform an explicitly authorized rollout with a rollback backup and
+   verify it; do not silently turn CI into production deployment. No live
+   reset-credit consumption is part of acceptance. If checks fail, retain the
+   prerelease warning and the previous accepted registry/image recommendation.
+7. **Publish the registry in a separate commit.** Download the two release
    archives into one directory and let the checked-in helper calculate their
    exact sizes and SHA-256 values:
 
@@ -68,12 +89,11 @@ make verify-published-release
    `## [<VERSION>] - YYYY-MM-DD` section. Then run `jq -e -f
    .github/scripts/validate-registry.jq registry.json` and
    `make verify-published-release` before committing.
-7. **Promote only after acceptance and deployment.** Validate the exact downloaded
-   plugin and versioned image together on disposable stock CPA, deploy with a
-   rollback backup, and verify production. Once the registry commit is on main,
+8. **Promote only after acceptance and deployment.** Once the acceptance record
+   and registry commit are on main,
    mark that existing prerelease stable/Latest (do not recreate its assets), then
    run **Promote verified container** with its verified manifest digest.
-8. **Do not pre-allocate the next release.** Open an unnumbered `Unreleased`
+9. **Do not pre-allocate the next release.** Open an unnumbered `Unreleased`
    section for follow-up fixes. Advance the version only after the reported
    runtime workflow is reproduced and the candidate passes acceptance.
 
@@ -107,6 +127,25 @@ make verify-published-release
 - Published metadata is not silently replaced by a development build.
 - Linux plugin artifacts must remain compatible with GLIBC 2.17 and export the
   complete CPA dynamic-plugin ABI entrypoint set.
+
+Runtime acceptance and approval are **maintainer gates**, not inferred by the
+version checker. CI cannot prove a live workflow was tested merely because a
+release document exists.
+
+## Release notes and PR hygiene
+
+- Draft notes with [the release template](docs/releases/TEMPLATE.md). Include a
+  short English/Chinese summary, installation path, upgrade/rollback guidance,
+  exact verification scope and remaining limitations.
+- `.github/release.yml` categorizes GitHub-generated note suggestions from PR
+  labels. It does not trigger a release, choose a version or replace the curated
+  changelog/acceptance record. Read every generated entry before publication.
+- Prefer one coherent accepted batch over a tag for each attempted fix. Normal
+  docs, dependency and maintenance PRs leave `VERSION`, published assets and
+  `registry.json` unchanged.
+- Use issues for unresolved regressions/upstream limitations and an unnumbered
+  milestone for candidates. Closing a PR does not prove its underlying issue is
+  fixed. See [repository maintenance](docs/maintenance.md).
 
 ## Do not
 
