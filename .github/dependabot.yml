@@ -4,15 +4,64 @@ updates:
     directory: /
     schedule:
       interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 3
+    labels: [dependencies, "status:needs-validation"]
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      sidecar-libraries:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: [minor, patch]
   - package-ecosystem: gomod
     directory: /plugin/codex-agent-identity
     schedule:
       interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 3
+    labels: [dependencies, "area:compatibility", "status:needs-validation"]
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      plugin-libraries:
+        applies-to: version-updates
+        patterns: ["*"]
+        exclude-patterns: ["github.com/router-for-me/CLIProxyAPI/v7"]
+        update-types: [minor, patch]
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 3
+    labels: [dependencies, "area:build", "status:needs-validation"]
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      build-actions:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: [minor, patch]
   - package-ecosystem: docker
     directory: /
     schedule:
       interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 3
+    labels: [dependencies, "area:build", "status:needs-validation"]
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      runtime-image:
+        applies-to: version-updates
+        patterns: ["debian"]
+        update-types: [minor, patch]

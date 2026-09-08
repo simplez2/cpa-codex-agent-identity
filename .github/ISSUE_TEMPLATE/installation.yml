@@ -1,0 +1,50 @@
+name: Installation help / 安装与升级帮助
+description: Get help with Plugin Store, sidecar, Compose or 1Panel setup.
+title: "[Install]: "
+labels: [question, "area:installation", "status:needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Start with the getting-started guide. The Store installs only the .so;
+        sidecar, private networking and secret storage remain prerequisites.
+        不要上传认证文件、密钥、代理地址或整份配置；检查安装无需使用重置券。
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Before submitting / 提交前确认
+      options:
+        - label: I read the setup/support guides and removed all secrets and private identifiers.
+          required: true
+  - type: dropdown
+    id: path
+    attributes:
+      label: Installation path / 安装方式
+      options:
+        - Existing CPA / 1Panel
+        - Fresh Docker Compose deployment
+        - Direct Linux host
+        - Upgrade from an older plugin
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions and architecture / 版本与架构
+      placeholder: "plugin + sidecar + CPA versions; Linux amd64 or arm64"
+    validations:
+      required: true
+  - type: textarea
+    id: state
+    attributes:
+      label: What is installed and where does it fail? / 当前状态与卡住的步骤
+      description: Store advertised/installed version, registered/effective state, sidecar health, same-origin proxy yes/no. Do not include private URLs.
+    validations:
+      required: true
+  - type: textarea
+    id: attempted
+    attributes:
+      label: Steps and redacted error / 已尝试步骤与脱敏错误
+      description: Include only the smallest relevant excerpt, not whole configuration files.
+    validations:
+      required: true

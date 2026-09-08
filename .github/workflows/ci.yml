@@ -9,7 +9,24 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  repository-health:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate community metadata and local documentation links
+        run: |
+          python3 -m pip install --disable-pip-version-check -r .github/requirements-maintenance.txt
+          python3 .github/scripts/check-community.py
+          python3 -m unittest discover -s .github/scripts -p 'test_community.py'
+
   validate:
     runs-on: ubuntu-24.04
     steps:
