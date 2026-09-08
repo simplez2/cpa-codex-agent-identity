@@ -8,7 +8,7 @@ ARG TARGETOS
 ARG TARGETARCH
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -buildvcs=false -ldflags="-s -w" -o /out/codex-agent-identity-sidecar ./cmd/sidecar
 
-FROM debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
+FROM debian:bookworm-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241
 LABEL org.opencontainers.image.source="https://github.com/simplez2/cpa-codex-agent-identity" \
       org.opencontainers.image.title="Codex Agent Identity sidecar" \
       org.opencontainers.image.description="Encrypted Codex Agent Identity and PAT sidecar for CLIProxyAPI" \
