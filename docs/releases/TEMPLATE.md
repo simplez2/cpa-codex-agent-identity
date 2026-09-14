@@ -14,7 +14,8 @@ Do not paste private deployment identifiers or credentials.
 
 - Link to the existing Release assets and verified direct registry.
 - Exact compatible CPA runtime tested; plugin/sidecar version pair.
-- Checksum instructions, sidecar prerequisites and same-origin setup.
+- Checksum instructions, sidecar prerequisites, private CPA-to-sidecar routing
+  and any optional direct-dashboard reverse proxy.
 - Preserve current accounts, Teams, proxies, disabled state and native fields.
 - Retain previous accepted assets and independent data/key backups for rollback.
 

@@ -16,6 +16,9 @@
 >
 > 商店安装的是插件，**不包含 sidecar 的自动部署**。PAT 走 CPA 原生执行；
 > Agent Identity JWT 仍需动态签名桥接。本项目独立维护，非 OpenAI / CPA 官方产品。
+>
+> 当前未发布源码已把完整管理页内嵌进 `.so`，浏览器不再需要直接访问
+> sidecar；但 CPA 后端仍必须能通过私有网络访问已单独部署的 sidecar。
 
 ## 自己的凭证，熟悉的 CPA 操作
 
@@ -74,7 +77,7 @@ sidecar 存储虽然加密，CPA auth 文件的 `access_token` 仍含上游凭�
 
 ### 当前 plugin-pages 入口
 
-CPA 的 `/v0/resource/plugins/...` 资源路由不经过 Management key 认证，因为 CPAMC 会在 iframe 中加载它。插件通过 ResourceRoute 注册 `/open`，由 CPA 原生 plugin-pages 菜单显示 Codex Agent Identity。wrapper 不内置、不写入 URL、也不持久化 Management key；它会读取 CPAMC 当前 scoped 加密登录状态，并仅通过同时校验 source、origin 与随机 nonce 的 `postMessage` 把 key 交给同源 sidecar iframe。真正的身份列表、预检、导入、启用、停用和删除仍由 sidecar 的 Bearer 管理认证保护。
+CPA 的 `/v0/resource/plugins/...` 资源路由不经过 Management key 认证，因为 CPAMC 会在 iframe 中加载它。插件通过 ResourceRoute 注册 `/open`，由 CPA 原生 plugin-pages 菜单显示 Codex Agent Identity，并直接从 `.so` 提供完整页面资源。页面调用受认证的插件 Management 路由：CPA 先校验 Management key，插件再通过服务器私有网络把严格白名单内的身份操作转发给 sidecar。wrapper 不内置、不写入 URL、也不持久化 Management key；它只通过同时校验 source、origin 与随机 nonce 的 `postMessage` 复用 CPAMC 当前 scoped 登录状态。
 
 不要再把卡片按钮、外挂 overlay 入口和 plugin-pages 菜单混为一谈。当前推荐入口是 CPA 原生 plugin-pages；management-overlay 仅用于 reset-credit 可见性和 Codex 额度 API bridge，不修改插件卡片。
 
@@ -101,8 +104,8 @@ plugins:
       priority: 1000
 ~~~
 
-全新安装通常不需要填写 `sidecar_url` 或 `sidecar_api_url`。插件管理页默认使用与 CPA 同源的 `/agent-identity/`，远程部署不会再把浏览器请求错误地指向浏览器自己的 `127.0.0.1`。Docker 部署的 quota/reset bridge 会通过 `CODEX_AGENT_IDENTITY_SIDECAR_HOSTS` 和端口环境变量自动发现。旧版本配置仍会被兼容解析，但这些内部地址不再作为普通 Plugin Store 配置项展示。
-如果 CPA 与 sidecar 通过反向代理发布，可在旧配置中保留 `sidecar_url: "/agent-identity/"`；它只能是无凭据、无查询参数和无片段的 HTTP(S) 地址或同源路径。
+v0.3.19 候选安装通常不需要填写 `sidecar_url` 或 `sidecar_api_url`。它的管理页由 `.so` 自带，管理页和 quota/reset bridge 都通过 CPA 后端使用 `CODEX_AGENT_IDENTITY_SIDECAR_HOSTS` 与端口环境变量访问 sidecar，不再要求浏览器能打开 `/agent-identity/`。当前推荐的 v0.3.18 仍需浏览器可访问的同源入口；旧版本配置会被兼容解析，但这些内部地址不再作为普通 Plugin Store 配置项展示。
+如果需要保留可直接打开的 sidecar 面板，可在旧配置中保留 `sidecar_url: "/agent-identity/"` 或其他明确地址；它现在只是兼容回退项，并且只能是无凭据、无查询参数和无片段的 HTTP(S) 地址或同源路径。
 
 容器内 CPA 若要通过 Plugin Store 安装或升级，插件目录需要在该操作期间可写，完成后建议恢复只读挂载。
 
@@ -125,20 +128,24 @@ volumes:
 
 不要同时加载旧的 `codex-agent-identity-auth.so` 和新的 `codex-agent-identity.so`，两者都会声明 Codex 凭证解析能力。
 
-插件商店只会安装 `.so`，无法安全地自动创建 sidecar 容器、Docker network、加密密钥、management key 和持久化目录。全新部署建议先运行 `sh deploy/bootstrap-runtime.sh --start`，之后在 CPA 插件商店点击安装即可。
+插件商店只会安装 `.so`，无法安全地自动创建 sidecar 容器、Docker network、加密密钥、management key 和持久化目录。v0.3.19 候选的全新部署建议先运行 `sh deploy/bootstrap-runtime.sh --start`，之后在 CPA 插件商店点击安装即可；管理页本身不再需要额外反向代理。当前正式 v0.3.18 仍需 `--sidecar-url /agent-identity/` 及对应反向代理。
 
 Docker 部署中，`sidecar_api_url` 留空时插件会自动读取 `CODEX_AGENT_IDENTITY_SIDECAR_HOSTS`，并默认使用 sidecar 容器的 `8787` 端口。直接宿主机安装可以在旧配置中显式保留 `http://127.0.0.1:18787/agent-identity/`；这是兼容项，新安装不需要填写。
 ## 部署 sidecar
 
-全新 checkout 推荐使用 bootstrap helper。它会创建 runtime 目录和两份独立密钥，生成已启用插件的 CPA 配置、随机 CPA API key 和外部 Docker network，并可直接启动官方 CPA 与 sidecar：
+v0.3.19 候选 checkout 推荐使用 bootstrap helper。它会创建 runtime 目录和两份独立密钥，生成已启用插件的 CPA 配置、随机 CPA API key 和外部 Docker network，并可直接启动官方 CPA 与 sidecar：
+
+~~~bash
+sudo sh deploy/bootstrap-runtime.sh --start
+~~~
+
+不带 URL 的命令只适用于 v0.3.19。当前正式 v0.3.18 仍需
+`--sidecar-url /agent-identity/` 和同源反向代理。v0.3.19 的原生插件页不需要
+把 sidecar 面板发布给浏览器；如果希望保留直接面板作为兼容回退，可显式指定浏览器可访问地址：
 
 ~~~bash
 sudo sh deploy/bootstrap-runtime.sh --sidecar-url /agent-identity/ --start
-~~~
-
-远程浏览器应像上面一样显式选择同源路径，并单独配置反向代理。bootstrap helper 本身默认使用 loopback 地址，仅适用于浏览器就在同一宿主机的情况：
-
-~~~bash
+# 或仅在浏览器与服务位于同一宿主机时：
 sudo sh deploy/bootstrap-runtime.sh --sidecar-url http://127.0.0.1:18787/agent-identity/ --start
 ~~~
 
@@ -156,7 +163,7 @@ sidecar 才能自动创建、停用、刷新和删除 CPA 原生 Codex auth 文�
 初始化脚本会把 data-v3 和 secrets 设置为镜像内非特权 UID/GID 65532 所有；
 如果修改 SIDECAR_UID 或 SIDECAR_GID，运行脚本时必须使用相同的值。
 
-建议通过与 CPA 相同的 TLS 反向代理发布 sidecar UI：
+对 v0.3.19 候选，下面的反向代理不再是原生插件页的前置条件；只有需要直接打开 sidecar 面板或保留浏览器回退时才配置。当前正式 v0.3.18 仍需要它：
 
 ~~~nginx
 location ^~ /agent-identity/ {
@@ -168,8 +175,8 @@ location ^~ /agent-identity/ {
 }
 ~~~
 
-如果确实需要跨来源嵌入，必须把受信任页面的完整 origin 加入
-EMBED_ALLOWED_ORIGINS。sidecar 管理页只把管理密码保存在当前标签页的 sessionStorage；CPAMC 自己可能使用 scoped 混淆 localStorage 保存登录状态。
+如果确实需要跨来源嵌入直接 sidecar 面板，必须把受信任页面的完整 origin 加入
+EMBED_ALLOWED_ORIGINS。内嵌插件页与 CPA 同源，不需要该设置。sidecar 管理页只把管理密码保存在当前标签页的 sessionStorage；CPAMC 自己可能使用 scoped 混淆 localStorage 保存登录状态。
 wrapper 仅复用当前选中的 scope，并通过校验 source、origin 与随机 nonce 的 `postMessage` 转交；不会把 key 写入 iframe URL、Cookie、导出文件或 sidecar localStorage。
 
 插件解析器默认允许容器服务名以及 `localhost`、`127.0.0.1`、`::1`。HTTP 默认只允许 8787，loopback 额外允许宿主机映射端口 18787；其他明确需要的 HTTP 端口必须通过 `CODEX_AGENT_IDENTITY_SIDECAR_HTTP_PORTS` 逐项加入。
@@ -237,7 +244,7 @@ checksums.txt、GitHub Release，以及 GHCR 的多架构 sidecar 镜像。
 - 原始凭证在 sidecar store 中使用 AES-256-GCM 加密；为兼容 Keeper 原生链路，同一上游凭证也会写入 CPA auth 文件的 `access_token`，CPA auth 目录必须按秘密数据保护。
 - .so 是 CPA 进程内受信任代码，安装前必须校验发布哈希。
 - 插件资源入口不得内置或持久化 token、Management key 或特权 API；只允许通过 source/origin/nonce 校验的 `postMessage` 复用 CPAMC 当前 scoped 登录状态，
-  `/v0/resource/plugins/...` 和 iframe URL 都不得携带 secret，真正的身份操作必须继续由 sidecar Bearer 认证。
+  `/v0/resource/plugins/...` 和 iframe URL 都不得携带 secret。身份操作必须先经过 CPA Management 认证、插件路径白名单和请求头过滤，再由 sidecar 使用同一 Bearer key 复验。
 - 不要在 issue、日志、截图或导出中提交 token、管理密码、Cookie、代理密码、
   cais_ 密钥或 auth 文件。
 - ALLOW_PLAINTEXT_STORE 和 ALLOW_INSECURE_UPSTREAM 仅用于本地测试。

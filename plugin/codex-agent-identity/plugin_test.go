@@ -1,12 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -271,7 +275,7 @@ func TestManagementUIRegistersAuthenticatedRouteAndResource(t *testing.T) {
 	}
 	var registered managementRegistration
 	decodePluginResult(t, raw, &registered)
-	if len(registered.Routes) != 2 {
+	if len(registered.Routes) != 3 {
 		t.Fatalf("unexpected routes: %#v", registered.Routes)
 	}
 	var route managementRoute
@@ -292,12 +296,26 @@ func TestManagementUIRegistersAuthenticatedRouteAndResource(t *testing.T) {
 	if apiRoute.Method != http.MethodPost || apiRoute.Path != managementAPICallPath {
 		t.Fatalf("missing quota API bridge route: %#v", registered.Routes)
 	}
-	if len(registered.Resources) != 1 {
+	var uiAPIRoute managementRoute
+	for _, candidate := range registered.Routes {
+		if candidate.Method == http.MethodPost && candidate.Path == managementUIAPIPath {
+			uiAPIRoute = candidate
+		}
+	}
+	if uiAPIRoute.Method != http.MethodPost || uiAPIRoute.Path != managementUIAPIPath {
+		t.Fatalf("missing plugin UI API bridge route: %#v", registered.Routes)
+	}
+	if len(registered.Resources) != 5 {
 		t.Fatalf("unexpected resources: %#v", registered.Resources)
 	}
 	resource := registered.Resources[0]
 	if resource.Path != "/open" || resource.Menu != pluginName || resource.Description == "" {
 		t.Fatalf("unexpected resource route: %#v", resource)
+	}
+	for index, path := range []string{"/ui", "/app.js", "/style.css", "/theme.js"} {
+		if registered.Resources[index+1].Path != path || registered.Resources[index+1].Menu != "" {
+			t.Fatalf("unexpected plugin UI resource route: %#v", registered.Resources[index+1])
+		}
 	}
 	if !strings.Contains(string(raw), `"resources"`) || !strings.Contains(string(raw), pluginName) {
 		t.Fatalf("registration did not advertise the CPAMC resource menu: %s", raw)
@@ -466,6 +484,223 @@ func TestManagementAPICallBridgeForwardsCPARequestToSidecar(t *testing.T) {
 	}
 }
 
+func TestPluginHostedManagementUIProxiesAssetsAndAuthenticatedAPI(t *testing.T) {
+	const (
+		managementKey = "management-key-at-least-24-characters"
+		apiBody       = `{"identities":[{"email":"a&b@example.invalid","label":"<team>"}]}`
+	)
+	var apiAuthorization string
+	var apiOrigin string
+	var apiCookie string
+	var apiUntrusted string
+	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/agent-identity/api/identities":
+			apiAuthorization = r.Header.Get("Authorization")
+			apiOrigin = r.Header.Get("Origin")
+			apiCookie = r.Header.Get("Cookie")
+			apiUntrusted = r.Header.Get("X-Untrusted")
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(apiBody))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer sidecar.Close()
+
+	configurePluginForTest(t, "sidecar_url: /agent-identity/\nsidecar_api_url: "+sidecar.URL)
+
+	resourcePayload, err := json.Marshal(managementRequest{
+		Method: http.MethodGet,
+		Path:   resourceUIFullPath,
+		Query: url.Values{
+			"embed":                  []string{"cpamc"},
+			"theme":                  []string{"dark"},
+			managementBridgeQueryKey: []string{"0123456789abcdef"},
+			"ignored":                []string{"secret"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := handleMethod(pluginabi.MethodManagementHandle, resourcePayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resourceResponse managementResponse
+	decodePluginResult(t, raw, &resourceResponse)
+	if resourceResponse.StatusCode != http.StatusOK ||
+		!strings.Contains(string(resourceResponse.Body), `src="./app.js"`) ||
+		!strings.Contains(string(resourceResponse.Body), `id="connection-form"`) {
+		t.Fatalf("plugin-hosted UI unavailable: status=%d body=%s", resourceResponse.StatusCode, resourceResponse.Body)
+	}
+	if !strings.Contains(resourceResponse.Headers.Get("Content-Security-Policy"), "frame-ancestors 'self'") ||
+		resourceResponse.Headers.Get("Content-Type") != "text/html; charset=utf-8" {
+		t.Fatalf("plugin UI security headers were not preserved: %v", resourceResponse.Headers)
+	}
+	appPayload, err := json.Marshal(managementRequest{Method: http.MethodGet, Path: resourceAppJSFullPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err = handleMethod(pluginabi.MethodManagementHandle, appPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var appResponse managementResponse
+	decodePluginResult(t, raw, &appResponse)
+	if appResponse.StatusCode != http.StatusOK ||
+		!strings.Contains(string(appResponse.Body), "resolvePluginManagementAPIURL") ||
+		!strings.Contains(string(appResponse.Body), "pluginUIBodyPrefix") ||
+		!strings.Contains(string(appResponse.Body), "unavailableMessageType") {
+		t.Fatalf("plugin-hosted app.js is missing the CPA bridge: status=%d body=%s", appResponse.StatusCode, appResponse.Body)
+	}
+
+	apiRequestBody, err := json.Marshal(sidecarUIAPIRequest{Method: http.MethodGet, Path: "identities"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	apiPayload, err := json.Marshal(managementRequest{
+		Method: http.MethodPost,
+		Path:   managementUIAPIFullPath,
+		Headers: http.Header{
+			"Authorization": []string{"Bearer " + managementKey},
+			"Cookie":        []string{"must-not-forward"},
+			"Origin":        []string{"https://attacker.example"},
+			"X-Untrusted":   []string{"must-not-forward"},
+		},
+		Body: apiRequestBody,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err = handleMethod(pluginabi.MethodManagementHandle, apiPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var apiResponse managementResponse
+	decodePluginResult(t, raw, &apiResponse)
+	if apiResponse.StatusCode != http.StatusOK || string(apiResponse.Body) != uiBridgeBodyPrefix+apiBody {
+		t.Fatalf("plugin UI API response changed: status=%d body=%q", apiResponse.StatusCode, apiResponse.Body)
+	}
+	if apiResponse.Headers.Get("Content-Type") != "text/plain; charset=utf-8" {
+		t.Fatalf("plugin UI API response can be JSON-escaped by CPA: %v", apiResponse.Headers)
+	}
+	if apiAuthorization != "Bearer "+managementKey || apiOrigin != "" || apiCookie != "" || apiUntrusted != "" {
+		t.Fatalf("plugin UI API forwarded unsafe headers: authorization=%q origin=%q cookie=%q untrusted=%q", apiAuthorization, apiOrigin, apiCookie, apiUntrusted)
+	}
+}
+
+func TestPluginHostedManagementUIPreservesSidecarErrorResponse(t *testing.T) {
+	const (
+		managementKey = "management-key-at-least-24-characters"
+		errorBody     = `{"error":"invalid <key> & retry"}`
+	)
+	sidecar := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/agent-identity/api/identities" {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer "+managementKey {
+			t.Fatalf("sidecar Authorization = %q", r.Header.Get("Authorization"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Set-Cookie", "must-not-cross-management-boundary")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(errorBody))
+	}))
+	defer sidecar.Close()
+
+	configurePluginForTest(t, "sidecar_url: /agent-identity/\nsidecar_api_url: "+sidecar.URL)
+	requestBody, err := json.Marshal(sidecarUIAPIRequest{Method: http.MethodGet, Path: "identities"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(managementRequest{
+		Method:  http.MethodPost,
+		Path:    managementUIAPIFullPath,
+		Headers: http.Header{"Authorization": []string{"Bearer " + managementKey}},
+		Body:    requestBody,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := handleMethod(pluginabi.MethodManagementHandle, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response managementResponse
+	decodePluginResult(t, raw, &response)
+	if response.StatusCode != http.StatusUnauthorized || string(response.Body) != uiBridgeBodyPrefix+errorBody {
+		t.Fatalf("sidecar error response changed: status=%d body=%q", response.StatusCode, response.Body)
+	}
+	if response.Headers.Get("Content-Type") != "text/plain; charset=utf-8" ||
+		response.Headers.Get("Set-Cookie") != "" {
+		t.Fatalf("sidecar error headers crossed the management boundary: %v", response.Headers)
+	}
+}
+
+func TestPluginUIAssetsMatchSidecarUI(t *testing.T) {
+	for _, fileName := range []string{"index.html", "app.js", "style.css", "theme.js"} {
+		embedded, err := pluginUIFiles.ReadFile("ui/" + fileName)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sidecar, err := os.ReadFile(filepath.Join("..", "..", "internal", "server", "ui", fileName))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(embedded, sidecar) {
+			t.Fatalf("plugin UI asset %s is out of sync with the sidecar UI", fileName)
+		}
+	}
+}
+
+func TestPluginHostedManagementUIRejectsUnregisteredAPIRoutes(t *testing.T) {
+	tests := []sidecarUIAPIRequest{
+		{Method: http.MethodGet, Path: "/identities"},
+		{Method: http.MethodGet, Path: "../admin/v1/identities"},
+		{Method: http.MethodPost, Path: "cpa-api-call"},
+		{Method: http.MethodGet, Path: "identities/import"},
+		{Method: http.MethodDelete, Path: "identities/not-an-identity"},
+		{Method: http.MethodPost, Path: "identities/import/batch?preview=true&atomic=true&extra=true"},
+		{Method: http.MethodPatch, Path: "identities/agent-aabbccddeeff"},
+	}
+	for _, request := range tests {
+		if _, _, err := normalizeSidecarUIAPIRequest(request); err == nil {
+			t.Fatalf("unsafe plugin UI route was accepted: %#v", request)
+		}
+	}
+	for _, request := range []sidecarUIAPIRequest{
+		{Method: http.MethodGet, Path: "diagnostics"},
+		{Method: http.MethodGet, Path: "identities"},
+		{Method: http.MethodPost, Path: "identities/import/batch?preview=true&atomic=false"},
+		{Method: http.MethodPost, Path: "identities/agent-aabbccddeeff/actions"},
+		{Method: http.MethodDelete, Path: "identities/agent-aabbccddeeff"},
+	} {
+		if _, _, err := normalizeSidecarUIAPIRequest(request); err != nil {
+			t.Fatalf("registered plugin UI route was rejected: %#v: %v", request, err)
+		}
+	}
+}
+
+func TestPluginHostedManagementUIUsesConfiguredDashboardPathWithPrivateAPIHost(t *testing.T) {
+	relativeURL, err := url.ParseRequestURI("/identities/import/batch?preview=true&atomic=false")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := sidecarUIAPIURL(runtimeState{
+		sidecarURL:          "/custom-agent-dashboard/",
+		sidecarAPIURL:       "http://127.0.0.1:18787/v0/management/api-call",
+		sidecarAPIURLSource: "config",
+	}, relativeURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "http://127.0.0.1:18787/custom-agent-dashboard/api/identities/import/batch?preview=true&atomic=false"; target != want {
+		t.Fatalf("custom sidecar dashboard API URL = %q, want %q", target, want)
+	}
+}
+
 func TestManagementHandlerRejectsUnknownResourceAndWrongMethod(t *testing.T) {
 	configurePluginForTest(t, "sidecar_url: /agent-identity/")
 
@@ -592,17 +827,17 @@ func TestManagementFrameSourcesMatchWrapperFallbacks(t *testing.T) {
 		{
 			name:       "default",
 			current:    runtimeState{sidecarURL: defaultSidecarURL, frameSource: defaultSidecarOrigin},
-			wantSource: []string{legacyLocalSidecarOrigin, legacyLocalhostOrigin, legacyIPv6Origin},
+			wantSource: []string{legacyLocalSidecarOrigin, legacyLocalhostOrigin},
 		},
 		{
 			name:       "explicit legacy localhost",
 			current:    runtimeState{sidecarURL: legacyLocalhostSidecarURL, frameSource: legacyLocalhostOrigin},
-			wantSource: []string{legacyLocalSidecarOrigin, legacyLocalhostOrigin, legacyIPv6Origin},
+			wantSource: []string{legacyLocalSidecarOrigin, legacyLocalhostOrigin},
 		},
 		{
 			name:     "remote custom",
 			current:  runtimeState{sidecarURL: "https://sidecar.example.test/agent-identity/", frameSource: "https://sidecar.example.test"},
-			noSource: []string{legacyLocalSidecarOrigin, legacyLocalhostOrigin, legacyIPv6Origin},
+			noSource: []string{legacyLocalSidecarOrigin, legacyLocalhostOrigin},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -686,6 +921,7 @@ func TestApplyConfigKeepsCustomSidecarOriginForDerivedAPI(t *testing.T) {
 func TestLegacyLocalWrapperPrefersSameOriginCandidate(t *testing.T) {
 	candidates := generatedWrapperCandidates(t, "https://cpa.example.test/v0/management/codex-agent-identity/open", legacyLocalSidecarURL+"?embed=cpamc")
 	want := []string{
+		"https://cpa.example.test/v0/resource/plugins/codex-agent-identity/ui?embed=cpamc",
 		"https://cpa.example.test/agent-identity/?embed=cpamc",
 		legacyLocalSidecarURL + "?embed=cpamc",
 	}
@@ -694,13 +930,24 @@ func TestLegacyLocalWrapperPrefersSameOriginCandidate(t *testing.T) {
 	}
 }
 
+func TestPrefixedWrapperKeepsPluginHostedUIUnderCPABasePath(t *testing.T) {
+	candidates := generatedWrapperCandidates(t, "https://cpa.example.test/control/v0/resource/plugins/codex-agent-identity/open", defaultSidecarEmbedURL)
+	want := []string{
+		"https://cpa.example.test/control/v0/resource/plugins/codex-agent-identity/ui?embed=cpamc",
+		"https://cpa.example.test/agent-identity/?embed=cpamc",
+	}
+	if !equalStrings(candidates, want) {
+		t.Fatalf("prefixed wrapper candidate order = %#v, want %#v", candidates, want)
+	}
+}
+
 func TestLocalDefaultWrapperIncludesAllLoopbackCandidates(t *testing.T) {
 	candidates := generatedWrapperCandidates(t, "http://127.0.0.1:8317/v0/management/codex-agent-identity/open", defaultSidecarEmbedURL)
 	want := []string{
+		"http://127.0.0.1:8317/v0/resource/plugins/codex-agent-identity/ui?embed=cpamc",
 		"http://127.0.0.1:8317/agent-identity/?embed=cpamc",
 		legacyLocalSidecarURL + "?embed=cpamc",
 		legacyLocalhostSidecarURL + "?embed=cpamc",
-		legacyIPv6SidecarURL + "?embed=cpamc",
 	}
 	if !equalStrings(candidates, want) {
 		t.Fatalf("local default candidate order = %#v, want %#v", candidates, want)
@@ -710,9 +957,36 @@ func TestLocalDefaultWrapperIncludesAllLoopbackCandidates(t *testing.T) {
 func TestRemoteCustomWrapperDoesNotProbeBrowserLoopback(t *testing.T) {
 	configured := "https://sidecar.example.test/agent-identity/?embed=cpamc"
 	candidates := generatedWrapperCandidates(t, "http://127.0.0.1:8317/v0/management/codex-agent-identity/open", configured)
-	want := []string{configured}
+	want := []string{
+		"http://127.0.0.1:8317/v0/resource/plugins/codex-agent-identity/ui?embed=cpamc",
+		configured,
+	}
 	if !equalStrings(candidates, want) {
 		t.Fatalf("remote custom candidate list = %#v, want %#v", candidates, want)
+	}
+}
+
+func TestPluginUIResolvesManagementAPIUnderCPABasePath(t *testing.T) {
+	for _, test := range []struct {
+		path string
+		want string
+	}{
+		{
+			path: "/v0/resource/plugins/codex-agent-identity/ui",
+			want: "/v0/management/codex-agent-identity/ui-api",
+		},
+		{
+			path: "/control/v0/resource/plugins/codex-agent-identity/ui/",
+			want: "/control/v0/management/codex-agent-identity/ui-api",
+		},
+		{
+			path: "/control/v0/resource/plugins/codex-agent-identity/app.js",
+			want: "",
+		},
+	} {
+		if got := generatedPluginManagementAPIURL(t, test.path); got != test.want {
+			t.Fatalf("plugin API URL for %q = %q, want %q", test.path, got, test.want)
+		}
 	}
 }
 
@@ -735,9 +1009,11 @@ const frame = {dataset: {src: %q}};
 const localDefaultURL = %q;
 const legacyLocalURL = %q;
 const sameOriginPath = %q;
+const managementOpenURLPath = %q;
+const resourceUIURLPath = %q;
 %s
 process.stdout.write(JSON.stringify(candidateURLs));
-`, pageURL, frameURL, defaultSidecarURL, legacyLocalSidecarURL, "/agent-identity/", snippet)
+`, pageURL, frameURL, defaultSidecarURL, legacyLocalSidecarURL, "/agent-identity/", managementOpenFullPath, resourceUIFullPath, snippet)
 	output, err := exec.Command(node, "-e", harness).CombinedOutput()
 	if err != nil {
 		t.Fatalf("generated browser candidate logic failed: %v\n%s", err, output)
@@ -747,6 +1023,34 @@ process.stdout.write(JSON.stringify(candidateURLs));
 		t.Fatalf("decode generated candidate list: %v\n%s", err, output)
 	}
 	return candidates
+}
+
+func generatedPluginManagementAPIURL(t *testing.T, pathname string) string {
+	t.Helper()
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is required to execute the plugin UI path resolver")
+	}
+	app, err := pluginUIFiles.ReadFile("ui/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(app)
+	start := strings.Index(body, "function resolvePluginManagementAPIURL()")
+	end := strings.Index(body, "function shouldFallbackFromPluginBridge")
+	if start < 0 || end <= start {
+		t.Fatalf("plugin UI management API resolver is missing")
+	}
+	harness := fmt.Sprintf(`
+const window = {location: {pathname: %q}};
+%s
+process.stdout.write(resolvePluginManagementAPIURL());
+`, pathname, body[start:end])
+	output, err := exec.Command(node, "-e", harness).CombinedOutput()
+	if err != nil {
+		t.Fatalf("plugin UI management API resolver failed: %v\n%s", err, output)
+	}
+	return string(output)
 }
 
 func equalStrings(got, want []string) bool {

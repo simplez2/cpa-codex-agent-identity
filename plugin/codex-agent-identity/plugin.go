@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,8 +35,14 @@ const (
 	managementOpenFullPath        = "/v0/management" + managementOpenPath
 	managementAPICallPath         = "/codex-agent-identity/api-call"
 	managementAPICallFullPath     = "/v0/management" + managementAPICallPath
+	managementUIAPIPath           = "/codex-agent-identity/ui-api"
+	managementUIAPIFullPath       = "/v0/management" + managementUIAPIPath
 	sidecarAPICallPath            = "/v0/management/api-call"
 	resourceOpenFullPath          = "/v0/resource/plugins/" + pluginID + "/open"
+	resourceUIFullPath            = "/v0/resource/plugins/" + pluginID + "/ui"
+	resourceAppJSFullPath         = "/v0/resource/plugins/" + pluginID + "/app.js"
+	resourceStyleCSSFullPath      = "/v0/resource/plugins/" + pluginID + "/style.css"
+	resourceThemeJSFullPath       = "/v0/resource/plugins/" + pluginID + "/theme.js"
 	legacyResourceOpenPath        = "/v0/resource/plugins/" + pluginID + managementOpenPath
 	configSidecarURL              = "sidecar_url"
 	configSidecarAPIURL           = "sidecar_api_url"
@@ -46,14 +53,18 @@ const (
 	legacyLocalSidecarAPIURL      = "http://127.0.0.1:18787/v0/management/api-call"
 	legacyLocalSidecarOrigin      = "http://127.0.0.1:18787"
 	legacyLocalhostOrigin         = "http://localhost:18787"
-	legacyIPv6Origin              = "http://[::1]:18787"
 	defaultSidecarOrigin          = "'self'"
 	defaultSidecarAPIURL          = ""
 	defaultSidecarHTTPPort        = 8787
 	defaultSidecarEmbedURL        = defaultSidecarURL + "?embed=cpamc"
 	maxForwardBodyBytes           = 1 << 20
+	maxUIBridgeRequestBytes       = 16 << 20
+	maxUIForwardBodyBytes         = 4 << 20
+	maxUIAssetBytes               = 1 << 20
+	uiBridgeBodyPrefix            = ")]}',\n"
 	minimumSidecarVersion         = "0.3.10"
 	readyMessageType              = "cpa-codex-agent-identity:ready"
+	unavailableMessageType        = "cpa-codex-agent-identity:unavailable"
 	themeMessageType              = "cpa-codex-agent-identity:theme"
 	managementKeyMessageType      = "cpa-codex-agent-identity:management-key"
 	managementBridgeQueryKey      = "cpa_bridge"
@@ -66,7 +77,7 @@ const (
 )
 
 var (
-	pluginVersion = "0.3.18"
+	pluginVersion = "0.3.19"
 	stateMu       sync.RWMutex
 	state         = runtimeState{
 		sidecarURL:    defaultSidecarURL,
@@ -75,6 +86,9 @@ var (
 		frameSource:   defaultSidecarOrigin,
 	}
 )
+
+//go:embed ui/*
+var pluginUIFiles embed.FS
 
 type envelope struct {
 	OK     bool            `json:"ok"`
@@ -149,6 +163,13 @@ type managementResponse struct {
 	Body       []byte      `json:"Body,omitempty"`
 }
 
+type sidecarUIAPIRequest struct {
+	Method  string            `json:"method"`
+	Path    string            `json:"path"`
+	Headers map[string]string `json:"headers,omitempty"`
+	Body    string            `json:"body,omitempty"`
+}
+
 type identifierResponse struct {
 	Identifier string `json:"identifier"`
 }
@@ -166,8 +187,9 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 				GitHubRepository: pluginRepository,
 				Logo:             pluginLogo,
 				// Sidecar endpoints are deliberately not exposed as plugin-store fields.
-				// A fresh installation uses the same-origin reverse-proxy default; the legacy
-				// sidecar_url and sidecar_api_url YAML keys remain accepted for upgrades.
+				// The plugin hosts its own browser UI and discovers the private sidecar
+				// API from runtime configuration. Legacy sidecar_url and sidecar_api_url
+				// YAML keys remain accepted for upgrades and custom deployments.
 				ConfigFields: nil,
 			},
 			Capabilities: registrationCapability{AuthProvider: true, ManagementAPI: true},
@@ -182,12 +204,22 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 				Method:      http.MethodPost,
 				Path:        managementAPICallPath,
 				Description: "CPA-compatible Codex quota API bridge for sidecar-managed auth files.",
+			}, {
+				Method:      http.MethodPost,
+				Path:        managementUIAPIPath,
+				Description: "Authenticated browser API bridge for the plugin-hosted Codex Agent Identity management page.",
 			}},
-			Resources: []resourceRoute{{
-				Path:        "/open",
-				Menu:        "Codex Agent Identity",
-				Description: "Open the Codex Agent Identity management page.",
-			}},
+			Resources: []resourceRoute{
+				{
+					Path:        "/open",
+					Menu:        "Codex Agent Identity",
+					Description: "Open the Codex Agent Identity management page.",
+				},
+				{Path: "/ui", Description: "Plugin-hosted Codex Agent Identity management page."},
+				{Path: "/app.js", Description: "Codex Agent Identity management application."},
+				{Path: "/style.css", Description: "Codex Agent Identity management styles."},
+				{Path: "/theme.js", Description: "Codex Agent Identity CPA theme bridge."},
+			},
 		})
 	case pluginabi.MethodManagementHandle:
 		return okEnvelope(handleManagementRequest(request))
@@ -394,6 +426,44 @@ func handleManagementRequest(raw []byte) managementResponse {
 		}
 		return forwardSidecarAPICall(request)
 	}
+	if requestPath == managementUIAPIFullPath {
+		if method != http.MethodPost {
+			response := managementErrorResponse(http.StatusMethodNotAllowed, "method not allowed")
+			response.Headers.Set("Allow", http.MethodPost)
+			return response
+		}
+		return forwardSidecarUIAPI(request)
+	}
+	switch requestPath {
+	case resourceUIFullPath:
+		if method != http.MethodGet {
+			response := managementErrorResponse(http.StatusMethodNotAllowed, "method not allowed")
+			response.Headers.Set("Allow", http.MethodGet)
+			return response
+		}
+		return forwardSidecarUIAsset(request, "")
+	case resourceAppJSFullPath:
+		if method != http.MethodGet {
+			response := managementErrorResponse(http.StatusMethodNotAllowed, "method not allowed")
+			response.Headers.Set("Allow", http.MethodGet)
+			return response
+		}
+		return forwardSidecarUIAsset(request, "app.js")
+	case resourceStyleCSSFullPath:
+		if method != http.MethodGet {
+			response := managementErrorResponse(http.StatusMethodNotAllowed, "method not allowed")
+			response.Headers.Set("Allow", http.MethodGet)
+			return response
+		}
+		return forwardSidecarUIAsset(request, "style.css")
+	case resourceThemeJSFullPath:
+		if method != http.MethodGet {
+			response := managementErrorResponse(http.StatusMethodNotAllowed, "method not allowed")
+			response.Headers.Set("Allow", http.MethodGet)
+			return response
+		}
+		return forwardSidecarUIAsset(request, "theme.js")
+	}
 	if requestPath != managementOpenFullPath && requestPath != resourceOpenFullPath && requestPath != legacyResourceOpenPath {
 		return managementErrorResponse(http.StatusNotFound, "management route not found")
 	}
@@ -445,6 +515,261 @@ func forwardSidecarAPICall(request managementRequest) managementResponse {
 		return managementErrorResponse(http.StatusBadGateway, "sidecar response is too large")
 	}
 	return managementResponse{StatusCode: response.StatusCode, Headers: sanitizeResponseHeaders(response.Header), Body: body}
+}
+
+func forwardSidecarUIAsset(request managementRequest, asset string) managementResponse {
+	fileName := asset
+	if fileName == "" {
+		fileName = "index.html"
+	}
+	contentTypes := map[string]string{
+		"index.html": "text/html; charset=utf-8",
+		"app.js":     "text/javascript; charset=utf-8",
+		"style.css":  "text/css; charset=utf-8",
+		"theme.js":   "text/javascript; charset=utf-8",
+	}
+	contentType, allowed := contentTypes[fileName]
+	if !allowed {
+		return managementErrorResponse(http.StatusNotFound, "plugin UI asset not found")
+	}
+	body, err := pluginUIFiles.ReadFile("ui/" + fileName)
+	if err != nil {
+		return managementErrorResponse(http.StatusNotFound, "plugin UI asset not found")
+	}
+	if len(body) > maxUIAssetBytes {
+		return managementErrorResponse(http.StatusInternalServerError, "plugin UI asset is too large")
+	}
+	frameAncestors := "'none'"
+	headers := http.Header{
+		"Content-Type":           []string{contentType},
+		"Permissions-Policy":     []string{"camera=(), microphone=(), geolocation=(), payment=(), usb=()"},
+		"Referrer-Policy":        []string{"no-referrer"},
+		"X-Content-Type-Options": []string{"nosniff"},
+		"Cache-Control":          []string{"no-store"},
+	}
+	if fileName == "index.html" {
+		if strings.EqualFold(strings.TrimSpace(request.Query.Get("embed")), "cpamc") {
+			frameAncestors = "'self'"
+		} else {
+			headers.Set("X-Frame-Options", "DENY")
+		}
+	}
+	headers.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; form-action 'none'; frame-ancestors "+frameAncestors+"; base-uri 'none'")
+	return managementResponse{
+		StatusCode: http.StatusOK,
+		Headers:    headers,
+		Body:       body,
+	}
+}
+
+func forwardSidecarUIAPI(request managementRequest) managementResponse {
+	if len(request.Body) > maxUIBridgeRequestBytes {
+		return managementErrorResponse(http.StatusRequestEntityTooLarge, "plugin UI request body is too large")
+	}
+	var bridgeRequest sidecarUIAPIRequest
+	decoder := json.NewDecoder(bytes.NewReader(request.Body))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&bridgeRequest); err != nil {
+		return managementErrorResponse(http.StatusBadRequest, "invalid plugin UI request")
+	}
+	if err := ensureJSONEOF(decoder); err != nil {
+		return managementErrorResponse(http.StatusBadRequest, "invalid plugin UI request")
+	}
+	method, relativeURL, err := normalizeSidecarUIAPIRequest(bridgeRequest)
+	if err != nil {
+		return managementErrorResponse(http.StatusBadRequest, err.Error())
+	}
+	body := []byte(bridgeRequest.Body)
+	if len(body) > maxUIForwardBodyBytes {
+		return managementErrorResponse(http.StatusRequestEntityTooLarge, "sidecar UI API body is too large")
+	}
+	target, err := sidecarUIAPIURL(currentRuntimeState(), relativeURL)
+	if err != nil {
+		return managementErrorResponse(http.StatusServiceUnavailable, err.Error())
+	}
+	upstreamRequest, err := http.NewRequest(method, target, bytes.NewReader(body))
+	if err != nil {
+		return managementErrorResponse(http.StatusBadGateway, "failed to build sidecar UI API request")
+	}
+	for name, values := range request.Headers {
+		if !strings.EqualFold(strings.TrimSpace(name), "Authorization") {
+			continue
+		}
+		for _, value := range values {
+			upstreamRequest.Header.Add(name, value)
+		}
+	}
+	upstreamRequest.Header.Set("Accept-Encoding", "identity")
+	if contentType := forwardedUIContentType(bridgeRequest.Headers); contentType != "" {
+		upstreamRequest.Header.Set("Content-Type", contentType)
+	} else {
+		upstreamRequest.Header.Del("Content-Type")
+	}
+	response, err := sidecarHTTPClient().Do(upstreamRequest)
+	if err != nil {
+		return managementErrorResponse(http.StatusBadGateway, "sidecar management API unavailable")
+	}
+	defer response.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(response.Body, int64(maxUIForwardBodyBytes)+1))
+	if err != nil {
+		return managementErrorResponse(http.StatusBadGateway, "failed to read sidecar UI API response")
+	}
+	if len(responseBody) > maxUIForwardBodyBytes {
+		return managementErrorResponse(http.StatusBadGateway, "sidecar UI API response is too large")
+	}
+	headers := sanitizeResponseHeaders(response.Header)
+	// CPA escapes JSON-looking bodies returned by authenticated plugin routes.
+	// An anti-XSSI prefix keeps the sidecar bytes opaque until the browser
+	// removes it, so error details and JSON values are not HTML-encoded.
+	headers.Set("Content-Type", "text/plain; charset=utf-8")
+	headers.Set("Cache-Control", "no-store")
+	headers.Set("X-Content-Type-Options", "nosniff")
+	bodyWithPrefix := make([]byte, 0, len(uiBridgeBodyPrefix)+len(responseBody))
+	bodyWithPrefix = append(bodyWithPrefix, uiBridgeBodyPrefix...)
+	bodyWithPrefix = append(bodyWithPrefix, responseBody...)
+	return managementResponse{StatusCode: response.StatusCode, Headers: headers, Body: bodyWithPrefix}
+}
+
+func ensureJSONEOF(decoder *json.Decoder) error {
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return errors.New("multiple JSON values")
+		}
+		return err
+	}
+	return nil
+}
+
+func normalizeSidecarUIAPIRequest(request sidecarUIAPIRequest) (string, *url.URL, error) {
+	method := strings.ToUpper(strings.TrimSpace(request.Method))
+	switch method {
+	case http.MethodGet, http.MethodPost, http.MethodDelete:
+	default:
+		return "", nil, errors.New("plugin UI method is not allowed")
+	}
+	rawPath := strings.TrimSpace(request.Path)
+	if rawPath == "" || strings.HasPrefix(rawPath, "/") || strings.Contains(rawPath, "\\") {
+		return "", nil, errors.New("plugin UI path is invalid")
+	}
+	relativeURL, err := url.ParseRequestURI("/" + rawPath)
+	if err != nil || relativeURL.IsAbs() || relativeURL.Host != "" || relativeURL.Fragment != "" {
+		return "", nil, errors.New("plugin UI path is invalid")
+	}
+	segments := strings.Split(strings.TrimPrefix(relativeURL.Path, "/"), "/")
+	for _, segment := range segments {
+		if segment == "" || segment == "." || segment == ".." {
+			return "", nil, errors.New("plugin UI path is invalid")
+		}
+	}
+	if !allowedSidecarUIAPIRoute(method, segments, relativeURL.Query()) {
+		return "", nil, errors.New("plugin UI route is not allowed")
+	}
+	return method, relativeURL, nil
+}
+
+func allowedSidecarUIAPIRoute(method string, segments []string, query url.Values) bool {
+	if len(segments) == 1 && segments[0] == "diagnostics" {
+		return method == http.MethodGet && len(query) == 0
+	}
+	if len(segments) == 1 && segments[0] == "identities" {
+		return method == http.MethodGet && len(query) == 0
+	}
+	if len(segments) == 2 && segments[0] == "identities" && segments[1] == "import" {
+		return method == http.MethodPost && len(query) == 0
+	}
+	if len(segments) == 3 && segments[0] == "identities" && segments[1] == "import" && segments[2] == "batch" {
+		return method == http.MethodPost && validBatchImportQuery(query)
+	}
+	if len(segments) == 2 && segments[0] == "identities" && validSidecarIdentityID(segments[1]) {
+		return method == http.MethodDelete && len(query) == 0
+	}
+	if len(segments) == 3 && segments[0] == "identities" && validSidecarIdentityID(segments[1]) && segments[2] == "actions" {
+		return method == http.MethodPost && len(query) == 0
+	}
+	return false
+}
+
+func validBatchImportQuery(query url.Values) bool {
+	if len(query) == 0 || len(query) > 2 {
+		return false
+	}
+	for key, values := range query {
+		if key != "preview" && key != "atomic" {
+			return false
+		}
+		if len(values) != 1 || (values[0] != "true" && values[0] != "false") {
+			return false
+		}
+	}
+	return true
+}
+
+func validSidecarIdentityID(value string) bool {
+	if len(value) != len("agent-")+12 || !strings.HasPrefix(value, "agent-") {
+		return false
+	}
+	for _, character := range value[len("agent-"):] {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func forwardedUIContentType(headers map[string]string) string {
+	for name, value := range headers {
+		if !strings.EqualFold(strings.TrimSpace(name), "Content-Type") {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		if len(value) <= 256 && !strings.ContainsAny(value, "\r\n") {
+			return value
+		}
+	}
+	return ""
+}
+
+func sidecarUIAPIURL(current runtimeState, relativeURL *url.URL) (string, error) {
+	if relativeURL == nil {
+		return "", errors.New("plugin UI path is invalid")
+	}
+	target, err := sidecarUIBaseURL(current)
+	if err != nil {
+		return "", err
+	}
+	target.Path += "api/" + strings.TrimPrefix(relativeURL.Path, "/")
+	target.RawPath = ""
+	target.RawQuery = relativeURL.RawQuery
+	return target.String(), nil
+}
+
+func sidecarUIBaseURL(current runtimeState) (*url.URL, error) {
+	apiTarget, err := sidecarManagementAPIURL(current)
+	if err != nil {
+		return nil, err
+	}
+	target, err := url.Parse(apiTarget)
+	if err != nil || !target.IsAbs() || target.Host == "" {
+		return nil, errors.New("sidecar API target is invalid")
+	}
+	uiPath := defaultSidecarURL
+	uiURL, parseErr := url.Parse(strings.TrimSpace(current.sidecarURL))
+	if parseErr != nil {
+		return nil, errors.New("sidecar_url is invalid")
+	}
+	if uiURL.Path != "" && uiURL.Path != "/" {
+		uiPath = uiURL.Path
+	}
+	if !strings.HasPrefix(uiPath, "/") || !strings.HasSuffix(uiPath, "/") {
+		return nil, errors.New("sidecar_url path is invalid")
+	}
+	target.User = nil
+	target.Path = uiPath
+	target.RawPath = ""
+	target.RawQuery = ""
+	target.Fragment = ""
+	return target, nil
 }
 
 var sidecarClient = newSidecarHTTPClient()
@@ -650,7 +975,7 @@ func managementFrameSourcesForState(current runtimeState) string {
 	if !localSidecarFallbackEnabled(current.sidecarURL) {
 		return sources
 	}
-	for _, candidate := range []string{legacyLocalSidecarOrigin, legacyLocalhostOrigin, legacyIPv6Origin} {
+	for _, candidate := range []string{legacyLocalSidecarOrigin, legacyLocalhostOrigin} {
 		if !containsCSPSource(sources, candidate) {
 			sources += " " + candidate
 		}
@@ -722,9 +1047,10 @@ func managementHTML(sidecarURL, embedURL string) string {
 	jsURL, _ := json.Marshal(sidecarURL)
 	localDefaultURL, _ := json.Marshal(defaultSidecarURL)
 	legacyLocalURL, _ := json.Marshal(legacyLocalSidecarURL)
-	localLoopbackURLs, _ := json.Marshal([]string{legacyLocalSidecarURL, legacyLocalhostSidecarURL, legacyIPv6SidecarURL})
+	localLoopbackURLs, _ := json.Marshal([]string{legacyLocalSidecarURL, legacyLocalhostSidecarURL})
 	sameOriginPath, _ := json.Marshal("/agent-identity/")
 	authType, _ := json.Marshal(managementKeyMessageType)
+	unavailableType, _ := json.Marshal(unavailableMessageType)
 	bridgeQueryKey, _ := json.Marshal(managementBridgeQueryKey)
 	securePrefix, _ := json.Marshal(secureStoragePrefix)
 	secureSalt, _ := json.Marshal(secureStorageSalt)
@@ -732,6 +1058,7 @@ func managementHTML(sidecarURL, embedURL string) string {
 	authScope, _ := json.Marshal(authScopePrefix)
 	authSelection, _ := json.Marshal(authSelectionPrefix)
 	managementOpenURLPath, _ := json.Marshal(managementOpenFullPath)
+	resourceUIURLPath, _ := json.Marshal(resourceUIFullPath)
 	legacyManagementKeyStorage, _ := json.Marshal(legacyManagementKeyStorageKey)
 	template := `<!doctype html>
 <html lang="zh-CN" data-theme="white">
@@ -762,8 +1089,8 @@ func managementHTML(sidecarURL, embedURL string) string {
 <body>
   <main class="shell">
     <iframe id="identityFrame" class="identity-frame" title="Codex Agent Identity" data-src="__EMBED_URL__"></iframe>
-    <section class="status"><div class="panel">Connecting to Codex Agent Identity...</div></section>
-    <section class="fallback"><div class="panel"><h1>Codex Agent Identity temporarily unavailable</h1><p>Confirm <span class="code">sidecar_url</span> points to an accessible sidecar management page and allows embedding by CPA Management Center.</p><p>Requires sidecar __MIN_VERSION__ or later. Prefer serving it under the same origin as CPAMC, for example <span class="code">/agent-identity/</span>.</p><div class="actions"><button id="retry" class="primary" type="button">Retry</button><button id="open" type="button">Open in new window</button></div></div></section>
+    <section class="status"><div class="panel">正在连接 Codex Agent Identity…</div></section>
+    <section class="fallback"><div class="panel"><h1>Codex Agent Identity 暂时不可用</h1><p>插件页面已安装，但 CPA 后端无法连接配套 sidecar。</p><p>需要 sidecar __MIN_VERSION__ 或更高版本。Docker 部署应让 CPA 与 sidecar 加入同一私有网络，并设置 <span class="code">CODEX_AGENT_IDENTITY_SIDECAR_HOSTS</span>。浏览器侧反向代理不是必需项。</p><div class="actions"><button id="retry" class="primary" type="button">重试</button><button id="open" type="button">打开备用入口</button></div></div></section>
   </main>
   <script>
   (function(){
@@ -771,6 +1098,7 @@ func managementHTML(sidecarURL, embedURL string) string {
     const storageKey='cli-proxy-theme';
     const themeType='__THEME_TYPE__';
     const readyType='__READY_TYPE__';
+    const unavailableType=__UNAVAILABLE_TYPE__;
     const authType=__AUTH_TYPE__;
     const bridgeQueryKey=__BRIDGE_QUERY_KEY__;
     const secureStoragePrefix=__SECURE_STORAGE_PREFIX__;
@@ -779,6 +1107,7 @@ func managementHTML(sidecarURL, embedURL string) string {
     const authScopePrefix=__AUTH_SCOPE_PREFIX__;
     const authSelectionPrefix=__AUTH_SELECTION_PREFIX__;
     const managementOpenURLPath=__MANAGEMENT_OPEN_URL_PATH__;
+    const resourceUIURLPath=__RESOURCE_UI_URL_PATH__;
     const legacyManagementKeyStorageKey=__LEGACY_MANAGEMENT_KEY_STORAGE_KEY__;
     const rootURL=__ROOT_URL__;
     const localDefaultURL=__LOCAL_DEFAULT_URL__;
@@ -1045,6 +1374,7 @@ func managementHTML(sidecarURL, embedURL string) string {
     const candidateURLs=[];
     const localLoopbackURLs=__LOCAL_LOOPBACK_URLS__;
     function addCandidate(raw){
+      if(!raw)return;
       try{
         const value=new URL(raw,window.location.href);
         if(!candidateURLs.includes(value.href))candidateURLs.push(value.href);
@@ -1058,12 +1388,33 @@ func managementHTML(sidecarURL, embedURL string) string {
       try{return isLoopbackHost(new URL(window.location.href).hostname)}catch(_){return false}
     }
     function addEmbeddedCandidate(raw){
+      if(!raw)return;
       try{
         const value=new URL(raw,window.location.href);
         value.searchParams.set('embed','cpamc');
         addCandidate(value.href);
       }catch(_){}
     }
+    function pluginHostedUIURL(){
+      try{
+        const value=new URL(window.location.href);
+        const lowerPath=value.pathname.toLowerCase();
+        const resourceMarker='/v0/resource/plugins/__PLUGIN_ID__/';
+        const resourceIndex=lowerPath.lastIndexOf(resourceMarker);
+        const managementIndex=lowerPath.lastIndexOf(managementOpenURLPath.toLowerCase());
+        if(resourceIndex>=0){
+          value.pathname=value.pathname.slice(0,resourceIndex)+resourceUIURLPath;
+        }else if(managementIndex>=0&&managementIndex+managementOpenURLPath.length===value.pathname.length){
+          value.pathname=value.pathname.slice(0,managementIndex)+resourceUIURLPath;
+        }else{
+          return '';
+        }
+        value.search='';
+        value.hash='';
+        return value.href;
+      }catch(_){return ''}
+    }
+    addEmbeddedCandidate(pluginHostedUIURL());
     try{
       const configured=new URL(frame.dataset.src,window.location.href);
       const localDefault=new URL(localDefaultURL,window.location.href);
@@ -1129,6 +1480,12 @@ func managementHTML(sidecarURL, embedURL string) string {
         ready();
         return;
       }
+      if(frame&&event.source===frame.contentWindow&&data.type===unavailableType){
+        if(childOrigin!=='*'&&event.origin!==childOrigin)return;
+        if(data.nonce!==bridgeNonce)return;
+        tryNextCandidate();
+        return;
+      }
       if(window.parent!==window&&event.source===window.parent&&data.type===themeType){
         inheritedTheme=data.theme;
         inheritedVariables=data.variables&&typeof data.variables==='object'?data.variables:null;
@@ -1167,15 +1524,18 @@ func managementHTML(sidecarURL, embedURL string) string {
 		"__AUTH_SCOPE_PREFIX__", string(authScope),
 		"__AUTH_SELECTION_PREFIX__", string(authSelection),
 		"__MANAGEMENT_OPEN_URL_PATH__", string(managementOpenURLPath),
+		"__RESOURCE_UI_URL_PATH__", string(resourceUIURLPath),
 		"__LEGACY_MANAGEMENT_KEY_STORAGE_KEY__", string(legacyManagementKeyStorage),
+		"__PLUGIN_ID__", pluginID,
 		"__READY_TYPE__", readyMessageType,
+		"__UNAVAILABLE_TYPE__", string(unavailableType),
 		"__THEME_TYPE__", themeMessageType,
 	).Replace(template)
 }
 
 func configFallbackHTML(message string) string {
 	if strings.TrimSpace(message) == "" {
-		message = "sidecar_url is not configured"
+		message = "plugin configuration is invalid"
 	}
 	escapedMessage := html.EscapeString(message)
 	return `<!doctype html>
@@ -1193,12 +1553,12 @@ func configFallbackHTML(message string) string {
 <body>
   <main class="panel">
     <h1>Codex Agent Identity</h1>
-    <p>The plugin is installed but cannot connect to the sidecar.</p>
+    <p>The plugin is installed, but its legacy sidecar configuration is invalid.</p>
     <p class="error">` + escapedMessage + `</p>
     <ol>
-      <li>Start the Codex Agent Identity sidecar separately and configure it to use the same management key as CPA.</li>
-      <li>In CPA plugin settings, enter a browser-reachable <code>sidecar_url</code>. A same-origin reverse proxy path such as <code>/agent-identity/</code> is recommended; direct local access can use <code>http://127.0.0.1:18787/agent-identity/</code>.</li>
-      <li>Save the configuration and reopen this management page. Batch import and auth-file synchronization start here.</li>
+      <li>Remove invalid legacy <code>sidecar_url</code> or <code>sidecar_api_url</code> values unless this deployment intentionally overrides automatic discovery.</li>
+      <li>Ensure CPA can reach the sidecar on its private network through <code>CODEX_AGENT_IDENTITY_SIDECAR_HOSTS</code>, and use the same management key for CPA and the sidecar.</li>
+      <li>Save the configuration and reopen the native plugin page. A browser-facing sidecar reverse proxy is optional.</li>
     </ol>
     <p class="note">The CPA Plugin Store installs only the .so; it does not create the sidecar container, Docker network, keys, or data directory. CPA native Codex OAuth login remains managed by CPA and is not intercepted by this plugin.</p>
   </main>

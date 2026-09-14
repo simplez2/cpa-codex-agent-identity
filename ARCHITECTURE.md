@@ -13,16 +13,18 @@ Identity JWTs, not to the corrected native PAT path. Proxy-hop and file-persiste
 parity for AgentAssertion credentials remains an explicit open limitation.
 
 1. **CPA plugin control plane**: registers an AuthProvider under the private
-   `codex-agent-identity` provider key and one authenticated Management API route.
+   `codex-agent-identity` provider key, authenticated Management API routes and
+   browser resources embedded in the `.so`.
    It recognizes only sidecar-owned auth files marked `auth_mode=agent_identity_sidecar`,
    preserves the upstream credential as native `access_token` metadata, maps the
    separate opaque `sidecar_client_key` through CPA's static
    `header:Authorization` attribute without setting `api_key`, and returns
    `AuthData.Provider=codex` so those records use CPA's first-class Codex executor.
    Native `type=codex` OAuth files keep CPA's built-in parser, login, refresh, and
-   executor path; the plugin never claims the native `codex` AuthProvider. It exposes
-   the authenticated Management wrapper plus one safe resource wrapper for CPAMC
-   plugin pages and never returns either credential through those wrappers.
+   executor path; the plugin never claims the native `codex` AuthProvider. It
+   exposes the authenticated Management wrapper, a safe CPAMC resource wrapper,
+   the complete management UI assets and an allowlisted server-side sidecar API
+   bridge. It never returns either original credential through those routes.
 2. **Sidecar management plane**: validates single or batch imports, stores
    credentials encrypted, and transactionally adds, disables, refreshes, or
    removes native Codex auth files through CPA's management API.
@@ -91,9 +93,7 @@ keeps CPA's native image routes working when CPA selects a direct image model.
 ## Trust boundaries
 
 ~~~text
-browser -> TLS reverse proxy -> sidecar dashboard -> authenticated identity API
-                                                   |
-                                                   +-> CPA auth-file API
+Optional browser fallback -> TLS reverse proxy -> sidecar dashboard
 
 Management-key client -> CPA /v0/management/codex-agent-identity/open
                               |
@@ -101,7 +101,13 @@ Management-key client -> CPA /v0/management/codex-agent-identity/open
 
 CPAMC plugin page -> CPA /v0/resource/plugins/codex-agent-identity/open
                               |
-                              +-> same wrapper; no secret in resource response
+                              +-> plugin-hosted UI assets; no secret in resources
+                              |
+                              +-> authenticated /v0/management/.../ui-api
+                                      |
+                                      +-> private sidecar identity API
+                                              |
+                                              +-> CPA auth-file API
 
 PAT client -> CPA native Codex executor -> credential proxy -> OpenAI origins
 JWT client -> CPA stock executor -> sidecar data plane -> fixed OpenAI origins
@@ -111,13 +117,16 @@ JWT client -> CPA stock executor -> sidecar data plane -> fixed OpenAI origins
 
 CPA intentionally leaves `/v0/resource/plugins/...` outside Management-key
 authentication because CPAMC loads these resources inside an iframe. The plugin
-therefore registers a resource wrapper that contains no hard-coded Management key,
-original credential, or privileged host callback. It reuses CPAMC's scoped
-obfuscated auth state only through a source-, origin-, and nonce-checked
-`postMessage`; the key is never added to the iframe URL or persisted by the
-wrapper. The resource route embeds the sidecar dashboard; listing, previewing,
-importing, enabling, disabling, refreshing, and deleting
-identities still require the sidecar's own Bearer management password.
+therefore registers a resource wrapper and static assets that contain no
+hard-coded Management key, original credential, or privileged host callback. It
+reuses CPAMC's scoped obfuscated auth state only through a source-, origin-, and
+nonce-checked `postMessage`; the key is never added to the iframe URL or
+persisted by the wrapper. CPA authenticates the UI API request before the plugin
+forwards only registered methods, paths and query keys to the private sidecar.
+Cookie, browser-origin, proxy and hop-by-hop headers are removed. The sidecar
+must use the same Management key for the embedded route. A direct
+`/agent-identity/` browser route remains an optional compatibility fallback,
+not a prerequisite for plugin-pages.
 
 During registration, the plugin echoes the CPA host's requested schema version,
 clamped to the SDK maximum. This keeps the dynamic library loadable by older CPA

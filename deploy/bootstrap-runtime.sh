@@ -6,13 +6,14 @@ usage() {
 Usage: sh deploy/bootstrap-runtime.sh [--start] [--sidecar-url URL]
 
 Prepares a fresh CPA + Codex Agent Identity deployment in this repository.
-The default sidecar URL is http://127.0.0.1:18787/agent-identity/ for a browser on the same host.
-Use --sidecar-url /agent-identity/ when a reverse proxy exposes that path on the CPA origin.
+The native plugin page is embedded in the .so and does not need a browser-facing
+sidecar URL. Use --sidecar-url only to keep a direct dashboard fallback, for
+example /agent-identity/ behind the CPA origin or a host-local loopback URL.
 EOF
 }
 
 start_stack=false
-sidecar_url=${SIDECAR_UI_URL:-http://127.0.0.1:18787/agent-identity/}
+sidecar_url=${SIDECAR_UI_URL:-}
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --start)
@@ -36,19 +37,21 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
-case "$sidecar_url" in
-  /*|http://*|https://*) ;;
-  *)
-    echo "sidecar URL must start with /, http://, or https://" >&2
-    exit 2
-    ;;
-esac
-case "$sidecar_url" in
-  *'"'*|*'#'*|*'?'*)
-    echo "sidecar URL must not contain quotes, query parameters, or fragments" >&2
-    exit 2
-    ;;
-esac
+if [ -n "$sidecar_url" ]; then
+  case "$sidecar_url" in
+    /*|http://*|https://*) ;;
+    *)
+      echo "sidecar URL must start with /, http://, or https://" >&2
+      exit 2
+      ;;
+  esac
+  case "$sidecar_url" in
+    *'"'*|*'#'*|*'?'*)
+      echo "sidecar URL must not contain quotes, query parameters, or fragments" >&2
+      exit 2
+      ;;
+  esac
+fi
 
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 project_root=$(CDPATH= cd -- "$script_dir/.." && pwd)
@@ -110,8 +113,10 @@ plugins:
     codex-agent-identity:
       enabled: true
       priority: 1000
-      sidecar_url: "$sidecar_url"
 EOF
+  if [ -n "$sidecar_url" ]; then
+    printf '      sidecar_url: "%s"\n' "$sidecar_url" >> "$config_file"
+  fi
   chmod 600 "$config_file" 2>/dev/null || true
   echo "Created $config_file"
 else
@@ -126,11 +131,18 @@ plugins:
     codex-agent-identity:
       enabled: true
       priority: 1000
-      sidecar_url: "$sidecar_url"
 
 CPA remote-management.secret-key must match:
   $runtime_root/secrets/management-key
 EOF
+  if [ -n "$sidecar_url" ]; then
+    cat <<EOF
+Optional direct-dashboard fallback:
+      sidecar_url: "$sidecar_url"
+EOF
+  else
+    echo "Leave sidecar_url unset; the embedded plugin page uses the private sidecar route."
+  fi
 fi
 
 if command -v docker >/dev/null 2>&1; then
@@ -160,10 +172,13 @@ Next steps:
 1. Start the stack (skip if --start was used):
    docker compose --project-directory "$project_root" --env-file "$env_file" -f "$script_dir/docker-compose.production.yml" up -d
 2. Open http://127.0.0.1:8317/management.html#/plugin-store and install codex-agent-identity.
-3. Open $sidecar_url and enter the same management key used by CPA.
+3. Open plugin-pages -> Codex Agent Identity. The embedded page reuses the same management key used by CPA.
 4. After Plugin Store installation/upgrades, set CPA_PLUGIN_MOUNT_MODE=ro in $env_file and recreate CPA.
 
 The generated CPA API key is stored at:
   $api_key_file
 Do not publish config.yaml, .env, runtime/secrets, auths, or logs.
 EOF
+if [ -n "$sidecar_url" ]; then
+  echo "Optional direct-dashboard fallback: $sidecar_url"
+fi

@@ -73,7 +73,7 @@ deployment/
 4. 将动态库放到 runtime/cpa-plugins 根目录。
 5. 启用 codex-agent-identity 插件；新安装不要填写 sidecar_url，只有旧的自定义反向代理部署才保留它。
 6. 使用 deploy/docker-compose.canary.yml 先启动隔离 canary。
-7. 验证 plugin registration、/healthz、/agent-identity/ 登录和空 identity list。
+7. 验证 plugin registration、/healthz、原生 plugin-pages 内嵌页面登录和空 identity list；`/agent-identity/` 只作为可选直接回退。
 8. 预检一条测试凭据，再确认 CPA auth 文件的 `access_token` 是真实上游凭证、`sidecar_client_key` 是独立 `cais_`，且管理响应和日志都不回显二者。
 9. 验证 HTTP、SSE、WebSocket、图片、usage 与 proxy 热加载。
 10. 通过后固定 CPA/sidecar digest，再部署 production compose。
@@ -169,9 +169,9 @@ overlay 与官方 Management Center commit 绑定。每次 CPA 前端升级都�
 - summary 中 unsynced=0；
 - CPA auth files 的 `access_token`、`sidecar_client_key` 和 base_url 分工正确；
 - proxy reload 无持续错误；
-- `/v0/resource/plugins/codex-agent-identity/open` 返回 wrapper，且 wrapper 不包含 secret；
+- `/v0/resource/plugins/codex-agent-identity/open` 返回 wrapper，内嵌 UI 资源与受认证的 `ui-api` 可用，且资源响应不包含 secret；
 - Management route 无 key 被拒绝；
-- dashboard API 无 key 返回 401；
+- sidecar API 无 key 返回 401；如部署了直接 dashboard，再单独验证该回退入口；
 - CPA/sidecar/plugin/overlay 版本与 digest 有记录。
 
 ## 11. 常见故障
@@ -186,7 +186,11 @@ overlay 与官方 Management Center commit 绑定。每次 CPA 前端升级都�
 
 ### 插件-pages 菜单不显示或资源入口返回 404
 
-当前插件不再依赖外挂卡片按钮。应安装[当前已验收 Release](https://github.com/simplez2/cpa-codex-agent-identity/releases/latest) 的插件，而非撤回版本。CPA 的 `plugins.enabled` 和该插件配置的 `enabled` 都应为 `true`，然后重启 CPA。CPA 资源入口是 `/v0/resource/plugins/codex-agent-identity/open`，正常应返回 HTML wrapper；若仍为 404，通常是插件没有注册成功、CPA 使用不支持资源路由的旧版本，或 CPAMC/CPA 仍在使用旧插件进程。直接入口 `/agent-identity/` 仍可作为回退。
+当前插件不再依赖外挂卡片按钮。CPA 的 `plugins.enabled` 和该插件配置的 `enabled` 都应为 `true`，然后重启 CPA。CPA 资源入口是 `/v0/resource/plugins/codex-agent-identity/open`，正常应返回 HTML wrapper；v0.3.19 候选还会从 `.so` 提供 `/ui`、`/app.js`、`/style.css`、`/theme.js`。当前正式 v0.3.18 尚未内嵌这些资源，仍需可访问的 `/agent-identity/`。若 `/open` 仍为 404，通常是插件没有注册成功、CPA 使用不支持资源路由的旧版本，或 CPAMC/CPA 仍在使用旧插件进程。
+
+### 页面能打开但提示 sidecar 不可用
+
+先确认 CPA 容器或进程能通过私有网络访问 sidecar，而不是只确认浏览器或宿主机能访问 18787。Docker 部署优先设置 `CODEX_AGENT_IDENTITY_SIDECAR_HOSTS`，并让 CPA 与 sidecar 使用同一个 Management key。只有需要直接 dashboard 回退时才配置浏览器侧 `/agent-identity/` 反向代理。
 
 ### 401
 
@@ -239,7 +243,8 @@ overlay 与官方 Management Center commit 绑定。每次 CPA 前端升级都�
 - [ ] gitleaks 检查当前树与完整 Git 历史。
 - [ ] 搜索真实邮箱、IP、域名、token、Cookie、auth ID 和容器名。
 - [ ] canary 使用目标官方 CPA image digest。
-- [ ] plugin resource route 返回 wrapper；wrapper 不内置或持久化 Management key/token，不把 secret 放进 iframe URL，并只用 source/origin/nonce 校验的 `postMessage` 复用 CPAMC scoped 登录状态。
+- [ ] plugin resource route 返回 wrapper 与内嵌静态资源；wrapper 不内置或持久化 Management key/token，不把 secret 放进 iframe URL，并只用 source/origin/nonce 校验的 `postMessage` 复用 CPAMC scoped 登录状态。
+- [ ] `ui-api` 只允许已登记的身份方法/路径/query，CPA 到 sidecar 走私有网络，错误 JSON 未被 HTML 转义，Cookie/Origin/代理头未被转发。
 - [ ] Management 和 sidecar API 未认证访问被拒绝。
 - [ ] Draft PR 更新现有编号，不创建重复 PR。
 
