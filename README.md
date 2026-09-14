@@ -18,9 +18,10 @@
 > CPA's native execution path; Agent Identity JWTs still need a bridge. This is
 > an independent project, not an official OpenAI or CPA product.
 >
-> The current unreleased source embeds the management page in the `.so`; the
+> The [v0.3.19 prerelease](docs/releases/v0.3.19.md) embeds the management page in the `.so`; the
 > browser no longer needs direct access to the sidecar. CPA still needs a
-> private network path to the separately deployed sidecar.
+> private network path to the separately deployed sidecar. Its management-page
+> rollout passed; full account/model/proxy acceptance is still pending.
 
 ## Your credentials. CPA's native controls.
 
@@ -127,7 +128,7 @@ Treat the management password, encryption key, CPA auth files, upstream credenti
 - Docker or another process supervisor for the sidecar.
 - Private CPA-to-sidecar connectivity and the same Management key on both
   services. Publishing `/agent-identity/` to the browser becomes optional in
-  the unreleased v0.3.19 line; the recommended v0.3.18 still requires it.
+  the v0.3.19 prerelease line; the recommended v0.3.18 still requires it.
 
 ## Build and test
 

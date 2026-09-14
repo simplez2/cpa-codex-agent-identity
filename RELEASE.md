@@ -131,6 +131,14 @@ make verify-published-release
   `latest` without rebuilding or replacing any historical version tag.
 - Back up current deployment files, preserve current account/Team/proxy/status
   settings, and validate on a disposable stock-CPA instance before cutover.
+- Keep verified rollback plugin binaries **outside CPA's plugin discovery
+  directory**. Stock CPA can remove unselected older versions at startup.
+  Merely leaving an old `.so` beside the new one is not a rollback backup.
+  Restore the old binary and matching configuration before restarting during
+  rollback, then verify registration and the process-mapped checksum.
+- Match the canary's plugin-mount permissions to production. A read-only
+  canary cannot validate old-version cleanup that occurs with a writable
+  production mount. Exercise an upgrade and a rollback before cutover.
 - Acceptance must cover file-backed controls, save/restart persistence, complete
   model streams, native quota calls, a usable proxy and a broken proxy. A sidecar
   health response or `Provider: codex` alone is not native compatibility evidence.

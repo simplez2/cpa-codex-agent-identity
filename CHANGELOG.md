@@ -36,8 +36,12 @@ workflow has produced and checksummed the artifacts.
 - Clarify that exact-artifact acceptance precedes registry publication and that
   merged fixes, published releases and deployments are separate states.
 
-The published registry, stable release and deployment remain on v0.3.18 until
-the immutable v0.3.19 assets pass the full release acceptance sequence.
+The v0.3.19 prerelease assets and owner-authorized management-page rollout have
+been verified; see [the deployment record](docs/releases/v0.3.19.md), including
+the corrected writable-mount rollback procedure. The registry and stable
+recommendation remain on v0.3.18 while full account-dependent acceptance is
+pending. This numbered Unreleased section tracks stable acceptance, not the
+absence of prerelease assets.
 
 ## [0.3.18] - 2026-09-08
 

@@ -1,7 +1,8 @@
 # Compatibility and limitations / 兼容性与边界
 
 Updated 2026-09-14. **v0.3.18** remains the accepted release; **v0.3.19** is a
-source candidate for the embedded Plugin Store management page. Build
+published prerelease with a verified management-page rollout on stock CPA
+v7.3.0. Full account/data-plane acceptance is still pending. Build
 compatibility, source-level smoke tests and exact-asset live acceptance are
 different claims. Do not extrapolate one tested deployment to all accounts,
 proxies, future CPA versions or credential types.
@@ -11,7 +12,7 @@ proxies, future CPA versions or credential types.
 | Item | Current baseline | Meaning |
 | --- | --- | --- |
 | Recommended plugin and sidecar | v0.3.18 | [Immutable assets and acceptance](releases/v0.3.18.md) |
-| Current source candidate | v0.3.19 | Embedded plugin page passed stock CPA v7.2.152 source-candidate smoke; immutable Linux assets and production acceptance are pending |
+| Current prerelease | v0.3.19 | Exact assets and management-page rollout passed on stock CPA v7.3.0; account/model/quota/proxy acceptance is pending; [record](releases/v0.3.19.md) |
 | CPA SDK used to compile the plugin | v7.2.146 | Build baseline, not a promise for every newer runtime |
 | Exact stock CPA runtime accepted for v0.3.18 | v7.2.152 | Native PAT acceptance; see the recorded test scope |
 | Bundled CPA image example | v7.2.146 | Older example baseline; explicitly select and test the CPA image you deploy |
