@@ -81,6 +81,7 @@ make verify-published-release
    python3 .github/scripts/debug-plugin-install.py \
      --cpa-url http://127.0.0.1:18317 --key-file /path/to/canary/management-key \
      --expect-version "$VERSION" --plugin-file /path/to/candidate.so \
+     --cpa-container cli-proxy-api-canary \
      --expect-sha256 "$VERIFIED_PLUGIN_SHA256" --negative-checks
    ```
 
@@ -89,7 +90,11 @@ make verify-published-release
    registration, the embedded UI assets, authenticated read operations and
    private sidecar connectivity; it does not replace browser, model transport,
    credential persistence or proxy acceptance. It never imports credentials or
-   calls reset-credit endpoints.
+   calls reset-credit endpoints. Run it on the Linux Docker host through the
+   authenticated deployment session. `--cpa-container` checks the actual
+   process-mapped file's inode/device and checksum; `--plugin-file` alone checks
+   only that named file and cannot prove CPA loaded it. Replace the container
+   name for production and always restart after installing the verified asset.
 7. **Publish the registry in a separate commit.** Download the two release
    archives into one directory and let the checked-in helper calculate their
    exact sizes and SHA-256 values:

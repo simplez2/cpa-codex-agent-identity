@@ -1,6 +1,9 @@
 import importlib.util
 import json
+import hashlib
+import os
 from pathlib import Path
+import tempfile
 import unittest
 
 
@@ -12,6 +15,24 @@ spec.loader.exec_module(debug)
 
 
 class InstallCheckTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "posix", "Linux mapped-file inspection")
+    def test_mapped_artifact_is_required_and_hashed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "plugin.so"
+            path.write_bytes(b"synthetic-plugin")
+            info = path.stat()
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            row = (f"1000-2000 r-xp 0000 {os.major(info.st_dev):02x}:"
+                   f"{os.minor(info.st_dev):02x} {info.st_ino} /plugin.so")
+            self.assertEqual(debug.verify_mapped_plugin(path, row, digest), digest)
+            for maps, checksum in (
+                ("", digest), (row + " (deleted)", digest),
+                (row.replace(f" {info.st_ino} ", f" {info.st_ino + 1} "), digest),
+                (row, "0" * 64),
+            ):
+                with self.subTest(maps=maps), self.assertRaises(debug.CheckFailed):
+                    debug.verify_mapped_plugin(path, maps, checksum)
+
     def test_rejects_unsafe_management_urls(self):
         for url in (
             "http://remote.invalid", "https://user:secret@host.invalid",
