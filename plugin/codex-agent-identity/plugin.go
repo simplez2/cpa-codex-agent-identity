@@ -1246,10 +1246,12 @@ func managementHTML(sidecarURL, embedURL string) string {
       if(!parsed||typeof parsed!=='object')return null;
       return parsed.state&&typeof parsed.state==='object'?parsed.state:parsed;
     }
-    function managementKeyFromStoredValue(raw){
+    function managementKeyFromStoredValue(raw,scopes){
       const parsed=parsedStoredValue(raw);
       if(typeof parsed==='string')return normalizedManagementKey(parsed);
       const state=parsed&&typeof parsed==='object'&&parsed.state&&typeof parsed.state==='object'?parsed.state:parsed;
+      const storedAPIBase=normalizedAPIBase(state&&state.apiBase);
+      if(storedAPIBase&&(!Array.isArray(scopes)||!scopes.includes(storedAPIBase)))return '';
       return normalizedManagementKey(state&&state.managementKey);
     }
     function normalizedAPIBase(raw){
@@ -1353,8 +1355,8 @@ func managementHTML(sidecarURL, embedURL string) string {
         const key=scopedManagementKey(scopes[index]);
         if(key)return key;
       }
-      return managementKeyFromStoredValue(localStorageValue(authStorageKey)) ||
-        managementKeyFromStoredValue(localStorageValue(legacyManagementKeyStorageKey));
+      return managementKeyFromStoredValue(localStorageValue(authStorageKey),scopes) ||
+        managementKeyFromStoredValue(localStorageValue(legacyManagementKeyStorageKey),scopes);
     }
     function postManagementKey(){
       if(!frame||!frame.contentWindow||!bridgeNonce||childOrigin==='*')return;
