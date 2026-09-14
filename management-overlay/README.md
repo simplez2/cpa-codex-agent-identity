@@ -53,8 +53,10 @@ second management entry point. The `codex-agent-identity` plugin registers its
 own safe `/v0/resource/plugins/.../open` resource, which CPAMC exposes through
 its native plugin-pages menu. This keeps the plugin discoverable through the
 same surface as other CPA plugins instead of introducing a card-specific
-shortcut. The sidecar UI performs its own Bearer-key authentication before
-listing, previewing, or importing identities.
+shortcut. Current development builds serve the complete page from the `.so`
+and use an authenticated plugin Management route to reach the private sidecar.
+The sidecar still verifies the same Bearer management key before listing,
+previewing, or importing identities.
 
 The sidecar import flow supports pasted text or a local file, requires a
 preview, reports ready/duplicate/invalid entries, and can commit atomically.
@@ -63,8 +65,9 @@ Sensitive import text is not stored by this overlay.
 Installing the plugin `.so` or adding its registry source is enough for the
 native plugin-pages entry on CPA builds that support ResourceRoute menus. Open
 `management.html#/plugins`, select the **Codex Agent Identity** menu, and use
-the embedded page. The direct fallback remains `/agent-identity/`. The overlay
-is optional and only supplies reset-credit visibility plus the quota bridge.
+the embedded page. The direct `/agent-identity/` route is an optional
+compatibility fallback, not a plugin-page prerequisite. The overlay is optional
+and only supplies reset-credit visibility plus the quota bridge.
 
 ## Rebuild
 

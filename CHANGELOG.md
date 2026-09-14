@@ -4,7 +4,20 @@ All notable changes to `cpa-codex-agent-identity` are documented here.
 Published registry and release assets are updated only after the tagged release
 workflow has produced and checksummed the artifacts.
 
-## [Unreleased]
+## [Unreleased] - 0.3.19
+
+### Fixed
+
+- Bundle the complete Codex Agent Identity management UI into the CPA plugin
+  artifact, so the native plugin-pages entry no longer depends on a
+  browser-reachable `/agent-identity/` reverse proxy.
+- Add an authenticated CPA Management API bridge from the embedded UI to the
+  private sidecar. Preserve sidecar JSON and error bodies across CPA's HTML
+  sanitizer, reject unregistered methods and paths, and strip browser,
+  transport, proxy and cookie headers at the trust boundary.
+- Keep the direct sidecar dashboard as an optional compatibility fallback when
+  the private CPA-to-sidecar hop is unavailable. Resolve both embedded assets
+  and Management API calls correctly when CPAMC is served under a URL prefix.
 
 ### Documentation and maintenance
 
@@ -18,8 +31,8 @@ workflow has produced and checksummed the artifacts.
 - Clarify that exact-artifact acceptance precedes registry publication and that
   merged fixes, published releases and deployments are separate states.
 
-This maintenance does not change runtime code, assign a new version, replace
-published assets, deploy services or resolve the tracked quota limitations.
+The published registry, stable release and deployment remain on v0.3.18 until
+the immutable v0.3.19 assets pass the full release acceptance sequence.
 
 ## [0.3.18] - 2026-09-08
 

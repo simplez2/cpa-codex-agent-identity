@@ -17,6 +17,10 @@
 > The Plugin Store installs the plugin, **not** the required sidecar. PATs use
 > CPA's native execution path; Agent Identity JWTs still need a bridge. This is
 > an independent project, not an official OpenAI or CPA product.
+>
+> The current unreleased source embeds the management page in the `.so`; the
+> browser no longer needs direct access to the sidecar. CPA still needs a
+> private network path to the separately deployed sidecar.
 
 ## Your credentials. CPA's native controls.
 
@@ -86,7 +90,10 @@ must be protected as plaintext secrets even though the sidecar store is encrypte
 - The sidecar data directory is created with mode 0700 and its identity files with mode 0600 on POSIX systems. The sidecar only uploads and restores CPA auth files through CPA's Management API; operators must enforce an owner-only CPA auth directory and mode 0600 for those auth files.
 - The data encryption key is mounted separately from the encrypted data volume.
 - Management endpoints use constant-time management-key comparison.
-- The sidecar UI stores the management password only in the current tab's `sessionStorage`. The plugin wrapper can read CPAMC's own scoped, obfuscated auth state, but never copies the key into an iframe URL, Cookie, export, or sidecar `localStorage`.
+- The management UI stores the management password only in the current tab's
+  `sessionStorage`. The plugin wrapper can read CPAMC's own scoped, obfuscated
+  auth state, but never copies the key into an iframe URL, Cookie, export, or
+  persistent sidecar storage.
 - Batch responses and exports never contain an original token, Authorization header, Cookie, private key, account ID, task ID, or proxy password.
 - Import requests have size and item-count limits.
 - Batch validation uses bounded concurrency.
@@ -95,12 +102,14 @@ must be protected as plaintext secrets even though the sidecar store is encrypte
   `/v0/resource/plugins/codex-agent-identity/open`, so supported CPAMC builds can
   show it under the plugin-pages menu. The wrapper never embeds or persists a
   Management key; it reads CPAMC's current scoped auth selection and transfers
-  the key only to the same-origin sidecar frame through a nonce-bound
-  `postMessage`.
+  the key only to the same-origin plugin-hosted frame through a nonce-bound
+  `postMessage`. CPA authenticates the frame's Management API calls before the
+  plugin forwards allowlisted operations to the sidecar.
 - The authenticated Management API wrapper remains available at
-  `/v0/management/codex-agent-identity/open`; the resource route is only an
-  entry point and the sidecar still authenticates every identity operation.
-- Sidecar embedding is denied by default and requires an explicitly trusted origin.
+  `/v0/management/codex-agent-identity/open`; resource assets are only an entry
+  point and the sidecar still authenticates every identity operation.
+- Direct sidecar embedding is denied by default and requires an explicitly
+  trusted origin; the plugin-hosted same-origin page does not require it.
 - The sidecar runtime bearer key may use cleartext HTTP only on loopback or the fixed private Compose service aliases and approved ports; user-configured sidecar hosts must use HTTPS, and CR/LF-bearing keys are rejected before CPA receives them.
 - The sidecar uses a fixed upstream origin and strips proxy and authorization headers that must not be forwarded.
 - Agent Identity 401 responses invalidate the cached task and retry once only when the request body is replayable.
@@ -116,7 +125,9 @@ Treat the management password, encryption key, CPA auth files, upstream credenti
   plan to deploy.
 - Linux amd64 or Linux arm64 for the released .so files.
 - Docker or another process supervisor for the sidecar.
-- A reverse proxy that publishes CPA and /agent-identity/ under the same browser origin is strongly recommended.
+- Private CPA-to-sidecar connectivity and the same Management key on both
+  services. Publishing `/agent-identity/` to the browser becomes optional in
+  the unreleased v0.3.19 line; the recommended v0.3.18 still requires it.
 
 ## Build and test
 
@@ -152,19 +163,23 @@ The integration suite covers JWT and PAT validation, HTTP, SSE, WebSocket, image
 
 CPA deliberately leaves `/v0/resource/plugins/...` outside Management-key
 authentication because CPAMC loads these resources inside an iframe. The current
-development line therefore advertises `/open` as a browser-navigable ResourceRoute while keeping
-all credential operations in the sidecar's own Bearer-key-protected API. The
-wrapper contains no hard-coded Management key, token, or privileged callback. It
-can reuse CPAMC's scoped encrypted login state and delivers the key only through
-a source-, origin-, and nonce-checked `postMessage`; the iframe URL remains
-secret-free.
+development line advertises `/open` as a browser-navigable ResourceRoute and
+serves the complete management UI from assets embedded in the `.so`. The UI
+calls an authenticated plugin Management route; CPA validates the Management
+key, then the plugin forwards only allowlisted identity operations to the
+sidecar over the private server-side network. The wrapper contains no hard-coded
+Management key, token, or privileged callback. It can reuse CPAMC's scoped
+encrypted login state and delivers the key only through a source-, origin-, and
+nonce-checked `postMessage`; the iframe URL remains secret-free.
 
 On a CPAMC build with plugin resources enabled, restart CPA after installing the
 plugin and the **Codex Agent Identity** entry should appear under plugin pages.
 The authenticated fallback remains `/v0/management/codex-agent-identity/open`,
-and the direct sidecar entry remains `/agent-identity/`. The `management-overlay` is optional and only supplies reset-credit visibility
-and the quota API bridge; it is not required for the plugin-page entry and does not
-modify the installed plugin card.
+and the direct sidecar entry `/agent-identity/` is now optional. If the private
+CPA-to-sidecar bridge is unavailable, the wrapper can still try that legacy
+browser-facing entry. The `management-overlay` is optional and only supplies
+reset-credit visibility and the quota API bridge; it is not required for the
+plugin-page entry and does not modify the installed plugin card.
 
 ## CPA plugin installation
 
@@ -197,12 +212,13 @@ host plugin mount during the install or update. Restore read-only mode after
 the operation.
 The store installs the `.so` only; it cannot safely create the sidecar container,
 Docker network, encryption key, management key, or persistent data directory.
-For a fresh Plugin Store installation, the management page uses the same-origin
-`/agent-identity/` route by default, so remote CPA deployments do not point a
-browser at its own `127.0.0.1`. The quota/reset bridge uses the internal sidecar
-service from `CODEX_AGENT_IDENTITY_SIDECAR_HOSTS` (port `8787` by default) when
-`sidecar_api_url` is blank. Direct host installs may keep an explicit local
-`sidecar_url` such as `http://127.0.0.1:18787/agent-identity/`.
+The v0.3.19 candidate embeds the management page itself, so a fresh
+Plugin Store installation does not require a browser-facing sidecar URL or a
+same-origin `/agent-identity/` proxy. Both the management UI bridge and the
+quota/reset bridge use the internal sidecar service from
+`CODEX_AGENT_IDENTITY_SIDECAR_HOSTS` (port `8787` by default) when
+`sidecar_api_url` is blank. Direct host and custom reverse-proxy installs may
+keep an explicit `sidecar_url` only as a compatibility fallback.
 For a fresh deployment, `deploy/bootstrap-runtime.sh --start` prepares those
 prerequisites so the Plugin Store step is the only manual installation action.
 
@@ -252,30 +268,39 @@ plugins:
       priority: 1000
 ~~~
 
-Fresh installations should omit `sidecar_url`: the plugin uses the same-origin
-`/agent-identity/` management route and derives the internal quota/reset bridge
-from the Docker environment when available. The legacy `sidecar_url` value
-remains accepted for existing deployments, including direct local installs and
-custom reverse-proxy paths. It may be a
+Fresh v0.3.19 installations should omit `sidecar_url`: the plugin hosts its
+browser UI inside the `.so` and derives the internal management/quota bridge
+from the Docker environment when available. The recommended v0.3.18 still
+requires a browser-reachable value. The legacy `sidecar_url` remains accepted
+by v0.3.19 as an optional direct-dashboard fallback for existing deployments,
+including direct local installs and custom reverse-proxy paths. It may be a
 root-relative URL or a full HTTP/HTTPS URL, and must not contain credentials,
-query parameters, or a fragment. The wrapper contains no secret; the sidecar UI
-must still authenticate before listing, previewing, or importing.
+query parameters, or a fragment. `sidecar_api_url` remains an advanced
+server-side override; normal Docker installs should prefer
+`CODEX_AGENT_IDENTITY_SIDECAR_HOSTS`.
 
 Do not load codex-agent-identity.so and the legacy codex-agent-identity-auth.so at the same time. Both claim the Codex Agent Identity auth-file provider/parser.
 
 ## Sidecar deployment
 
-For a new checkout, the bootstrap helper creates the runtime directories, two independent secrets, a fresh CPA config with the plugin enabled, a random CPA API key, and the external Docker network. It can start the official CPA image and sidecar immediately:
+For a checkout of the v0.3.19 candidate, the bootstrap helper creates the
+runtime directories, two independent secrets, a fresh CPA config with the
+plugin enabled, a random CPA API key, and the external Docker network. It can
+start the official CPA image and sidecar immediately:
+
+~~~bash
+sudo sh deploy/bootstrap-runtime.sh --start
+~~~
+
+This no-URL command applies to v0.3.19, not the recommended v0.3.18. For
+v0.3.18, keep `--sidecar-url /agent-identity/` and configure that same-origin
+proxy. In v0.3.19, the native plugin page works without publishing the sidecar
+dashboard; to keep the direct dashboard as a fallback, explicitly configure a
+browser-facing URL:
 
 ~~~bash
 sudo sh deploy/bootstrap-runtime.sh --sidecar-url /agent-identity/ --start
-~~~
-
-For a remote browser, explicitly select the same-origin path as above and
-configure the reverse proxy separately. The helper itself defaults to a
-loopback URL, suitable only for a browser on the same host:
-
-~~~bash
+# Or, only when the browser runs on the same host:
 sudo sh deploy/bootstrap-runtime.sh --sidecar-url http://127.0.0.1:18787/agent-identity/ --start
 ~~~
 
@@ -309,7 +334,7 @@ Important environment variables:
 | PUBLIC_CPA_BASE_URL | http://127.0.0.1:8787/backend-api/codex | URL written to CPA auth files; Compose overrides this with the sidecar service name |
 | CPA_PROXY_CONFIG_POLL_INTERVAL | 1s | CPA global proxy polling interval |
 | OUTBOUND_PROXY_FILE | none | Fallback HTTP, HTTPS, or SOCKS proxy file |
-| EMBED_ALLOWED_ORIGINS | http://127.0.0.1:8317 | Comma-separated trusted origins allowed to frame the sidecar UI; add the complete CPA origin when using a custom domain |
+| EMBED_ALLOWED_ORIGINS | http://127.0.0.1:8317 | Trusted origins allowed to frame the optional direct sidecar UI; not required by the plugin-hosted page |
 | UPSTREAM_ORIGIN | https://chatgpt.com | Fixed Codex upstream origin |
 | JWKS_URL | official Agent Identity JWKS | JWT signing keys |
 | AUTH_API_BASE_URL | official account API | Agent Identity task registration |
@@ -326,9 +351,12 @@ Agent Identity 401 re-registration retry are preserved.
 
 Use secret files instead of environment values whenever possible so credentials are not exposed by container inspection.
 
-## Reverse proxy
+## Direct-dashboard reverse proxy
 
-Publish the sidecar UI through the same TLS reverse proxy as CPA when practical:
+The v0.3.19 candidate does not require this route for its native plugin page.
+The recommended v0.3.18 still does. On v0.3.19, publish the direct sidecar
+dashboard through the same TLS reverse proxy as CPA only when you want a
+browser-facing compatibility fallback:
 
 ~~~nginx
 location /agent-identity/ {

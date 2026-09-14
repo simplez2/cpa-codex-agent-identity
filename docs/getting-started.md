@@ -17,9 +17,12 @@ to stock CPA; the Plugin Store does not create the sidecar for you.
 2. Deploy the sidecar with owner-only persistent storage and the same CPA
    management password. Join CPA and sidecar to a private network; see
    [sidecar deployment](../README.md#sidecar-deployment) / [中文部署](../README.zh-CN.md#部署-sidecar).
-3. Expose `/agent-identity/` on the **same HTTPS origin** as CPA. Configure
-   `EMBED_ALLOWED_ORIGINS` for that exact origin; use the
-   [reverse-proxy example](../README.md#reverse-proxy).
+3. Let the CPA process reach the sidecar through
+   `CODEX_AGENT_IDENTITY_SIDECAR_HOSTS` (and an optional indexed port), or set
+   the advanced server-side `sidecar_api_url`. The v0.3.19 candidate embeds the
+   native plugin page in the `.so`, so its browser-facing `/agent-identity/`
+   reverse proxy is optional. The currently recommended v0.3.18 still requires
+   that same-origin route and a matching `EMBED_ALLOWED_ORIGINS` entry.
 4. Merge this repository's direct source into your existing `plugins` section,
    retaining other sources and settings:
 
@@ -44,8 +47,9 @@ to stock CPA; the Plugin Store does not create the sidecar for you.
 ## Fresh Linux deployment
 
 Prerequisites: Linux amd64/arm64, Git, Docker with Compose, OpenSSL, and an
-operator who can configure the private network and TLS reverse proxy. The helper
-starts new services and creates secret files; it is **not** an existing-install
+operator who can configure the private network. The currently recommended
+v0.3.18 also needs a TLS reverse proxy for `/agent-identity/`. The helper starts
+new services and creates secret files; it is **not** an existing-install
 migration command.
 
 ```sh
@@ -57,11 +61,14 @@ cp .env.example .env
 sudo sh deploy/bootstrap-runtime.sh --sidecar-url /agent-identity/ --start
 ```
 
-The explicit `--sidecar-url /agent-identity/` is for a same-origin reverse proxy;
-the helper does **not** configure that proxy. Finish steps 3–6 above. For direct
-host access from a browser on the same host, the helper also supports
+The v0.3.18 helper does **not** configure that proxy; finish steps 3–6 above.
+For direct host access from a browser on the same host, v0.3.18 also supports
 `--sidecar-url http://127.0.0.1:18787/agent-identity/`; that loopback URL is not
 correct for a browser on another machine.
+
+After the v0.3.19 candidate is published and accepted, its helper can run with
+`--start` alone because the page is embedded in the `.so`. Do not apply that
+instruction to v0.3.18.
 
 ## Verify without spending a reset credit
 
@@ -85,5 +92,6 @@ Do not install withdrawn v0.3.17 or unaccepted v0.3.16 as upgrades. Do not reuse
 an old version label for new bytes. For detailed lifecycle and rollback rules,
 see [RELEASE.md](../RELEASE.md).
 
-中文：先准备 sidecar、私有网络、密钥和同源入口，再到商店装插件。已有 CPA
+中文：先准备 sidecar、私有网络和密钥，再到商店装插件。当前正式 v0.3.18
+仍需同源 `/agent-identity/`；v0.3.19 候选才把页面内嵌到 `.so`。已有 CPA
 不要覆盖配置；验证不需要消耗重置券。卡片“已配置”不等于“已注册并生效”。

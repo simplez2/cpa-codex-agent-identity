@@ -40,7 +40,7 @@ was exposed, revoke it first and follow [SECURITY.md](SECURITY.md).
 | --- | --- |
 | Store displays an old version | Use this repository's verified [direct registry](registry.json); compare installed and advertised versions, not only the card title. |
 | Configured but not registered | Check the exact Linux architecture, official artifact checksum, plugin-load error and duplicate legacy plugin. Keep a backup before replacing files. |
-| Plugin page remains connecting | The store installs only the `.so`. Check sidecar health, private network and same-origin `/agent-identity/` reverse proxy. |
+| Plugin page remains connecting | Current development builds serve the page from the `.so`. Check plugin registration, then verify CPA can reach the sidecar through its private network and uses the same Management key. A browser reverse proxy is optional. |
 | WS enabled but upstream remains HTTP | Both the client transport and selected credential must allow WS. See [wire semantics](docs/native-websockets.md). |
 | Quota works but reset-credit dates are absent | Counts and per-credit details are separate permissions. `credits: null` means details unavailable, not no credits. See [limitations](docs/compatibility.md). |
 | Sync succeeds with an unavailable proxy | Warm validation metadata can be cached; sync success alone does not prove an outbound request. Do not clear a proxy to make a probe pass. |

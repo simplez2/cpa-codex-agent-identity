@@ -1,14 +1,17 @@
 # Compatibility and limitations / 兼容性与边界
 
-Updated 2026-09-08 for **v0.3.18**. Build compatibility, unit tests and live
-acceptance are different claims. Do not extrapolate one tested deployment to
-all accounts, proxies, future CPA versions or credential types.
+Updated 2026-09-14. **v0.3.18** remains the accepted release; **v0.3.19** is a
+source candidate for the embedded Plugin Store management page. Build
+compatibility, source-level smoke tests and exact-asset live acceptance are
+different claims. Do not extrapolate one tested deployment to all accounts,
+proxies, future CPA versions or credential types.
 
 ## Version map
 
 | Item | Current baseline | Meaning |
 | --- | --- | --- |
 | Recommended plugin and sidecar | v0.3.18 | [Immutable assets and acceptance](releases/v0.3.18.md) |
+| Current source candidate | v0.3.19 | Embedded plugin page passed stock CPA v7.2.152 source-candidate smoke; immutable Linux assets and production acceptance are pending |
 | CPA SDK used to compile the plugin | v7.2.146 | Build baseline, not a promise for every newer runtime |
 | Exact stock CPA runtime accepted for v0.3.18 | v7.2.152 | Native PAT acceptance; see the recorded test scope |
 | Bundled CPA image example | v7.2.146 | Older example baseline; explicitly select and test the CPA image you deploy |
@@ -62,9 +65,13 @@ consumption is authorized by these instructions.
 ## Installation boundary
 
 The Plugin Store downloads a `.so`; it does not provision Docker services,
-secrets, networks or durable storage. The sidecar and same-origin management
-route remain prerequisites. Follow [getting started](getting-started.md), then
-test your exact CPA image before upgrading production.
+secrets, networks or durable storage. The v0.3.19 candidate embeds the
+management page in the `.so`, so a browser-facing same-origin sidecar route is
+no longer required by that candidate. The accepted v0.3.18 still requires the
+route. In both lines, the separately deployed sidecar, matching Management key
+and private CPA-to-sidecar connectivity remain prerequisites. Follow
+[getting started](getting-started.md), then test your exact CPA image before
+upgrading production.
 
 中文：PAT 尽量走 CPA 原生路径，JWT 仍需动态签名桥接，两者不能混称完全原生。
 额度券只有数量时，不能推测日期或指定某张券；功能兼容不等于绕过上游权限。
