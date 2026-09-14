@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -427,7 +428,12 @@ const scoped = readStoredManagementKey();
 	const wrongScope = readStoredManagementKey();
 	process.stdout.write(JSON.stringify({scoped,legacy,matchingLegacy,wrongScope}));
 `, secureStoragePrefix, secureStorageSalt, authStorageKey, authScopePrefix, authSelectionPrefix, managementOpenFullPath, legacyManagementKeyStorageKey, snippet)
-	output, err := exec.Command(node, "-e", harness).CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, node, "-e", harness).CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		t.Fatalf("generated scoped auth bridge timed out after 15s\n%s", output)
+	}
 	if err != nil {
 		t.Fatalf("generated scoped auth bridge failed: %v\n%s", err, output)
 	}
@@ -533,7 +539,12 @@ setImmediate(function(){
   process.stdout.write(JSON.stringify({initialFetches,fallback,fetches}));
 });
 `, uiBridgeBodyPrefix, string(app))
-	output, err := exec.Command(node, "-e", harness).CombinedOutput()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, node, "-e", harness).CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		t.Fatalf("plugin UI auth startup timed out after 30s\n%s", output)
+	}
 	if err != nil {
 		t.Fatalf("plugin UI auth startup failed: %v\n%s", err, output)
 	}

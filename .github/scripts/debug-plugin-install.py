@@ -5,7 +5,9 @@ import argparse
 import hashlib
 import ipaddress
 import json
+import os
 from pathlib import Path
+import subprocess
 import sys
 import urllib.error
 import urllib.parse
@@ -17,6 +19,64 @@ RESOURCE = "/v0/resource/plugins/" + PLUGIN_ID
 BRIDGE = "/v0/management/" + PLUGIN_ID + "/ui-api"
 PREFIX = b")]}',\n"
 MAX_BODY = 4 * 1024 * 1024
+
+
+def verify_mapped_plugin(path, maps, expected):
+    """Verify the actual file backing the host process's mapped plugin."""
+    with path.open("rb") as file:
+        before = os.fstat(file.fileno())
+        digest = hashlib.file_digest(file, "sha256").hexdigest()
+        after = os.fstat(file.fileno())
+    if (before.st_ino, before.st_size, before.st_mtime_ns) != (
+        after.st_ino, after.st_size, after.st_mtime_ns
+    ):
+        raise CheckFailed("Installed plugin changed during inspection")
+    device = (os.major(before.st_dev), os.minor(before.st_dev))
+    mapped = False
+    for line in maps.splitlines():
+        columns = line.split(None, 5)
+        if len(columns) < 6 or columns[5].endswith(" (deleted)"):
+            continue
+        if int(columns[4]) == before.st_ino and tuple(
+            int(part, 16) for part in columns[3].split(":")
+        ) == device:
+            mapped = True
+    if not mapped:
+        raise CheckFailed("Installed plugin is not mapped by the CPA process; restart required")
+    if digest != expected:
+        raise CheckFailed("CPA mapped plugin checksum differs from the verified artifact")
+    return digest
+
+
+def verify_container_plugin(container, registered_path, expected):
+    """Run on the Linux Docker host, through its authenticated deployment session."""
+    if os.name != "posix" or not container or container.startswith("-"):
+        raise CheckFailed("Container inspection requires a local Linux Docker host")
+
+    def inspect():
+        try:
+            result = subprocess.run(
+                ["docker", "inspect", container], check=True, capture_output=True, timeout=15
+            )
+            value = json.loads(result.stdout)[0]
+            if not value["State"]["Running"]:
+                raise CheckFailed("CPA container is not running")
+            return value["Id"], value["State"]["Pid"], value["State"]["StartedAt"]
+        except (OSError, ValueError, KeyError, IndexError, subprocess.SubprocessError):
+            raise CheckFailed("Could not inspect the CPA container") from None
+
+    snapshot = inspect()
+    proc = Path("/proc") / str(snapshot[1])
+    registered = Path(registered_path)
+    if not registered_path or ".." in registered.parts:
+        raise CheckFailed("CPA reported an invalid plugin path")
+    mapped_path = (proc / "root" / str(registered).lstrip("/")) if registered.is_absolute() else (
+        proc / "cwd" / registered
+    )
+    digest = verify_mapped_plugin(mapped_path, (proc / "maps").read_text(), expected)
+    if inspect() != snapshot:
+        raise CheckFailed("CPA restarted during loaded-plugin inspection")
+    return digest
 
 
 class CheckFailed(Exception):
@@ -120,6 +180,7 @@ class InstallCheck:
         if not any(m.get("path") == RESOURCE + "/open" for m in plugin.get("menus", [])):
             raise CheckFailed("Plugin menu is missing")
         self.results["registered_version"] = version
+        self.results["registered_plugin_path"] = plugin.get("path", "")
         self.results["native_oauth_provider_not_claimed"] = True
 
         _, wrapper = self.request(RESOURCE + "/open", authenticated=False)
@@ -174,12 +235,16 @@ def main():
     parser.add_argument("--expect-version", required=True)
     parser.add_argument("--plugin-file", type=Path)
     parser.add_argument("--expect-sha256")
+    parser.add_argument("--cpa-container",
+                        help="On Linux Docker host, verify the CPA-mapped library, not only a candidate file")
     parser.add_argument("--negative-checks", action="store_true",
                         help="Use only on an isolated canary, not a shared production login")
     args = parser.parse_args()
     try:
         if bool(args.plugin_file) != bool(args.expect_sha256):
             raise CheckFailed("Provide both --plugin-file and --expect-sha256")
+        if args.cpa_container and not args.expect_sha256:
+            raise CheckFailed("--cpa-container requires an expected artifact checksum")
         if args.plugin_file:
             digest = hashlib.sha256(args.plugin_file.read_bytes()).hexdigest()
             if digest != args.expect_sha256:
@@ -188,6 +253,10 @@ def main():
         results = checker.run(args.expect_version, args.negative_checks)
         if args.plugin_file:
             results["plugin_file_sha256"] = digest
+        if args.cpa_container:
+            results["mapped_plugin_sha256"] = verify_container_plugin(
+                args.cpa_container, results["registered_plugin_path"], args.expect_sha256
+            )
         print(json.dumps({"passed": True, "checks": results}, sort_keys=True))
         return 0
     except CheckFailed as error:

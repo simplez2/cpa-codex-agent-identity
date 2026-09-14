@@ -568,6 +568,7 @@ tbody tr:last-child td { border-bottom: 0; }
 
 @media (max-width: 680px) {
   .shell { width: min(100% - 20px, 1180px); padding-top: 24px; }
+  html[data-embed="cpamc"] .shell { padding-top: 76px; }
   .hero { display: grid; }
   .back-link { justify-self: start; }
   .connection-row { grid-template-columns: 1fr 1fr; }
