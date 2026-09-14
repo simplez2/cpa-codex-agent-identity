@@ -18,6 +18,11 @@ workflow has produced and checksummed the artifacts.
 - Keep the direct sidecar dashboard as an optional compatibility fallback when
   the private CPA-to-sidecar hop is unavailable. Resolve both embedded assets
   and Management API calls correctly when CPAMC is served under a URL prefix.
+- Wait for current CPA login context before using iframe credentials, reject
+  legacy credentials for another CPA address, and expose manual authentication
+  when an unremembered CPA session cannot share its in-memory management key.
+- Add a read-only installed-plugin debug gate with regression tests and require
+  canary checks before each rollout and verification after restart and deployment.
 
 ### Documentation and maintenance
 

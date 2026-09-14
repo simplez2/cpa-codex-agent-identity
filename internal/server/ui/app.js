@@ -53,16 +53,15 @@ let bridgeAttemptedKey = '';
 let pluginFallbackRequested = false;
 
 keyInput.value = sessionStorage.getItem('cpaManagementKey') || '';
-if (embeddedInCPAMC && managementKey()) {
-  bridgeAttemptedKey = managementKey();
-  hideManualConnection();
-} else if (managementBridgeEnabled) {
+if (managementBridgeEnabled) {
   hideManualConnection();
   setConnection('neutral', '正在连接');
   setStatus('正在复用 CPA 当前登录会话…');
   bridgeFallbackTimer = window.setTimeout(function () {
-    offerManualConnection('未从 CPA 当前会话读取到管理密码，可改用手动连接。');
+    showManualConnection('CPA 当前登录未提供可复用的管理密码；未勾选“记住密码”时这是预期限制。请重新输入管理密码。', 'error');
   }, 3000);
+} else if (embeddedInCPAMC && managementKey()) {
+  hideManualConnection();
 }
 
 function managementKey() {
@@ -629,4 +628,4 @@ if (embeddedInCPAMC && window.parent !== window) {
   window.parent.postMessage(readyMessage, targetOrigin);
 }
 
-if (managementKey()) refresh({ fromBridge: embeddedInCPAMC });
+if (managementKey() && !managementBridgeEnabled) refresh({ fromBridge: embeddedInCPAMC });

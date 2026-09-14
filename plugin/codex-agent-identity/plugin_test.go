@@ -416,24 +416,164 @@ localStorage.setItem(authSelectionPrefix+encodeURIComponent(scope), encodeStored
 localStorage.setItem(authScopePrefix+encodeURIComponent(scope)+':'+encodeURIComponent(selectedAPIBase), encodeStoredValue({state:{apiBase:selectedAPIBase,managementKey:'scoped-test-key'}}));
 localStorage.setItem(authStorageKey, encodeStoredValue({state:{managementKey:'wrong-legacy-key'}}));
 const scoped = readStoredManagementKey();
-localStorage.clear();
-localStorage.setItem(authStorageKey, encodeStoredValue({state:{managementKey:'legacy-test-key'}}));
-const legacy = readStoredManagementKey();
-process.stdout.write(JSON.stringify({scoped,legacy}));
+	localStorage.clear();
+	localStorage.setItem(authStorageKey, encodeStoredValue({state:{managementKey:'legacy-test-key'}}));
+	const legacy = readStoredManagementKey();
+	localStorage.clear();
+	localStorage.setItem(authStorageKey, encodeStoredValue({state:{apiBase:scope,managementKey:'matching-legacy-key'}}));
+	const matchingLegacy = readStoredManagementKey();
+	localStorage.clear();
+	localStorage.setItem(authStorageKey, encodeStoredValue({state:{apiBase:'https://cpa.example.test/other',managementKey:'wrong-scope-key'}}));
+	const wrongScope = readStoredManagementKey();
+	process.stdout.write(JSON.stringify({scoped,legacy,matchingLegacy,wrongScope}));
 `, secureStoragePrefix, secureStorageSalt, authStorageKey, authScopePrefix, authSelectionPrefix, managementOpenFullPath, legacyManagementKeyStorageKey, snippet)
 	output, err := exec.Command(node, "-e", harness).CombinedOutput()
 	if err != nil {
 		t.Fatalf("generated scoped auth bridge failed: %v\n%s", err, output)
 	}
 	var got struct {
-		Scoped string `json:"scoped"`
-		Legacy string `json:"legacy"`
+		Scoped         string `json:"scoped"`
+		Legacy         string `json:"legacy"`
+		MatchingLegacy string `json:"matchingLegacy"`
+		WrongScope     string `json:"wrongScope"`
 	}
 	if err := json.Unmarshal(output, &got); err != nil {
 		t.Fatalf("decode generated scoped auth result: %v\n%s", err, output)
 	}
-	if got.Scoped != "scoped-test-key" || got.Legacy != "legacy-test-key" {
+	if got.Scoped != "scoped-test-key" ||
+		got.Legacy != "legacy-test-key" ||
+		got.MatchingLegacy != "matching-legacy-key" ||
+		got.WrongScope != "" {
 		t.Fatalf("generated scoped auth result = %#v", got)
+	}
+}
+
+func TestPluginUIWaitsForParentAuthBeforeUsingSessionStorage(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is required to execute the plugin UI auth startup")
+	}
+	app, err := pluginUIFiles.ReadFile("ui/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	harness := fmt.Sprintf(`
+const stored = new Map([['cpaManagementKey','stale-session-key']]);
+const sessionStorage = {
+  getItem(key){ return stored.has(key) ? stored.get(key) : null; },
+  setItem(key,value){ stored.set(String(key),String(value)); },
+  removeItem(key){ stored.delete(key); }
+};
+function element(){
+  return {
+    value:'', hidden:false, className:'', textContent:'', disabled:false, checked:true, files:[],
+    classList:{add(){},remove(){}},
+    addEventListener(){}, replaceChildren(){}, append(){}, focus(){},
+    querySelectorAll(){ return []; }
+  };
+}
+const elements = new Map();
+const document = {
+  referrer:'',
+  documentElement:{dataset:{}},
+  body:{append(){}},
+  querySelector(selector){
+    if (!elements.has(selector)) elements.set(selector,element());
+    return elements.get(selector);
+  },
+  createElement(){ return element(); }
+};
+const parentWindow = {postMessage(){}};
+const listeners = {};
+const fetches = [];
+let fallbackTimer = null;
+const window = {
+  location:{
+    search:'?embed=cpamc&cpa_bridge=0123456789abcdef',
+    pathname:'/control/v0/resource/plugins/codex-agent-identity/ui',
+    origin:'https://cpa.example.test'
+  },
+  parent:parentWindow,
+  sessionStorage,
+  setTimeout(listener){ fallbackTimer=listener; return 1; },
+  clearTimeout(){},
+  addEventListener(type,listener){ listeners[type]=listener; },
+  confirm(){ return true; }
+};
+globalThis.window = window;
+globalThis.document = document;
+globalThis.sessionStorage = sessionStorage;
+globalThis.fetch = async function(url,options){
+  const forwarded = JSON.parse(options.body);
+  fetches.push({url,authorization:options.headers.Authorization,path:forwarded.path});
+  const payload = forwarded.path === 'identities'
+    ? {summary:{total:0},identities:[]}
+    : {status:'ok',cpa_sync:{state:'ready'}};
+  return {ok:true,status:200,text:async()=>%q+JSON.stringify(payload)};
+};
+%s
+const initialFetches = fetches.length;
+if (fallbackTimer) fallbackTimer();
+const fallback = {
+  manualConnectionHidden:document.querySelector('#manual-connection').hidden,
+  manualConnectHidden:document.querySelector('#manual-connect').hidden,
+  connection:document.querySelector('#connection-pill').textContent,
+  status:document.querySelector('#status').textContent
+};
+listeners.message({
+  source:parentWindow,
+  origin:'https://cpa.example.test',
+  data:{
+    type:'cpa-codex-agent-identity:management-key',
+    nonce:'0123456789abcdef',
+    managementKey:'current-cpa-key'
+  }
+});
+setImmediate(function(){
+  process.stdout.write(JSON.stringify({initialFetches,fallback,fetches}));
+});
+`, uiBridgeBodyPrefix, string(app))
+	output, err := exec.Command(node, "-e", harness).CombinedOutput()
+	if err != nil {
+		t.Fatalf("plugin UI auth startup failed: %v\n%s", err, output)
+	}
+	var got struct {
+		InitialFetches int `json:"initialFetches"`
+		Fallback       struct {
+			ManualConnectionHidden bool   `json:"manualConnectionHidden"`
+			ManualConnectHidden    bool   `json:"manualConnectHidden"`
+			Connection             string `json:"connection"`
+			Status                 string `json:"status"`
+		} `json:"fallback"`
+		Fetches []struct {
+			URL           string `json:"url"`
+			Authorization string `json:"authorization"`
+			Path          string `json:"path"`
+		} `json:"fetches"`
+	}
+	if err := json.Unmarshal(output, &got); err != nil {
+		t.Fatalf("decode plugin UI auth startup: %v\n%s", err, output)
+	}
+	if got.InitialFetches != 0 {
+		t.Fatalf("plugin UI used stale session auth before the parent bridge: %#v", got.Fetches)
+	}
+	if got.Fallback.ManualConnectionHidden ||
+		!got.Fallback.ManualConnectHidden ||
+		got.Fallback.Connection != "需要重新认证" ||
+		!strings.Contains(got.Fallback.Status, "未勾选“记住密码”") {
+		t.Fatalf("plugin UI did not expose the session-only login limitation: %#v", got.Fallback)
+	}
+	if len(got.Fetches) != 2 {
+		t.Fatalf("plugin UI bridge requests = %#v, want identities and diagnostics", got.Fetches)
+	}
+	for _, request := range got.Fetches {
+		if request.URL != "/control/v0/management/codex-agent-identity/ui-api" ||
+			request.Authorization != "Bearer current-cpa-key" {
+			t.Fatalf("plugin UI bridge request used the wrong route or auth: %#v", request)
+		}
+	}
+	if got.Fetches[0].Path != "identities" || got.Fetches[1].Path != "diagnostics" {
+		t.Fatalf("plugin UI bridge paths = %#v", got.Fetches)
 	}
 }
 

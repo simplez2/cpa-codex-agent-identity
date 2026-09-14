@@ -74,6 +74,22 @@ make verify-published-release
    verify it; do not silently turn CI into production deployment. No live
    reset-credit consumption is part of acceptance. If checks fail, retain the
    prerelease warning and the previous accepted registry/image recommendation.
+   Before every rollout, run the read-only installed-plugin debug gate against
+   the isolated canary with the downloaded plugin's SHA-256:
+
+   ```sh
+   python3 .github/scripts/debug-plugin-install.py \
+     --cpa-url http://127.0.0.1:18317 --key-file /path/to/canary/management-key \
+     --expect-version "$VERSION" --plugin-file /path/to/candidate.so \
+     --expect-sha256 "$VERIFIED_PLUGIN_SHA256" --negative-checks
+   ```
+
+   Run the same check again after the canary restart and after production
+   deployment, omitting `--negative-checks` on production. This gate verifies
+   registration, the embedded UI assets, authenticated read operations and
+   private sidecar connectivity; it does not replace browser, model transport,
+   credential persistence or proxy acceptance. It never imports credentials or
+   calls reset-credit endpoints.
 7. **Publish the registry in a separate commit.** Download the two release
    archives into one directory and let the checked-in helper calculate their
    exact sizes and SHA-256 values:

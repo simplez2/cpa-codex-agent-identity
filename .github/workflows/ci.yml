@@ -26,6 +26,7 @@ jobs:
           python3 -m pip install --disable-pip-version-check -r .github/requirements-maintenance.txt
           python3 .github/scripts/check-community.py
           python3 -m unittest discover -s .github/scripts -p 'test_community.py'
+          python3 -m unittest discover -s .github/scripts -p 'test_debug_plugin_install.py'
 
   validate:
     runs-on: ubuntu-24.04
