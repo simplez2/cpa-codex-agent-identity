@@ -73,7 +73,7 @@ deployment/
 4. 将动态库放到 runtime/cpa-plugins 根目录。
 5. 启用 codex-agent-identity 插件；新安装不要填写 sidecar_url，只有旧的自定义反向代理部署才保留它。
 6. 使用 deploy/docker-compose.canary.yml 先启动隔离 canary。
-7. 验证 plugin registration、/healthz、原生 plugin-pages 内嵌页面登录和空 identity list；`/agent-identity/` 只作为可选直接回退。
+7. 按目标版本验证管理入口：v0.3.19 及以上检查原生 plugin-pages 内嵌页面登录和空 identity list；v0.3.18 检查已配置的 `/agent-identity/` 页面。两者都必须验证 plugin registration 与 /healthz，v0.3.19 及以上的 `/agent-identity/` 只作为可选直接回退。
 8. 预检一条测试凭据，再确认 CPA auth 文件的 `access_token` 是真实上游凭证、`sidecar_client_key` 是独立 `cais_`，且管理响应和日志都不回显二者。
 9. 验证 HTTP、SSE、WebSocket、图片、usage 与 proxy 热加载。
 10. 通过后固定 CPA/sidecar digest，再部署 production compose。
@@ -169,7 +169,7 @@ overlay 与官方 Management Center commit 绑定。每次 CPA 前端升级都�
 - summary 中 unsynced=0；
 - CPA auth files 的 `access_token`、`sidecar_client_key` 和 base_url 分工正确；
 - proxy reload 无持续错误；
-- `/v0/resource/plugins/codex-agent-identity/open` 返回 wrapper，内嵌 UI 资源与受认证的 `ui-api` 可用，且资源响应不包含 secret；
+- `/v0/resource/plugins/codex-agent-identity/open` 返回 wrapper；v0.3.19 及以上还需验证内嵌 UI 资源与受认证的 `ui-api` 可用且资源响应不包含 secret，v0.3.18 则验证已配置的 `/agent-identity/` 页面；
 - Management route 无 key 被拒绝；
 - sidecar API 无 key 返回 401；如部署了直接 dashboard，再单独验证该回退入口；
 - CPA/sidecar/plugin/overlay 版本与 digest 有记录。
