@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -20,9 +21,10 @@ type credentialImportResult struct {
 }
 
 type managementImportError struct {
-	StatusCode int
-	Code       string
-	Message    string
+	StatusCode     int
+	Code           string
+	Message        string
+	RollbackFailed bool
 }
 
 func (s *Server) importTokenLocked(ctx context.Context, token, accountID string, skipExisting bool) (*credentialImportResult, *managementImportError) {
@@ -52,19 +54,45 @@ func (s *Server) commitInspectedTokenLocked(ctx context.Context, token, accountI
 	}
 	publicIdentity, clientKey, err := s.store.ImportWithMetadata(token, storeMetadata(credential, accountScoped), time.Now())
 	if err != nil {
+		if identitystore.MutationApplied(err) && publicIdentity != nil {
+			if rollbackErr := s.rollbackStoredImport(previous, publicIdentity.ID); rollbackErr != nil {
+				return nil, &managementImportError{
+					StatusCode: http.StatusInternalServerError, Code: "store_rollback_failed",
+					Message:        "identity write was applied but durability and rollback could not be confirmed",
+					RollbackFailed: true,
+				}
+			}
+			return nil, &managementImportError{
+				StatusCode: http.StatusInternalServerError, Code: "store_sync_failed",
+				Message: "identity write durability failed; the stored change was rolled back",
+			}
+		}
 		return nil, &managementImportError{StatusCode: http.StatusInternalServerError, Code: "store_failed", Message: "failed to store identity"}
 	}
 	if s.channels != nil {
 		if err = s.channels.UpsertIdentity(ctx, cpaCredential(publicIdentity.ID, clientKey, token, credential)); err != nil {
-			if hadPrevious {
-				_ = s.store.Restore(previous)
-			} else {
-				_ = s.store.Delete(publicIdentity.ID)
+			if rollbackErr := s.rollbackStoredImport(previous, publicIdentity.ID); rollbackErr != nil {
+				return nil, &managementImportError{
+					StatusCode: http.StatusBadGateway, Code: "sync_rollback_failed",
+					Message:        "CPA synchronization failed and stored identity rollback could not be confirmed",
+					RollbackFailed: true,
+				}
 			}
 			return nil, cpaSynchronizationImportError(err)
 		}
 	}
 	return &credentialImportResult{PublicIdentity: publicIdentity, Credential: credential, ClientKey: clientKey}, nil
+}
+
+func (s *Server) rollbackStoredImport(previous *identitystore.Identity, identityID string) error {
+	if previous != nil {
+		return s.store.Restore(previous)
+	}
+	err := s.store.Delete(identityID)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
 }
 
 func cpaCredential(identityID, clientKey, upstreamToken string, credential *identity.CredentialInfo) cpa.Credential {

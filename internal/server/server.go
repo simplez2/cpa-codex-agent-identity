@@ -66,7 +66,7 @@ type Config struct {
 // Server exposes a management import API and an Agent Identity reverse proxy.
 type Server struct {
 	config     Config
-	store      *identitystore.Store
+	store      credentialStore
 	manager    *identity.Manager
 	channels   *cpa.Manager
 	proxy      *httputil.ReverseProxy
@@ -74,6 +74,20 @@ type Server struct {
 	handler    http.Handler
 	mutationMu sync.Mutex
 	backupDir  string
+}
+
+// Keep the persistence contract explicit so applied-but-not-durable failures
+// can be tested through the same management handlers used in production.
+type credentialStore interface {
+	Lookup(string) (*identitystore.Identity, bool)
+	LookupByTokenAndAccount(string, string) (*identitystore.Identity, bool)
+	GetByID(string) (*identitystore.Identity, bool)
+	List() []identitystore.PublicIdentity
+	ImportWithMetadata(string, identitystore.CredentialMetadata, time.Time) (*identitystore.PublicIdentity, string, error)
+	UpdateMetadata(string, identitystore.CredentialMetadata) error
+	SnapshotFile(string) (string, []byte, error)
+	Restore(*identitystore.Identity) error
+	Delete(string) error
 }
 
 // New creates the standalone sidecar HTTP handler.
@@ -508,6 +522,15 @@ func (s *Server) handleIdentity(writer http.ResponseWriter, request *http.Reques
 			}
 		}
 		if err = s.store.Delete(id); err != nil {
+			if identitystore.MutationApplied(err) {
+				// Unlink succeeded. Restoring CPA now would recreate a credential
+				// whose sidecar identity/key has already been revoked.
+				writeJSON(writer, http.StatusInternalServerError, map[string]any{
+					"error":            "identity deleted but durability could not be confirmed",
+					"mutation_applied": true, "backup_id": backupID, "rollback": "not_attempted",
+				})
+				return
+			}
 			rollback := "not_needed"
 			if len(removedCPA) > 0 && s.channels != nil {
 				rollback = "attempted"
@@ -575,7 +598,10 @@ func (s *Server) handleIdentity(writer http.ResponseWriter, request *http.Reques
 			return
 		}
 		if err = s.store.UpdateMetadata(id, storeMetadata(credential, previous.AccountScoped)); err != nil {
-			writeJSON(writer, http.StatusInternalServerError, map[string]any{"error": "failed to update credential metadata"})
+			writeJSON(writer, http.StatusInternalServerError, map[string]any{
+				"error":            "failed to persist credential metadata",
+				"mutation_applied": identitystore.MutationApplied(err),
+			})
 			return
 		}
 		if err = s.channels.UpsertIdentity(request.Context(), cpaCredential(id, previous.ClientKey, previous.Token, credential)); err != nil {

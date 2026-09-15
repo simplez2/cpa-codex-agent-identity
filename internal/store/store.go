@@ -84,14 +84,48 @@ type CredentialMetadata struct {
 	FedRAMP       bool
 }
 
+// AppliedError reports that an identity mutation was applied to the file and
+// in-memory indexes, but a subsequent durability step failed.
+type AppliedError struct {
+	Err error
+}
+
+func (e *AppliedError) Error() string {
+	if e == nil || e.Err == nil {
+		return "identity mutation was applied"
+	}
+	return e.Err.Error()
+}
+
+func (e *AppliedError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+// MutationApplied reports whether err indicates that the requested identity
+// mutation took effect even though a subsequent durability step failed.
+func MutationApplied(err error) bool {
+	var applied *AppliedError
+	return errors.As(err, &applied)
+}
+
+// atomicWriteFunc reports whether the destination was replaced, including the
+// case where the replacement succeeded but syncing its directory failed.
+type atomicWriteFunc func(path string, data []byte) (replaced bool, err error)
+
 // Store persists identities as owner-only JSON files.
 type Store struct {
-	dir       string
-	mu        sync.RWMutex
-	byID      map[string]*Identity
-	byKeyHash map[string]*Identity
-	fileByID  map[string]string
-	cipher    *tokenCipher
+	dir        string
+	mu         sync.RWMutex // guards the indexes and their identity files
+	byID       map[string]*Identity
+	byKeyHash  map[string]*Identity
+	fileByID   map[string]string
+	cipher     *tokenCipher
+	writeFile  atomicWriteFunc
+	removeFile func(string) error
+	syncDir    func(string) error
 }
 
 // Option configures the identity store.
@@ -132,10 +166,13 @@ func Open(dir string, options ...Option) (*Store, error) {
 		}
 	}
 	result := &Store{
-		dir:       dir,
-		byID:      make(map[string]*Identity),
-		byKeyHash: make(map[string]*Identity),
-		fileByID:  make(map[string]string),
+		dir:        dir,
+		byID:       make(map[string]*Identity),
+		byKeyHash:  make(map[string]*Identity),
+		fileByID:   make(map[string]string),
+		writeFile:  writeOwnerOnlyAtomic,
+		removeFile: os.Remove,
+		syncDir:    syncDirectory,
 	}
 	for _, option := range options {
 		if option != nil {
@@ -177,7 +214,7 @@ func Open(dir string, options ...Option) (*Store, error) {
 			if encodeErr != nil {
 				return nil, fmt.Errorf("encrypt identity file %q", entry.Name())
 			}
-			if writeErr := writeOwnerOnlyAtomic(path, migrated); writeErr != nil {
+			if _, writeErr := result.writeFile(path, migrated); writeErr != nil {
 				return nil, fmt.Errorf("encrypt identity file %q: %w", entry.Name(), writeErr)
 			}
 		}
@@ -270,11 +307,12 @@ func (s *Store) ImportWithMetadata(token string, metadata CredentialMetadata, no
 		return nil, "", errors.New("failed to encode identity")
 	}
 	path := filepath.Join(s.dir, "identity-"+strings.TrimPrefix(id, "agent-")+".json")
-	if err = writeOwnerOnlyAtomic(path, data); err != nil {
-		return nil, "", err
-	}
-
 	s.mu.Lock()
+	replaced, writeErr := s.writeFile(path, data)
+	if writeErr != nil && !replaced {
+		s.mu.Unlock()
+		return nil, "", writeErr
+	}
 	if previous := s.byID[id]; previous != nil {
 		delete(s.byKeyHash, previous.ClientKeyHash)
 	}
@@ -283,6 +321,9 @@ func (s *Store) ImportWithMetadata(token string, metadata CredentialMetadata, no
 	s.fileByID[id] = path
 	s.mu.Unlock()
 	public := publicIdentity(identity)
+	if writeErr != nil {
+		return &public, clientKey, writeErr
+	}
 	return &public, clientKey, nil
 }
 
@@ -314,11 +355,11 @@ func randomClientKey() (string, error) {
 	return clientKeyPrefix + hex.EncodeToString(raw), nil
 }
 
-func writeOwnerOnlyAtomic(path string, data []byte) error {
+func writeOwnerOnlyAtomic(path string, data []byte) (bool, error) {
 	dir := filepath.Dir(path)
 	temporary, err := os.CreateTemp(dir, ".identity-*.tmp")
 	if err != nil {
-		return fmt.Errorf("create temporary identity file: %w", err)
+		return false, fmt.Errorf("create temporary identity file: %w", err)
 	}
 	temporaryPath := temporary.Name()
 	defer os.Remove(temporaryPath)
@@ -332,18 +373,15 @@ func writeOwnerOnlyAtomic(path string, data []byte) error {
 		err = closeErr
 	}
 	if err != nil {
-		return fmt.Errorf("write identity file: %w", err)
-	}
-	if runtime.GOOS == "windows" {
-		_ = os.Remove(path)
+		return false, fmt.Errorf("write identity file: %w", err)
 	}
 	if err = os.Rename(temporaryPath, path); err != nil {
-		return fmt.Errorf("replace identity file: %w", err)
+		return false, fmt.Errorf("replace identity file: %w", err)
 	}
 	if err = syncDirectory(dir); err != nil {
-		return fmt.Errorf("sync identity directory: %w", err)
+		return true, &AppliedError{Err: fmt.Errorf("identity file replaced but sync identity directory: %w", err)}
 	}
-	return nil
+	return true, nil
 }
 
 func syncDirectory(dir string) error {
@@ -417,12 +455,13 @@ func (s *Store) UpdateMetadata(id string, metadata CredentialMetadata) error {
 	if err != nil {
 		return errors.New("failed to encode identity metadata")
 	}
-	if err = writeOwnerOnlyAtomic(path, data); err != nil {
-		return err
+	replaced, writeErr := s.writeFile(path, data)
+	if writeErr != nil && !replaced {
+		return writeErr
 	}
 	s.byID[id] = &next
 	s.byKeyHash[next.ClientKeyHash] = &next
-	return nil
+	return writeErr
 }
 
 // ListForSync returns secret-bearing copies for internal CPA reconciliation only.
@@ -504,9 +543,11 @@ func (s *Store) SnapshotFile(id string) (string, []byte, error) {
 	}
 	id = strings.TrimSpace(id)
 	s.mu.RLock()
+	// Keep the read lock through the filesystem read so a writer cannot replace
+	// or remove the indexed file between the map lookup and the snapshot.
+	defer s.mu.RUnlock()
 	path := s.fileByID[id]
 	identity := s.byID[id]
-	s.mu.RUnlock()
 	if identity == nil || path == "" {
 		return "", nil, os.ErrNotExist
 	}
@@ -538,10 +579,12 @@ func (s *Store) Restore(identity *Identity) error {
 		return errors.New("failed to encode identity")
 	}
 	path := filepath.Join(s.dir, "identity-"+strings.TrimPrefix(copyIdentity.ID, "agent-")+".json")
-	if err = writeOwnerOnlyAtomic(path, data); err != nil {
-		return err
-	}
 	s.mu.Lock()
+	replaced, writeErr := s.writeFile(path, data)
+	if writeErr != nil && !replaced {
+		s.mu.Unlock()
+		return writeErr
+	}
 	if current := s.byID[copyIdentity.ID]; current != nil {
 		delete(s.byKeyHash, current.ClientKeyHash)
 	}
@@ -549,7 +592,7 @@ func (s *Store) Restore(identity *Identity) error {
 	s.byKeyHash[copyIdentity.ClientKeyHash] = &copyIdentity
 	s.fileByID[copyIdentity.ID] = path
 	s.mu.Unlock()
-	return nil
+	return writeErr
 }
 
 // Delete removes an identity and revokes its CPA client key.
@@ -559,21 +602,20 @@ func (s *Store) Delete(id string) error {
 	}
 	id = strings.TrimSpace(id)
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	identity := s.byID[id]
 	path := s.fileByID[id]
 	if identity == nil {
-		s.mu.Unlock()
 		return os.ErrNotExist
+	}
+	if err := s.removeFile(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("delete identity file: %w", err)
 	}
 	delete(s.byID, id)
 	delete(s.byKeyHash, identity.ClientKeyHash)
 	delete(s.fileByID, id)
-	s.mu.Unlock()
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("delete identity file: %w", err)
-	}
-	if err := syncDirectory(s.dir); err != nil {
-		return fmt.Errorf("sync identity directory: %w", err)
+	if err := s.syncDir(s.dir); err != nil {
+		return &AppliedError{Err: fmt.Errorf("identity deleted but sync identity directory: %w", err)}
 	}
 	return nil
 }

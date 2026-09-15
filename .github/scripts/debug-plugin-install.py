@@ -7,6 +7,7 @@ import ipaddress
 import json
 import os
 from pathlib import Path
+import stat
 import subprocess
 import sys
 import urllib.error
@@ -21,16 +22,41 @@ PREFIX = b")]}',\n"
 MAX_BODY = 4 * 1024 * 1024
 
 
+def regular_file_open_flags():
+    flags = os.O_RDONLY
+    if os.name == "posix":
+        flags |= getattr(os, "O_NONBLOCK", 0)
+    return flags
+
+
+def hash_regular_file(path, description):
+    """Hash one regular file through a single non-blocking descriptor."""
+    file_descriptor = None
+    try:
+        file_descriptor = os.open(os.fspath(path), regular_file_open_flags())
+        before = os.fstat(file_descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise CheckFailed(f"{description} is not a regular file")
+        with os.fdopen(file_descriptor, "rb", closefd=False) as file:
+            digest = hashlib.file_digest(file, "sha256").hexdigest()
+        after = os.fstat(file_descriptor)
+    except CheckFailed:
+        raise
+    except (OSError, ValueError):
+        raise CheckFailed(f"Could not inspect {description.lower()}") from None
+    finally:
+        if file_descriptor is not None:
+            os.close(file_descriptor)
+    if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (
+        after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns
+    ):
+        raise CheckFailed(f"{description} changed during inspection")
+    return before, digest
+
+
 def verify_mapped_plugin(path, maps, expected):
     """Verify the actual file backing the host process's mapped plugin."""
-    with path.open("rb") as file:
-        before = os.fstat(file.fileno())
-        digest = hashlib.file_digest(file, "sha256").hexdigest()
-        after = os.fstat(file.fileno())
-    if (before.st_ino, before.st_size, before.st_mtime_ns) != (
-        after.st_ino, after.st_size, after.st_mtime_ns
-    ):
-        raise CheckFailed("Installed plugin changed during inspection")
+    before, digest = hash_regular_file(path, "Installed plugin")
     device = (os.major(before.st_dev), os.minor(before.st_dev))
     mapped = False
     for line in maps.splitlines():
@@ -246,7 +272,7 @@ def main():
         if args.cpa_container and not args.expect_sha256:
             raise CheckFailed("--cpa-container requires an expected artifact checksum")
         if args.plugin_file:
-            digest = hashlib.sha256(args.plugin_file.read_bytes()).hexdigest()
+            _, digest = hash_regular_file(args.plugin_file, "Plugin file")
             if digest != args.expect_sha256:
                 raise CheckFailed("Plugin file checksum does not match the verified artifact")
         checker = InstallCheck(args.cpa_url, args.key_file.read_text().strip())

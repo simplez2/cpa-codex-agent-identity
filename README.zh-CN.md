@@ -12,7 +12,7 @@
   <p>简体中文 · <a href="README.md">English</a></p>
 </div>
 
-> **推荐版本：[v0.3.19](https://github.com/simplez2/cpa-codex-agent-identity/releases/tag/v0.3.19)** · Linux amd64 / arm64 · [验收证据](docs/releases/v0.3.18.md) · [兼容边界](docs/compatibility.md)
+> **推荐版本：[v0.3.18](https://github.com/simplez2/cpa-codex-agent-identity/releases/tag/v0.3.18)** · Linux amd64 / arm64 · [验收证据](docs/releases/v0.3.18.md) · [兼容边界](docs/compatibility.md)
 >
 > 商店安装的是插件，**不包含 sidecar 的自动部署**。PAT 走 CPA 原生执行；
 > Agent Identity JWT 仍需动态签名桥接。本项目独立维护，非 OpenAI / CPA 官方产品。
@@ -92,7 +92,7 @@ CPA 的 `/v0/resource/plugins/...` 资源路由不经过 Management key 认证�
 
 外部商店索引和 GitHub 元数据缓存可能落后于正式发布。为明确安装版本，推荐使用本仓库维护的已校验直连源；无需改动官方商店仓库。
 
-本项目的 `registry.json` 是单独的 CPA schema v2 直接资产清单，固定已校验 `0.3.19` 资产的大小和 SHA-256，不依赖 GitHub Release 元数据查询。可将它作为明确安装源加入 CPA 配置：
+本项目的 `registry.json` 是单独的 CPA schema v2 直接资产清单，固定已校验 `0.3.18` 资产的大小和 SHA-256，不依赖 GitHub Release 元数据查询。可将它作为明确安装源加入 CPA 配置：
 
 ~~~yaml
 plugins:
@@ -105,7 +105,7 @@ plugins:
       priority: 1000
 ~~~
 
-v0.3.19 候选安装通常不需要填写 `sidecar_url` 或 `sidecar_api_url`。它的管理页由 `.so` 自带，管理页和 quota/reset bridge 都通过 CPA 后端使用 `CODEX_AGENT_IDENTITY_SIDECAR_HOSTS` 与端口环境变量访问 sidecar，不再要求浏览器能打开 `/agent-identity/`。v0.3.19 不再要求浏览器可访问同源 sidecar 入口；旧版本配置会被兼容解析，但这些内部地址不再作为普通 Plugin Store 配置项展示。
+v0.3.19 候选安装通常不需要填写 `sidecar_url` 或 `sidecar_api_url`。它的管理页由 `.so` 自带，管理页和 quota/reset bridge 都通过 CPA 后端使用 `CODEX_AGENT_IDENTITY_SIDECAR_HOSTS` 与端口环境变量访问 sidecar，不再要求浏览器能打开 `/agent-identity/`。当前推荐的 v0.3.18 仍需浏览器可访问的同源入口；旧版本配置会被兼容解析，但这些内部地址不再作为普通 Plugin Store 配置项展示。
 如果需要保留可直接打开的 sidecar 面板，可在旧配置中保留 `sidecar_url: "/agent-identity/"` 或其他明确地址；它现在只是兼容回退项，并且只能是无凭据、无查询参数和无片段的 HTTP(S) 地址或同源路径。
 
 容器内 CPA 若要通过 Plugin Store 安装或升级，插件目录需要在该操作期间可写，完成后建议恢复只读挂载。
@@ -129,7 +129,7 @@ volumes:
 
 不要同时加载旧的 `codex-agent-identity-auth.so` 和新的 `codex-agent-identity.so`，两者都会声明 Codex 凭证解析能力。
 
-插件商店只会安装 `.so`，无法安全地自动创建 sidecar 容器、Docker network、加密密钥、management key 和持久化目录。v0.3.19 候选的全新部署建议先运行 `sh deploy/bootstrap-runtime.sh --start`，之后在 CPA 插件商店点击安装即可；管理页本身不再需要额外反向代理。旧版 v0.3.18 才需要 `--sidecar-url /agent-identity/` 及对应反向代理。
+插件商店只会安装 `.so`，无法安全地自动创建 sidecar 容器、Docker network、加密密钥、management key 和持久化目录。v0.3.19 候选的全新部署建议先运行 `sh deploy/bootstrap-runtime.sh --start`，之后在 CPA 插件商店点击安装即可；管理页本身不再需要额外反向代理。当前正式 v0.3.18 仍需 `--sidecar-url /agent-identity/` 及对应反向代理。
 
 Docker 部署中，`sidecar_api_url` 留空时插件会自动读取 `CODEX_AGENT_IDENTITY_SIDECAR_HOSTS`，并默认使用 sidecar 容器的 `8787` 端口。直接宿主机安装可以在旧配置中显式保留 `http://127.0.0.1:18787/agent-identity/`；这是兼容项，新安装不需要填写。
 ## 部署 sidecar
@@ -252,4 +252,3 @@ checksums.txt、GitHub Release，以及 GHCR 的多架构 sidecar 镜像。
 - reset-credit consume 路径可能消耗额度，健康检查、启动和预检绝不会调用它。
 
 本项目使用 MIT License，是独立集成项目，不是 OpenAI 官方产品。
-

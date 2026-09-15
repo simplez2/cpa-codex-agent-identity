@@ -3,7 +3,10 @@ import json
 import hashlib
 import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
+import textwrap
 import unittest
 
 
@@ -15,6 +18,22 @@ spec.loader.exec_module(debug)
 
 
 class InstallCheckTests(unittest.TestCase):
+    def test_regular_file_hash_uses_platform_safe_open_flags(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "plugin.so"
+            path.write_bytes(b"synthetic-plugin")
+            info, digest = debug.hash_regular_file(path, "Plugin file")
+            self.assertEqual(info.st_ino, path.stat().st_ino)
+            self.assertEqual(digest, hashlib.sha256(b"synthetic-plugin").hexdigest())
+        flags = debug.regular_file_open_flags()
+        if os.name == "posix":
+            self.assertEqual(
+                flags & getattr(os, "O_NONBLOCK", 0),
+                getattr(os, "O_NONBLOCK", 0),
+            )
+        else:
+            self.assertEqual(flags, os.O_RDONLY)
+
     @unittest.skipUnless(os.name == "posix", "Linux mapped-file inspection")
     def test_mapped_artifact_is_required_and_hashed(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -32,6 +51,44 @@ class InstallCheckTests(unittest.TestCase):
             ):
                 with self.subTest(maps=maps), self.assertRaises(debug.CheckFailed):
                     debug.verify_mapped_plugin(path, maps, checksum)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX non-blocking FIFO inspection")
+    def test_fifo_fails_quickly_without_disclosing_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fifo = Path(directory) / "candidate-secret-name"
+            os.mkfifo(fifo)
+            program = textwrap.dedent(
+                """
+                import importlib.util
+                from pathlib import Path
+                import sys
+
+                spec = importlib.util.spec_from_file_location("debug_install", sys.argv[1])
+                debug = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(debug)
+                try:
+                    debug.verify_mapped_plugin(Path(sys.argv[2]), "", "0" * 64)
+                except debug.CheckFailed as error:
+                    print(str(error))
+                    raise SystemExit(0)
+                raise SystemExit(3)
+                """
+            )
+            result = subprocess.run(
+                [sys.executable, "-c", program, str(spec.origin), str(fifo)],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("Installed plugin is not a regular file", result.stdout)
+            self.assertNotIn(str(fifo), result.stdout + result.stderr)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX device inspection")
+    def test_device_is_rejected_before_hashing(self):
+        with self.assertRaisesRegex(debug.CheckFailed, "not a regular file"):
+            debug.verify_mapped_plugin(Path(os.devnull), "", "0" * 64)
 
     def test_rejects_unsafe_management_urls(self):
         for url in (

@@ -12,15 +12,16 @@
   <p>English · <a href="README.zh-CN.md">简体中文</a></p>
 </div>
 
-> **Recommended: [v0.3.19](https://github.com/simplez2/cpa-codex-agent-identity/releases/tag/v0.3.19)** · Linux amd64 / arm64 · [Verified scope](docs/releases/v0.3.18.md) · [Known limitations](docs/compatibility.md)
+> **Recommended: [v0.3.18](https://github.com/simplez2/cpa-codex-agent-identity/releases/tag/v0.3.18)** · Linux amd64 / arm64 · [Verified scope](docs/releases/v0.3.18.md) · [Known limitations](docs/compatibility.md)
 >
 > The Plugin Store installs the plugin, **not** the required sidecar. PATs use
 > CPA's native execution path; Agent Identity JWTs still need a bridge. This is
 > an independent project, not an official OpenAI or CPA product.
 >
-> The current unreleased source embeds the management page in the `.so`; the
+> The [v0.3.19 prerelease](docs/releases/v0.3.19.md) embeds the management page in the `.so`; the
 > browser no longer needs direct access to the sidecar. CPA still needs a
-> private network path to the separately deployed sidecar.
+> private network path to the separately deployed sidecar. Its management-page
+> rollout passed; full account/model/proxy acceptance is still pending.
 
 ## Your credentials. CPA's native controls.
 
@@ -127,7 +128,7 @@ Treat the management password, encryption key, CPA auth files, upstream credenti
 - Docker or another process supervisor for the sidecar.
 - Private CPA-to-sidecar connectivity and the same Management key on both
   services. Publishing `/agent-identity/` to the browser becomes optional in
-  the unreleased v0.3.19 line; older v0.3.18 still requires it.
+  the v0.3.19 prerelease line; the recommended v0.3.18 still requires it.
 
 ## Build and test
 
@@ -188,7 +189,7 @@ plugin-page entry and does not modify the installed plugin card.
 External Store indexes and cached GitHub metadata can lag behind a release.
 For an explicit version and verified downloads, merge this repository's CPA
 schema v2 direct source into the host-mounted CPA configuration. It pins the
-accepted published **v0.3.19** archives by size and SHA-256; no upstream Store
+accepted published **v0.3.18** archives by size and SHA-256; no upstream Store
 repository changes are required.
 
 ~~~yaml
@@ -512,4 +513,3 @@ alone are insufficient. See [current limits](docs/compatibility.md#reset-credits
 ## License and status
 
 MIT licensed. This is an independent integration project and is not an official OpenAI product. Review SECURITY.md before exposing the management UI to the internet.
-
