@@ -27,6 +27,7 @@ jobs:
           python3 .github/scripts/check-community.py
           python3 -m unittest discover -s .github/scripts -p 'test_community.py'
           python3 -m unittest discover -s .github/scripts -p 'test_debug_plugin_install.py'
+          python3 -m unittest discover -s .github/scripts -p 'test_bootstrap_runtime.py'
 
   validate:
     runs-on: ubuntu-24.04

@@ -341,12 +341,16 @@ func normalizeSidecarURL(raw string) (string, string, error) {
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
-		return "", "", fmt.Errorf("sidecar_url is invalid: %w", err)
+		// url.Error includes its input, which can contain accidentally pasted secrets.
+		return "", "", errors.New("sidecar_url is invalid")
 	}
 	if u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
 		return "", "", errors.New("sidecar_url must not contain credentials, query parameters, or a fragment")
 	}
-	if !u.IsAbs() && u.Host != "" {
+	if err := validateCanonicalURLPath(u.Path, u.RawPath); err != nil {
+		return "", "", fmt.Errorf("sidecar_url path is invalid: %w", err)
+	}
+	if u.Opaque != "" || (!u.IsAbs() && u.Host != "") {
 		return "", "", errors.New("sidecar_url must be absolute or start with /")
 	}
 	frameSource := "'self'"
@@ -488,14 +492,7 @@ func forwardSidecarAPICall(request managementRequest) managementResponse {
 	if err != nil {
 		return managementErrorResponse(http.StatusBadGateway, "failed to build sidecar request")
 	}
-	for name, values := range request.Headers {
-		if blockedForwardHeader(name) {
-			continue
-		}
-		for _, value := range values {
-			upstreamRequest.Header.Add(name, value)
-		}
-	}
+	copySidecarManagementAuth(upstreamRequest.Header, request.Headers)
 	// The plugin host and CPA both serialize the response body themselves.
 	// Avoid a compressed upstream response and never forward transport framing
 	// headers that describe the sidecar connection rather than this response.
@@ -591,14 +588,7 @@ func forwardSidecarUIAPI(request managementRequest) managementResponse {
 	if err != nil {
 		return managementErrorResponse(http.StatusBadGateway, "failed to build sidecar UI API request")
 	}
-	for name, values := range request.Headers {
-		if !strings.EqualFold(strings.TrimSpace(name), "Authorization") {
-			continue
-		}
-		for _, value := range values {
-			upstreamRequest.Header.Add(name, value)
-		}
-	}
+	copySidecarManagementAuth(upstreamRequest.Header, request.Headers)
 	upstreamRequest.Header.Set("Accept-Encoding", "identity")
 	if contentType := forwardedUIContentType(bridgeRequest.Headers); contentType != "" {
 		upstreamRequest.Header.Set("Content-Type", contentType)
@@ -656,15 +646,23 @@ func normalizeSidecarUIAPIRequest(request sidecarUIAPIRequest) (string, *url.URL
 	if err != nil || relativeURL.IsAbs() || relativeURL.Host != "" || relativeURL.Fragment != "" {
 		return "", nil, errors.New("plugin UI path is invalid")
 	}
+	if err := validateCanonicalURLPath(relativeURL.Path, relativeURL.RawPath); err != nil {
+		return "", nil, errors.New("plugin UI path is invalid")
+	}
 	segments := strings.Split(strings.TrimPrefix(relativeURL.Path, "/"), "/")
 	for _, segment := range segments {
 		if segment == "" || segment == "." || segment == ".." {
 			return "", nil, errors.New("plugin UI path is invalid")
 		}
 	}
-	if !allowedSidecarUIAPIRoute(method, segments, relativeURL.Query()) {
+	query, err := url.ParseQuery(relativeURL.RawQuery)
+	if err != nil {
+		return "", nil, errors.New("plugin UI query is invalid")
+	}
+	if !allowedSidecarUIAPIRoute(method, segments, query) {
 		return "", nil, errors.New("plugin UI route is not allowed")
 	}
+	relativeURL.RawQuery = query.Encode()
 	return method, relativeURL, nil
 }
 
@@ -757,6 +755,9 @@ func sidecarUIBaseURL(current runtimeState) (*url.URL, error) {
 	uiURL, parseErr := url.Parse(strings.TrimSpace(current.sidecarURL))
 	if parseErr != nil {
 		return nil, errors.New("sidecar_url is invalid")
+	}
+	if err := validateCanonicalURLPath(uiURL.Path, uiURL.RawPath); err != nil {
+		return nil, errors.New("sidecar_url path is invalid")
 	}
 	if uiURL.Path != "" && uiURL.Path != "/" {
 		uiPath = uiURL.Path
@@ -855,11 +856,14 @@ func normalizeSidecarAPIURL(raw string) (string, error) {
 		return "", nil
 	}
 	u, err := url.Parse(raw)
-	if err != nil || !u.IsAbs() || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+	if err != nil || !u.IsAbs() || u.Host == "" || u.Opaque != "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return "", errors.New("sidecar_api_url must be an absolute http(s) URL")
 	}
 	if u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
 		return "", errors.New("sidecar_api_url must not contain credentials, query parameters, or a fragment")
+	}
+	if err := validateCanonicalURLPath(u.Path, u.RawPath); err != nil {
+		return "", fmt.Errorf("sidecar_api_url path is invalid: %w", err)
 	}
 	if u.Path == "" || u.Path == "/" {
 		u.Path = sidecarAPICallPath
@@ -868,12 +872,46 @@ func normalizeSidecarAPIURL(raw string) (string, error) {
 	return u.String(), nil
 }
 
-func blockedForwardHeader(name string) bool {
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "host", "content-length", "content-encoding", "accept-encoding", "connection", "cookie", "keep-alive", "origin", "referer", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto":
-		return true
-	default:
-		return false
+func validateCanonicalURLPath(pathValue, rawPath string) error {
+	// Path is already unescaped by net/url. Reject encodings whose interpretation
+	// can change at a second browser/proxy decode; never silently clean the target.
+	if rawPath != "" {
+		decoded, err := url.PathUnescape(rawPath)
+		if err != nil || decoded != pathValue {
+			return errors.New("path escaping is invalid")
+		}
+		lower := strings.ToLower(rawPath)
+		if strings.Contains(lower, "%2f") || strings.Contains(lower, "%5c") {
+			return errors.New("path contains encoded separators")
+		}
+	}
+	if strings.ContainsAny(pathValue, "\\%?#") || strings.Contains(pathValue, "//") {
+		return errors.New("path contains ambiguous separators or escaping")
+	}
+	for _, character := range pathValue {
+		if character <= 0x20 || character == 0x7f {
+			return errors.New("path contains whitespace or control characters")
+		}
+	}
+	for _, segment := range strings.Split(pathValue, "/") {
+		if segment == "." || segment == ".." {
+			return errors.New("path contains dot segments")
+		}
+	}
+	return nil
+}
+
+func copySidecarManagementAuth(target, source http.Header) {
+	// CPA authenticates this Management route before invoking the plugin. The
+	// trusted sidecar uses the same operator key, including CPA's alternate header.
+	// Never copy cookies, account/API keys, proxy credentials or forwarding headers.
+	for name, values := range source {
+		if !strings.EqualFold(name, "Authorization") && !strings.EqualFold(name, "X-Management-Key") {
+			continue
+		}
+		for _, value := range values {
+			target.Add(name, value)
+		}
 	}
 }
 
@@ -1209,9 +1247,9 @@ func managementHTML(sidecarURL, embedURL string) string {
           return Array.from(bytes).map(function(value){return value.toString(16).padStart(2,'0')}).join('');
         }
       }catch(_){}
-      return String(Date.now())+'-'+Math.random().toString(36).slice(2);
+      return '';
     }
-    const bridgeNonce=createBridgeNonce();
+    let bridgeNonce='';
     function localStorageValue(key){
       try{return window.localStorage.getItem(key)||''}catch(_){return ''}
     }
@@ -1359,7 +1397,7 @@ func managementHTML(sidecarURL, embedURL string) string {
         managementKeyFromStoredValue(localStorageValue(legacyManagementKeyStorageKey),scopes);
     }
     function postManagementKey(){
-      if(!frame||!frame.contentWindow||!bridgeNonce||childOrigin==='*')return;
+      if(!bridgeReady||!frame||!frame.contentWindow||!bridgeNonce||childOrigin==='*')return;
       const key=readStoredManagementKey();
       if(!key||key.length>4096||/[\r\n]/.test(key))return;
       frame.contentWindow.postMessage({type:authType,nonce:bridgeNonce,managementKey:key},childOrigin);
@@ -1374,6 +1412,7 @@ func managementHTML(sidecarURL, embedURL string) string {
       return value;
     }
     const candidateURLs=[];
+    let bridgeReady=false;
     const localLoopbackURLs=__LOCAL_LOOPBACK_URLS__;
     function addCandidate(raw){
       if(!raw)return;
@@ -1451,13 +1490,16 @@ func managementHTML(sidecarURL, embedURL string) string {
       return value;
     }
     function setFrameSource(){
+      bridgeReady=false;
+      bridgeNonce=createBridgeNonce();
+      root.removeAttribute('data-ready');
       const value=embeddedURL(currentCandidate(),currentTheme);
       childOrigin=value.origin&&value.origin!=='null'?value.origin:'*';
       frame.src=value.href;
     }
     function connecting(){root.removeAttribute('data-ready');root.removeAttribute('data-failed')}
-    function ready(){clearTimeout(timer);root.removeAttribute('data-failed');root.setAttribute('data-ready','true');postTheme();postManagementKey()}
-    function failed(){root.removeAttribute('data-ready');root.setAttribute('data-failed','true')}
+    function ready(){clearTimeout(timer);bridgeReady=Boolean(bridgeNonce);root.removeAttribute('data-failed');root.setAttribute('data-ready','true');postTheme();postManagementKey()}
+    function failed(){bridgeReady=false;root.removeAttribute('data-ready');root.setAttribute('data-failed','true')}
     function tryNextCandidate(){
       if(candidateIndex+1<candidateURLs.length){
         candidateIndex+=1;
@@ -1477,13 +1519,13 @@ func managementHTML(sidecarURL, embedURL string) string {
     window.addEventListener('message',function(event){
       const data=event.data||{};
       if(frame&&event.source===frame.contentWindow&&data.type===readyType){
-        if(childOrigin!=='*'&&event.origin!==childOrigin)return;
-        if(data.nonce!==bridgeNonce)return;
+        if(childOrigin==='*'||event.origin!==childOrigin)return;
+        if(bridgeNonce?data.nonce!==bridgeNonce:(data.nonce!==undefined&&data.nonce!==''))return;
         ready();
         return;
       }
       if(frame&&event.source===frame.contentWindow&&data.type===unavailableType){
-        if(childOrigin!=='*'&&event.origin!==childOrigin)return;
+        if(!bridgeNonce||childOrigin==='*'||event.origin!==childOrigin)return;
         if(data.nonce!==bridgeNonce)return;
         tryNextCandidate();
         return;
@@ -1496,11 +1538,11 @@ func managementHTML(sidecarURL, embedURL string) string {
     });
     window.addEventListener('storage',function(event){
       if(event.key===storageKey&&!inheritedTheme)syncTheme();
-      if(event.key===authStorageKey||event.key===legacyManagementKeyStorageKey||String(event.key||'').indexOf(authScopePrefix)===0||String(event.key||'').indexOf(authSelectionPrefix)===0)postManagementKey();
+      if(bridgeReady&&(event.key===authStorageKey||event.key===legacyManagementKeyStorageKey||String(event.key||'').indexOf(authScopePrefix)===0||String(event.key||'').indexOf(authSelectionPrefix)===0))postManagementKey();
     });
     const mediaChanged=function(){if(!inheritedTheme)syncTheme()};
     if(typeof media.addEventListener==='function')media.addEventListener('change',mediaChanged);else if(typeof media.addListener==='function')media.addListener(mediaChanged);
-    frame.addEventListener('load',function(){postTheme();postManagementKey()});
+    frame.addEventListener('load',function(){postTheme()});
     retry.addEventListener('click',function(){candidateIndex=0;connecting();applyShellTheme(resolveTheme(),resolveVariables());setFrameSource();start()});
     open.addEventListener('click',function(){const value=themedURL(currentCandidate(),currentTheme);window.open(value.href,'_blank','noopener')});
     applyShellTheme(resolveTheme(),resolveVariables());

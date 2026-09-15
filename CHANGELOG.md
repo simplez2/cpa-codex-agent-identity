@@ -4,6 +4,28 @@ All notable changes to `cpa-codex-agent-identity` are documented here.
 Published registry and release assets are updated only after the tagged release
 workflow has produced and checksummed the artifacts.
 
+## [Unreleased]
+
+### Security and correctness
+
+- Reject malformed UI bridge queries and ambiguous sidecar paths before
+  forwarding; preserve canonical custom prefixes and redact invalid URL inputs.
+- Forward only CPA's supported management authentication headers to the trusted
+  sidecar. Require a source/origin/nonce-matched ready handshake before automatic
+  key delivery, rotate the nonce on fallback/retry, and retain manual login when
+  cryptographic randomness is unavailable.
+- Serialize identity file mutations with in-memory indexes, retain identities
+  after failed unlink, and report already-applied changes when directory sync
+  fails instead of publishing contradictory memory state.
+- Reject unsafe bootstrap inputs and automatic startup of existing deployments
+  before initialization; check plugin artifacts as regular files through a
+  single non-blocking descriptor.
+
+These changes are source-only and are not included in the immutable v0.3.19
+prerelease assets. No version, stable registry, or container alias is promoted.
+See the [bounded security review](docs/security-boundary-review.md) for evidence
+and remaining acceptance work.
+
 ## [Unreleased] - 0.3.19
 
 ### Fixed

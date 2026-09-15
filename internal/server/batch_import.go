@@ -193,8 +193,12 @@ func (s *Server) processBatchImport(ctx context.Context, candidates []importCand
 			items[index].Status = "failed"
 			items[index].Code = importErr.Code
 			items[index].Message = importErr.Message
+			if importErr.RollbackFailed {
+				items[index].Status = "rollback_failed"
+			}
 			if atomic {
 				rollbackOK := s.rollbackBatchImports(ctx, imported, items)
+				rollbackOK = rollbackOK && !importErr.RollbackFailed
 				for remaining := index + 1; remaining < len(items); remaining++ {
 					if items[remaining].Status == "ready" {
 						items[remaining].Status = "aborted"
